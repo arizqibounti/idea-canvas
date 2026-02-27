@@ -24,14 +24,19 @@ const client = new Anthropic();
 
 const SYSTEM_PROMPT = `You are an expert analysis AI. Given any input — a business idea, a marketing campaign brief, a strategy question, a sales plan, or any other domain — you generate a structured thinking tree with the most appropriate node types for that domain.
 
-**STEP 1: Analyze the input.** Determine what domain this belongs to (product ideation, marketing/ad campaign, sales strategy, hiring plan, content strategy, legal analysis, etc.)
+**STEP 1: Analyze the input and any provided reference content.**
+  a) Identify the USER'S TASK — what are they asking you to do? (e.g. "design a Google Ads campaign", "plan a content strategy", "brainstorm a product idea"). The task determines which node types you choose.
+  b) Identify the SUBJECT — what product, service, or concept is the task about? If reference content from URLs is provided, you MUST deeply analyze that content to extract the real product name, features, target audience, value propositions, competitive positioning, and messaging. Never guess or generalize when real details are available.
+  c) Determine the DOMAIN that matches the user's task (product ideation, marketing/ad campaign, sales strategy, hiring plan, content strategy, legal analysis, etc.)
+
+**CRITICAL: When reference content from URLs is provided, it is the PRIMARY source of truth about the subject.** Extract specific product names, features, benefits, target audiences, pricing, and differentiators from the actual content. Every node you generate must be grounded in real details from that content — not generic placeholders or assumptions.
 
 **STEP 2: Output a _meta line.** Your VERY FIRST line of output MUST be a JSON object with "_meta": true that declares the node types you will use. This line tells the frontend how to render your nodes.
 
 Format:
 {"_meta": true, "domain": "short domain name", "types": [{"type": "snake_case_id", "label": "SHORT LABEL", "icon": "single unicode symbol"}, ...]}
 
-Choose 6-9 node types that best fit the domain. Always include "seed" as the first type (icon "◈", label "SEED"). The remaining types should be the most natural decomposition for this specific domain.
+Choose 6-9 node types that best fit the USER'S TASK (not just the subject). Always include "seed" as the first type (icon "◈", label "SEED"). The remaining types should be the most natural decomposition for the specific task the user is requesting.
 
 Icon choices (pick one per type, no repeats): ◈ ⚠ ◎ ▶ ◆ ⬡ ◉ ✦ ▣ ⇌ ▦ ⊕ ★ △ ▷ ◷
 
@@ -47,9 +52,9 @@ Examples of domain-appropriate types:
 Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)"}
 
 Rules:
-- The first node MUST be type "seed" with parentId null — the root concept.
+- The first node MUST be type "seed" with parentId null — the root concept. When reference content is provided, the seed label should name the actual product/service from that content.
 - All other nodes must have a parentId pointing to an existing node.
-- Build a rich, deep tree. Think deeply about the input.
+- Build a rich, deep tree. Think deeply about the input. When reference content is provided, every node should reflect specific, concrete details from that content — not generic advice.
 - Use ids like "type_1", "type_2" (e.g. "audience_1", "keyword_group_1").
 
 Output rules: one JSON object per line. No markdown, no explanations, no array wrappers. The _meta line comes first, then all nodes.`;
@@ -202,12 +207,18 @@ Generate 8-15 new nodes.`;
   } else if (mode === 'resume') {
     userContent = `Analyse this job description and generate a resume strategy tree:\n\n${idea}`;
   } else {
-    let contextBlock = '';
     if (fetchedUrlContent?.length) {
-      contextBlock = '\n\nREFERENCE CONTENT FROM URLs:\n' +
-        fetchedUrlContent.map(u => `--- ${u.url} ---\n${u.text}`).join('\n\n');
+      const contentBlock = fetchedUrlContent.map(u => `--- Content from ${u.url} ---\n${u.text}`).join('\n\n');
+      userContent = `USER'S REQUEST: "${idea}"
+
+Below is the actual content fetched from the URL(s) referenced in the request. This is the PRIMARY source of truth about the product/subject. Analyze it deeply — extract the real product name, features, target audience, value props, and positioning. Then fulfill the user's request using these real details.
+
+${contentBlock}
+
+Now generate the thinking tree that fulfills the user's request above. Ground every node in the specific details from the reference content.`;
+    } else {
+      userContent = `Analyze this input and generate the appropriate thinking tree:\n\n"${idea}"`;
     }
-    userContent = `Analyze this input and generate the appropriate thinking tree:\n\n"${idea}"${contextBlock}`;
   }
 
   try {
