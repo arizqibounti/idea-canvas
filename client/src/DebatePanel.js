@@ -186,7 +186,7 @@ function CritiqueCard({ critique }) {
   );
 }
 
-function RoundEntry({ round, summary, verdict, critiques, blockers, rebutNodes, isLatest, mode }) {
+function RoundEntry({ round, summary, verdict, critiques, blockers, rebutNodes, isLatest, mode, onSuggestionExpand, expandedSuggestions, expandingSuggestion }) {
   const [expanded, setExpanded] = useState(isLatest);
 
   useEffect(() => {
@@ -216,9 +216,27 @@ function RoundEntry({ round, summary, verdict, critiques, blockers, rebutNodes, 
           {blockers?.length > 0 && (
             <div className="debate-section">
               <div className="debate-section-label">💡 SUGGESTIONS</div>
-              {blockers.map((b, i) => (
-                <div key={i} className="debate-blocker">{b}</div>
-              ))}
+              {blockers.map((b, i) => {
+                const key = `r${round}_${i}`;
+                const isAdded = expandedSuggestions?.has(key);
+                const isExpanding = expandingSuggestion === key;
+                return (
+                  <div
+                    key={i}
+                    className={`debate-blocker debate-blocker-clickable ${isAdded ? 'debate-blocker-added' : ''} ${isExpanding ? 'debate-blocker-expanding' : ''}`}
+                    onClick={() => {
+                      if (!isAdded && !isExpanding && onSuggestionExpand) {
+                        onSuggestionExpand(b, key);
+                      }
+                    }}
+                  >
+                    <span className="debate-blocker-text">{b}</span>
+                    <span className="debate-blocker-action">
+                      {isExpanding ? '◌' : isAdded ? '✓' : '+'}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -240,7 +258,7 @@ function RoundEntry({ round, summary, verdict, critiques, blockers, rebutNodes, 
   );
 }
 
-export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded, onNodeUpdate, autoStart, debateRoundsRef, mode = 'idea', onApplyToResume }) {
+export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded, onNodeUpdate, autoStart, debateRoundsRef, mode = 'idea', onApplyToResume, onConsensusReached, onSuggestionExpand }) {
   const [rounds, setRounds] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState('idle'); // idle | critiquing | rebutting | finalizing | consensus | stopped
@@ -250,6 +268,8 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
   const loopRef = useRef(false);
   const scrollRef = useRef(null);
   const allRoundsRef = useRef([]); // tracks full history for finalize endpoint
+  const [expandedSuggestions, setExpandedSuggestions] = useState(new Set());
+  const [expandingSuggestion, setExpandingSuggestion] = useState(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -271,8 +291,21 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
       setIsRunning(false);
       setFinalizeCount(0);
       allRoundsRef.current = [];
+      setExpandedSuggestions(new Set());
+      setExpandingSuggestion(null);
     }
   }, [isOpen, idea]);
+
+  const handleSuggestionExpand = useCallback(async (suggestionText, key) => {
+    if (!onSuggestionExpand) return;
+    setExpandingSuggestion(key);
+    try {
+      await onSuggestionExpand(suggestionText);
+      setExpandedSuggestions(prev => new Set([...prev, key]));
+    } finally {
+      setExpandingSuggestion(null);
+    }
+  }, [onSuggestionExpand]);
 
   const stop = useCallback(() => {
     loopRef.current = false;
@@ -324,11 +357,13 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
         }
         setFinalizeCount(updateCount + addCount);
       });
+      // Notify parent for template extraction
+      if (onConsensusReached) onConsensusReached();
     } catch (err) {
       if (err.name === 'AbortError') return;
       console.error('Finalize error:', err);
     }
-  }, [idea, onNodesAdded, onNodeUpdate]);
+  }, [idea, onNodesAdded, onNodeUpdate, onConsensusReached]);
 
   const runDebateLoop = useCallback(async (startRound, accumulatedNodes, priorBlockers) => {
     loopRef.current = true;
@@ -591,6 +626,9 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
             {...r}
             isLatest={i === rounds.length - 1}
             mode={mode}
+            onSuggestionExpand={handleSuggestionExpand}
+            expandedSuggestions={expandedSuggestions}
+            expandingSuggestion={expandingSuggestion}
           />
         ))}
 

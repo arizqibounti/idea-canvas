@@ -51,8 +51,11 @@ export function getSubtree(allNodes, rootId) {
   return result;
 }
 
-export function buildEdges(nodes) {
-  return nodes
+export function buildEdges(nodes, { showCrossLinks = false } = {}) {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+
+  // Parent-child edges
+  const parentEdges = nodes
     .filter((n) => n.data.parentId)
     .map((n) => ({
       id: `e-${n.data.parentId}-${n.id}`,
@@ -65,4 +68,34 @@ export function buildEdges(nodes) {
         strokeWidth: 1.5,
       },
     }));
+
+  if (!showCrossLinks) return parentEdges;
+
+  // Cross-link edges (from relatedIds)
+  const crossEdges = [];
+  const seenPairs = new Set();
+  nodes.forEach((n) => {
+    (n.data.relatedIds || []).forEach((relId) => {
+      if (!nodeIds.has(relId)) return;
+      if (relId === n.data.parentId) return;
+      const pairKey = [n.id, relId].sort().join('::');
+      if (seenPairs.has(pairKey)) return;
+      seenPairs.add(pairKey);
+      crossEdges.push({
+        id: `cx-${n.id}-${relId}`,
+        source: n.id,
+        target: relId,
+        type: 'smoothstep',
+        animated: false,
+        style: {
+          stroke: '#6c63ff',
+          strokeWidth: 1,
+          strokeDasharray: '6 3',
+          opacity: 0.5,
+        },
+      });
+    });
+  });
+
+  return [...parentEdges, ...crossEdges];
 }

@@ -10,12 +10,14 @@ import HistoryModal from './HistoryModal';
 import MemoryInsights, { buildMemoryEntry, appendMemory, readMemory } from './MemoryLayer';
 
 import DebatePanel from './DebatePanel';
+import ChatPanel from './ChatPanel';
 import ResumeChangesModal from './ResumeChangesModal';
 import ExportGitHubModal from './ExportGitHubModal';
 import Graph3D from './Graph3D';
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
+import { readTemplates, saveTemplate } from './TemplateStore';
 import './App.css';
 
 const API_URL = 'http://localhost:5001';
@@ -219,6 +221,9 @@ export default function App() {
   const [debateAutoStart, setDebateAutoStart] = useState(false);
   const debateRoundsRef = useRef([]);
 
+  // ── Chat Companion ────────────────────────────────────────
+  const [showChat, setShowChat] = useState(false);
+
   // ── Export to GitHub ────────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -235,6 +240,16 @@ export default function App() {
   const [isCritiquing, setIsCritiquing] = useState(false);
   const [treeSearchQuery, setTreeSearchQuery] = useState('');
 
+  // ── Cross-links toggle ───────────────────────────────────
+  const [showCrossLinks, setShowCrossLinks] = useState(false);
+
+  // ── Node scoring ─────────────────────────────────────────
+  const [isScoring, setIsScoring] = useState(false);
+
+  // ── Multi-agent generation ───────────────────────────────
+  const [useMultiAgent, setUseMultiAgent] = useState(false);
+  const [multiAgentProgress, setMultiAgentProgress] = useState(null);
+
   // ── Auto-save ─────────────────────────────────────────────
   useEffect(() => {
     if (activeMode === 'idea') idea$.triggerAutoSave(idea);
@@ -245,6 +260,41 @@ export default function App() {
     if (activeMode === 'codebase') cb$.triggerAutoSave(cbFolderName);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cb$.nodeCount, cbFolderName, activeMode]);
+
+  // ── Sync cross-links toggle to canvas mode ref ───────────
+  useEffect(() => {
+    idea$.showCrossLinksRef.current = showCrossLinks;
+    if (idea$.rawNodesRef.current.length > 0) {
+      idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCrossLinks]);
+
+  // ── Scoring: trigger after generation ────────────────────
+  const triggerScoring = useCallback(async (rawNodes, ideaText) => {
+    if (!rawNodes?.length || !ideaText?.trim()) return;
+    setIsScoring(true);
+    try {
+      const res = await fetch(`${API_URL}/api/score-nodes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: ideaText.trim(),
+          nodes: rawNodes.map(n => ({
+            id: n.id, type: n.data?.type, label: n.data?.label,
+            reasoning: n.data?.reasoning, parentId: n.data?.parentId,
+          })),
+        }),
+      });
+      if (!res.ok) throw new Error(`Score error: ${res.status}`);
+      const { scores } = await res.json();
+      idea$.setNodeScores(scores);
+    } catch (err) {
+      console.error('Scoring failed:', err);
+    } finally {
+      setIsScoring(false);
+    }
+  }, [idea$]);
 
   // ── Save version + memory after generation ────────────────
   const saveVersionAndMemory = useCallback((ideaText, rawNodes) => {
@@ -280,29 +330,56 @@ export default function App() {
         try {
           const fetches = urls.map(async (url) => {
             try {
-              const r = await fetch(`${API_URL}/api/fetch-url`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url }),
-                signal: controller.signal,
-              });
-              if (!r.ok) return null;
-              const { text } = await r.json();
-              return text ? { url, text } : null;
+              // Detect if this is a root domain (no meaningful path) → crawl the whole site
+              const parsed = new URL(url);
+              const path = parsed.pathname.replace(/\/+$/, '');
+              const isRootDomain = !path || path === '';
+
+              if (isRootDomain) {
+                // Crawl the full site — fetches homepage + key subpages
+                const r = await fetch(`${API_URL}/api/crawl-site`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url }),
+                  signal: controller.signal,
+                });
+                if (!r.ok) return null;
+                const { pages } = await r.json();
+                // Return each page as a separate content entry
+                return (pages || []).filter(p => p.text).map(p => ({ url: p.url, text: p.text }));
+              } else {
+                // Specific page — fetch just that URL
+                const r = await fetch(`${API_URL}/api/fetch-url`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url }),
+                  signal: controller.signal,
+                });
+                if (!r.ok) return null;
+                const { text } = await r.json();
+                return text ? [{ url, text }] : null;
+              }
             } catch { return null; }
           });
           const results = await Promise.all(fetches);
-          fetchedUrlContent = results.filter(Boolean);
+          // Flatten: each URL fetch may return multiple pages (from crawl)
+          fetchedUrlContent = results.filter(Boolean).flat();
           if (!fetchedUrlContent.length) fetchedUrlContent = null;
         } finally {
           setIsFetchingUrl(false);
         }
       }
 
+      // Look up matching templates for structural guidance
+      const allTemplates = readTemplates();
+      const templateGuidance = allTemplates.length > 0
+        ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
+        : undefined;
+
       const res = await fetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea: idea.trim(), mode: displayMode, fetchedUrlContent }),
+        body: JSON.stringify({ idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance }),
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -343,9 +420,115 @@ export default function App() {
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         setShowDebate(true);
         setDebateAutoStart(true);
+        triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
+
+  // ── Multi-agent generation (3 lenses + merge) ─────────────
+  const handleGenerateMulti = useCallback(async () => {
+    if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
+    idea$.resetCanvas();
+    idea$.setIsGenerating(true);
+    setMultiAgentProgress('Starting multi-agent analysis...');
+    setRedirectState('idle');
+    setDebateAutoStart(false);
+    dynamicConfigRef.current = null;
+    dynamicTypesRef.current = null;
+    setDynamicDomain(null);
+    setDynamicLegendTypes([]);
+
+    if (idea$.abortRef.current) idea$.abortRef.current.abort();
+    const controller = new AbortController();
+    idea$.abortRef.current = controller;
+
+    try {
+      // URL detection (same as handleGenerate)
+      let fetchedUrlContent = null;
+      const urlRegex = /https?:\/\/[^\s"'<>]+/g;
+      const urls = idea.trim().match(urlRegex);
+      if (urls?.length) {
+        setIsFetchingUrl(true);
+        try {
+          const fetches = urls.map(async (url) => {
+            try {
+              const parsed = new URL(url);
+              const path = parsed.pathname.replace(/\/+$/, '');
+              const isRootDomain = !path || path === '';
+              if (isRootDomain) {
+                const r = await fetch(`${API_URL}/api/crawl-site`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                if (!r.ok) return null;
+                const { pages } = await r.json();
+                return (pages || []).filter(p => p.text).map(p => ({ url: p.url, text: p.text }));
+              } else {
+                const r = await fetch(`${API_URL}/api/fetch-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                if (!r.ok) return null;
+                const { text } = await r.json();
+                return text ? [{ url, text }] : null;
+              }
+            } catch { return null; }
+          });
+          const results = await Promise.all(fetches);
+          fetchedUrlContent = results.filter(Boolean).flat();
+          if (!fetchedUrlContent.length) fetchedUrlContent = null;
+        } finally {
+          setIsFetchingUrl(false);
+        }
+      }
+
+      const allTemplates = readTemplates();
+      const templateGuidance = allTemplates.length > 0
+        ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
+        : undefined;
+
+      const res = await fetch(`${API_URL}/api/generate-multi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+      const seenTypes = [];
+      const result = await readSSEStream(res, (nodeData) => {
+        if (nodeData._progress) {
+          setMultiAgentProgress(nodeData.stage);
+          return;
+        }
+        if (nodeData._meta) {
+          const config = buildDynamicConfig(nodeData.types || []);
+          dynamicConfigRef.current = config;
+          dynamicTypesRef.current = nodeData.types || [];
+          idea$.dynamicTypesRef.current = nodeData.types || [];
+          setDynamicDomain(nodeData.domain || 'Canvas');
+          setMultiAgentProgress(null);
+          return;
+        }
+        const flowNode = buildFlowNode(nodeData);
+        if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
+        idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+        idea$.applyLayout(idea$.rawNodesRef.current, []);
+        idea$.setNodeCount(idea$.rawNodesRef.current.length);
+        if (nodeData.type && !seenTypes.includes(nodeData.type)) {
+          seenTypes.push(nodeData.type);
+          setDynamicLegendTypes([...seenTypes]);
+        }
+      });
+      if (result.error) idea$.setError(result.error);
+      saveVersionAndMemory(idea, idea$.rawNodesRef.current);
+    } catch (err) {
+      if (err.name !== 'AbortError') idea$.setError(err.message);
+    } finally {
+      idea$.setIsGenerating(false);
+      setMultiAgentProgress(null);
+      setIsFetchingUrl(false);
+      if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
+        setShowDebate(true);
+        setDebateAutoStart(true);
+        triggerScoring(idea$.rawNodesRef.current, idea.trim());
+      }
+    }
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -354,7 +537,7 @@ export default function App() {
   }, [active]);
 
   const handleKeyDown = useCallback((e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); useMultiAgent ? handleGenerateMulti() : handleGenerate(); }
   }, [handleGenerate]);
 
   // ── Textarea auto-resize ────────────────────────────────
@@ -643,6 +826,61 @@ export default function App() {
     idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
   }, [idea$]);
 
+  // ── Template extraction: after debate consensus ──────────
+  const handleConsensusReached = useCallback(async () => {
+    try {
+      const rawNodes = idea$.rawNodesRef.current;
+      if (!rawNodes?.length) return;
+      const res = await fetch(`${API_URL}/api/extract-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: idea.trim(),
+          nodes: rawNodes.map(n => ({
+            id: n.id, type: n.data?.type, label: n.data?.label,
+            reasoning: n.data?.reasoning, parentId: n.data?.parentId,
+          })),
+        }),
+      });
+      if (!res.ok) return;
+      const template = await res.json();
+      if (template.structure?.length) saveTemplate(template);
+    } catch (err) {
+      console.error('Template extraction failed:', err);
+    }
+  }, [idea, idea$]);
+
+  // ── Suggestion expand: add suggestion node + children to tree ─
+  const handleSuggestionExpand = useCallback(async (suggestionText) => {
+    const rawNodes = idea$.rawNodesRef.current;
+    if (!rawNodes?.length) return;
+
+    const res = await fetch(`${API_URL}/api/expand-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        suggestion: suggestionText,
+        idea: displayMode === 'resume' ? resumeJobLabel : idea,
+        nodes: rawNodes.map(n => ({
+          id: n.id, type: n.data?.type, label: n.data?.label,
+          reasoning: n.data?.reasoning, parentId: n.data?.parentId,
+        })),
+        mode: displayMode,
+        dynamicTypes: idea$.dynamicTypesRef?.current || undefined,
+      }),
+    });
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+    const existingDynConfig = rawNodes[0]?.data?.dynamicConfig || null;
+    await readSSEStream(res, (nodeData) => {
+      const flowNode = buildFlowNode(nodeData);
+      if (existingDynConfig) flowNode.data.dynamicConfig = existingDynConfig;
+      idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+      idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
+      idea$.setNodeCount(idea$.rawNodesRef.current.length);
+    });
+  }, [idea, idea$, displayMode, resumeJobLabel]);
+
   // ── 2D Temporal: maxRound ─────────────────────────────────
   const maxRound = useMemo(() => {
     if (!active.nodes.length) return 0;
@@ -821,7 +1059,15 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <button className="btn btn-generate" onClick={handleGenerate} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
+                    <button
+                      className={`btn btn-mode-toggle ${useMultiAgent ? 'active' : ''}`}
+                      onClick={() => setUseMultiAgent(v => !v)}
+                      title={useMultiAgent ? 'Multi-agent mode (3 lenses — slower but thorough)' : 'Single-agent mode (fast)'}
+                      style={{ padding: '6px 8px', fontSize: 9, marginRight: 4 }}
+                    >
+                      {useMultiAgent ? '◈×3' : '◈×1'}
+                    </button>
+                    <button className="btn btn-generate" onClick={useMultiAgent ? handleGenerateMulti : handleGenerate} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
                       {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
                     </button>
                   </>
@@ -874,6 +1120,16 @@ export default function App() {
               ⚔ DEBATE
             </button>
           )}
+          {/* Chat Companion — shown when canvas has nodes in idea mode */}
+          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
+            <button
+              className={`btn btn-icon btn-chat-icon ${showChat ? 'active-icon' : ''}`}
+              onClick={() => setShowChat((v) => !v)}
+              title="AI Chat Companion"
+            >
+              ✦ CHAT
+            </button>
+          )}
           {/* Export — shown when canvas has nodes in idea mode */}
           {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
             <button
@@ -892,6 +1148,16 @@ export default function App() {
               title={is3D ? 'Switch to 2D canvas' : 'Switch to 3D canvas'}
             >
               ◈ {is3D ? '2D' : '3D'}
+            </button>
+          )}
+          {/* Cross-links toggle */}
+          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && !is3D && (
+            <button
+              className={`btn btn-icon ${showCrossLinks ? 'active-icon' : ''}`}
+              onClick={() => setShowCrossLinks((v) => !v)}
+              title={showCrossLinks ? 'Hide cross-links' : 'Show cross-links'}
+            >
+              ⇌ LINKS
             </button>
           )}
           {active.savedSessions.length > 0 && (
@@ -988,6 +1254,8 @@ export default function App() {
                 nodes={displayNodes}
                 edges={displayEdges}
                 isGenerating={isBusy}
+                isScoring={isScoring}
+                progressText={multiAgentProgress}
                 onNodeClick={idea$.handleNodeClick}
                 onNodeContextMenu={idea$.handleNodeContextMenu}
                 onCloseContextMenu={idea$.handleCloseContextMenu}
@@ -1103,6 +1371,17 @@ export default function App() {
         autoStart={debateAutoStart}
         debateRoundsRef={debateRoundsRef}
         onApplyToResume={displayMode === 'resume' ? handleApplyToResume : undefined}
+        onConsensusReached={handleConsensusReached}
+        onSuggestionExpand={handleSuggestionExpand}
+      />
+
+      {/* ── Chat Companion Panel ── */}
+      <ChatPanel
+        isOpen={showChat}
+        onClose={() => setShowChat(false)}
+        nodes={idea$.rawNodesRef.current}
+        idea={displayMode === 'resume' ? resumeJobLabel : idea}
+        mode={displayMode}
       />
 
       {/* ── Resume Changes Modal ── */}

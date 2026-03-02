@@ -43,6 +43,21 @@ const IdeaNode = memo(({ data }) => {
         }}>★ FOCUS</div>
       )}
 
+      {/* Score badge */}
+      {data.score != null && (
+        <div style={{
+          position: 'absolute', top: 7, right: isStarred ? 65 : 10,
+          display: 'flex', alignItems: 'center', padding: '1px 6px',
+          borderRadius: 4, fontSize: 10, fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          background: data.score >= 8 ? 'rgba(34,197,94,0.15)' : data.score >= 5 ? 'rgba(250,204,21,0.15)' : 'rgba(248,113,113,0.15)',
+          color: data.score >= 8 ? '#22c55e' : data.score >= 5 ? '#facc15' : '#f87171',
+          border: `1px solid ${data.score >= 8 ? 'rgba(34,197,94,0.3)' : data.score >= 5 ? 'rgba(250,204,21,0.3)' : 'rgba(248,113,113,0.3)'}`,
+        }}>
+          {data.score}/10
+        </div>
+      )}
+
       {/* Type badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
         <span style={{ color: config.color, fontSize: '12px' }}>{config.icon}</span>
@@ -52,6 +67,15 @@ const IdeaNode = memo(({ data }) => {
         }}>
           {config.label}
         </span>
+        {data.lens && (
+          <span style={{
+            fontSize: 8, marginLeft: 'auto', fontWeight: 600,
+            letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7,
+            color: data.lens === 'analogical' ? '#4dabf7' : data.lens === 'first_principles' ? '#69db7c' : data.lens === 'adversarial' ? '#ff6b6b' : '#c084fc',
+          }}>
+            {data.lens === 'first_principles' ? 'FP' : data.lens === 'analogical' ? 'AN' : data.lens === 'adversarial' ? 'ADV' : 'SYN'}
+          </span>
+        )}
       </div>
 
       {/* Label */}

@@ -60,6 +60,9 @@ export function buildFlowNode(raw) {
       label: raw.label,
       reasoning: raw.reasoning,
       parentId: raw.parentId || null,
+      relatedIds: raw.relatedIds || [],
+      score: raw.score || null,
+      lens: raw.lens || null,
     },
   };
 }
@@ -118,16 +121,20 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
   const autoSaveTimerRef = useRef(null);
   const drillStackRef = useRef([]);
   const dynamicTypesRef = useRef(null); // for adaptive mode regen/drill
+  const showCrossLinksRef = useRef(false); // toggle cross-link edges
 
   // ── Layout helper ─────────────────────────────────────────
   const applyLayout = useCallback((rawNodes, activeDrillStack) => {
     const displayRaw = activeDrillStack.length > 0
       ? getSubtree(rawNodes, activeDrillStack[activeDrillStack.length - 1].nodeId)
       : rawNodes;
-    const newEdges = buildEdges(displayRaw);
-    const laidOut = computeLayout(displayRaw, newEdges);
+    const parentEdges = buildEdges(displayRaw);
+    const laidOut = computeLayout(displayRaw, parentEdges);
+    const displayEdges = showCrossLinksRef.current
+      ? buildEdges(displayRaw, { showCrossLinks: true })
+      : parentEdges;
     setNodes(laidOut);
-    setEdges(newEdges);
+    setEdges(displayEdges);
   }, []);
 
   // ── On mount: load saved sessions ────────────────────────
@@ -237,6 +244,18 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     }
     return result;
   }, []);
+
+  // ── Set node scores (from scoring API) ───────────────────
+  const setNodeScores = useCallback((scores) => {
+    rawNodesRef.current = rawNodesRef.current.map((n) => {
+      const score = scores[n.id];
+      if (score != null) {
+        return { ...n, data: { ...n.data, score } };
+      }
+      return n;
+    });
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+  }, [applyLayout]);
 
   // ── Save node edit ────────────────────────────────────────
   const handleSaveNodeEdit = useCallback((nodeId, { label, reasoning }) => {
@@ -404,12 +423,12 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     contextMenu, showLoadModal, setShowLoadModal,
     savedSessions, showResumeBanner, setShowResumeBanner,
     // Refs
-    rawNodesRef, abortRef, drillStackRef, dynamicTypesRef,
+    rawNodesRef, abortRef, drillStackRef, dynamicTypesRef, showCrossLinksRef,
     // Handlers
     applyLayout, resetCanvas, handleStop, triggerAutoSave,
     handleLoadSession, handleDeleteSession, handleManualSave,
     handleNodeClick, handleGetAncestors, handleSaveNodeEdit, handleRegenerate,
     handleDrill, handleExitDrill, handleJumpToBreadcrumb,
-    handleNodeContextMenu, handleCloseContextMenu, handleToggleStar,
+    handleNodeContextMenu, handleCloseContextMenu, handleToggleStar, setNodeScores,
   };
 }

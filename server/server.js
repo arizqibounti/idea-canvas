@@ -49,13 +49,15 @@ Examples of domain-appropriate types:
 
 **STEP 3: Output the tree.** After the _meta line, output 18-25 nodes, one JSON object per line.
 
-Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)"}
+Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional array of ids"]}
 
 Rules:
 - The first node MUST be type "seed" with parentId null — the root concept. When reference content is provided, the seed label should name the actual product/service from that content.
 - All other nodes must have a parentId pointing to an existing node.
+- "relatedIds" (optional): an array of ids of OTHER existing nodes that this node has a meaningful cross-relationship with (NOT the parent). Use this for: a Feature that addresses a Constraint, a Metric that measures multiple Features, an Insight that synthesizes multiple Problems, etc. Only add relatedIds when the relationship is genuinely meaningful — not every node needs cross-links. Aim for 3-8 cross-links across the whole tree.
 - Build a rich, deep tree. Think deeply about the input. When reference content is provided, every node should reflect specific, concrete details from that content — not generic advice.
 - Use ids like "type_1", "type_2" (e.g. "audience_1", "keyword_group_1").
+- If a STRUCTURAL TEMPLATE is provided in the user message, use it as a guide for how to organize your tree. Follow the template's type distribution and depth structure, but adapt the specific labels and reasoning to the current input. You may deviate from the template if the input clearly calls for a different structure.
 
 Output rules: one JSON object per line. No markdown, no explanations, no array wrappers. The _meta line comes first, then all nodes.`;
 
@@ -84,12 +86,13 @@ const REGENERATE_PROMPT = `You are a product thinking AI expanding a specific br
 You are given a "focus node" and its ancestor context. Generate 5-10 NEW child nodes branching from the focus node downward. Do NOT re-output the focus node itself or any of its ancestors.
 
 Output rules: one JSON object per line, no markdown, no arrays.
-Each node shape: {"id": "string", "parentId": "string", "type": "...", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)"}
+Each node shape: {"id": "string", "parentId": "string", "type": "...", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional ids of related nodes"]}
 
 Node types: seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight, component, api_endpoint, data_model, tech_debt
 - All direct children must have parentId set to the focus node's id
 - Deeper descendants must chain parentIds correctly through new nodes
 - Use unique, descriptive ids (e.g. "regen_feature_1", "regen_insight_2")
+- "relatedIds" (optional): cross-link to other nodes with meaningful relationships (not the parent)
 
 Generate 5-10 new nodes. Output ONLY new nodes, nothing else.`;
 
@@ -98,13 +101,14 @@ const DRILL_PROMPT = `You are a product thinking AI performing a deep-dive analy
 You are given a "focus node" and the full tree context. Generate 12-15 NEW deep-dive nodes that go significantly deeper on the focus node's specific domain. These should be more granular, more specific, and more detailed than the existing tree nodes.
 
 Output rules: one JSON object per line, no markdown, no arrays.
-Each node shape: {"id": "string", "parentId": "string", "type": "...", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)"}
+Each node shape: {"id": "string", "parentId": "string", "type": "...", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional ids of related nodes"]}
 
 Node types: seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight, component, api_endpoint, data_model, tech_debt
 - All new nodes must have a parentId pointing to the focus node or to other new nodes you generate
 - Use unique ids prefixed with "drill_" (e.g. "drill_feature_1")
 - Do NOT output any existing nodes. Generate ONLY new, deeper nodes.
 - Focus on depth and specificity over breadth
+- "relatedIds" (optional): cross-link to other nodes (existing or new) with meaningful relationships
 
 Generate 12-15 new deep-dive nodes.`;
 
@@ -155,13 +159,65 @@ function sseHeaders(res) {
   res.flushHeaders();
 }
 
+// ── Entity enrichment helper ─────────────────────────────────
+// Uses a fast Claude call to identify companies/entities in the input
+// that aren't already covered by provided URLs, then auto-fetches their sites.
+
+async function enrichEntities(idea, existingUrls = []) {
+  const existingDomains = existingUrls.map(u => {
+    try { return new URL(u).hostname.toLowerCase(); } catch { return ''; }
+  }).filter(Boolean);
+
+  try {
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: `Extract company, organization, or product names from this text that would benefit from website research. Only include names where visiting their website would provide useful context. Do NOT include any entity whose website domain is already in this list: ${existingDomains.join(', ')}
+
+Text: "${idea}"
+
+Return ONLY a JSON array of objects: [{"name": "Entity Name", "url": "https://likely-website.com"}]
+If no entities need research, return []. No explanation, just the JSON array.`,
+      }],
+    });
+
+    const text = message.content[0]?.text?.trim() || '[]';
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const entities = JSON.parse(cleaned);
+    if (!Array.isArray(entities)) return [];
+    return entities.filter(e => e.url && e.name);
+  } catch (err) {
+    console.error('Entity enrichment error:', err.message);
+    return [];
+  }
+}
+
 // ── POST /api/generate ────────────────────────────────────────
 
 app.post('/api/generate', async (req, res) => {
-  const { idea, mode, steeringInstruction, existingNodes, jdText, resumePdf, fetchedUrlContent } = req.body;
+  let { idea, mode, steeringInstruction, existingNodes, jdText, resumePdf, fetchedUrlContent } = req.body;
   if (!idea && !jdText) return res.status(400).json({ error: 'idea or jdText is required' });
 
   sseHeaders(res);
+
+  // ── Entity enrichment: auto-research companies/orgs mentioned in the input ──
+  if (idea && !steeringInstruction && mode !== 'resume') {
+    const existingUrls = (fetchedUrlContent || []).map(u => u.url);
+    const entities = await enrichEntities(idea, existingUrls);
+    if (entities.length) {
+      console.log('Entity enrichment: researching', entities.map(e => e.name));
+      const enrichResults = await Promise.all(entities.map(async (e) => {
+        const result = await fetchPage(e.url, 6000);
+        return result ? { url: result.url, text: result.text, entityName: e.name } : null;
+      }));
+      const enriched = enrichResults.filter(Boolean);
+      if (enriched.length) {
+        fetchedUrlContent = [...(fetchedUrlContent || []), ...enriched];
+      }
+    }
+  }
 
   // Select system prompt based on the active mode
   const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT : SYSTEM_PROMPT;
@@ -208,17 +264,36 @@ Generate 8-15 new nodes.`;
     userContent = `Analyse this job description and generate a resume strategy tree:\n\n${idea}`;
   } else {
     if (fetchedUrlContent?.length) {
-      const contentBlock = fetchedUrlContent.map(u => `--- Content from ${u.url} ---\n${u.text}`).join('\n\n');
+      // Separate user-provided URL content from auto-enriched entity content
+      const userProvided = fetchedUrlContent.filter(u => !u.entityName);
+      const enriched = fetchedUrlContent.filter(u => u.entityName);
+
+      let contentBlock = '';
+      if (userProvided.length) {
+        contentBlock += 'CONTENT FROM USER-REFERENCED URLs (primary source of truth):\n' +
+          userProvided.map(u => `--- ${u.url} ---\n${u.text}`).join('\n\n');
+      }
+      if (enriched.length) {
+        contentBlock += '\n\nAUTO-RESEARCHED CONTEXT (additional background on entities mentioned in the request):\n' +
+          enriched.map(u => `--- ${u.entityName} (${u.url}) ---\n${u.text}`).join('\n\n');
+      }
+
       userContent = `USER'S REQUEST: "${idea}"
 
-Below is the actual content fetched from the URL(s) referenced in the request. This is the PRIMARY source of truth about the product/subject. Analyze it deeply — extract the real product name, features, target audience, value props, and positioning. Then fulfill the user's request using these real details.
+Below is content we've gathered to help you fulfill this request. Analyze it deeply — extract real product names, features, target audiences, value props, competitive positioning, and any relevant details. Then fulfill the user's request using these real details.
 
 ${contentBlock}
 
-Now generate the thinking tree that fulfills the user's request above. Ground every node in the specific details from the reference content.`;
+Now generate the thinking tree that fulfills the user's request above. Ground every node in the specific details from the reference content. When the request involves positioning, strategy, or integration between multiple entities, use details from ALL sources to build a comprehensive, actionable tree.`;
     } else {
       userContent = `Analyze this input and generate the appropriate thinking tree:\n\n"${idea}"`;
     }
+  }
+
+  // Inject template guidance if provided
+  const { templateGuidance } = req.body;
+  if (templateGuidance?.length && typeof userContent === 'string') {
+    userContent += `\n\nSTRUCTURAL TEMPLATES (from successful past sessions — use as structural guidance if the domain matches):\n${JSON.stringify(templateGuidance, null, 2)}`;
   }
 
   try {
@@ -319,6 +394,111 @@ Generate 12-15 new deep-dive nodes that go significantly deeper on the focus nod
     console.error('Error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     res.end();
+  }
+});
+
+// ── POST /api/score-nodes ─────────────────────────────────────
+
+const SCORE_NODES_PROMPT = `You are an expert evaluator scoring nodes in a structured thinking tree. For each node, assign a composite quality score from 1 to 10 based on three dimensions:
+
+1. **Relevance** (to the parent node and the overall seed idea): Is this node clearly connected to its parent? Does it serve the overall goal?
+2. **Specificity** (concrete vs vague): Does the node name something specific and actionable, or is it a generic placeholder anyone could have written?
+3. **Actionability** (can someone act on this?): Could a team member read this node and know what to do next?
+
+Scoring guide:
+- 9-10: Exceptional — specific, directly relevant, immediately actionable with concrete details
+- 7-8: Strong — clearly relevant and specific, minor gaps in actionability
+- 5-6: Adequate — relevant but somewhat vague or generic
+- 3-4: Weak — tangentially relevant or very vague
+- 1-2: Poor — irrelevant, contradictory, or meaningless
+
+Output a JSON object mapping node id to score:
+{"node_id_1": 8, "node_id_2": 5, ...}
+
+Score EVERY node provided. Output ONLY the JSON object. No markdown, no explanation.`;
+
+app.post('/api/score-nodes', async (req, res) => {
+  const { nodes, idea } = req.body;
+  if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
+
+  try {
+    const nodesSummary = nodes.map(n => ({
+      id: n.id,
+      type: n.type || n.data?.type,
+      label: n.label || n.data?.label,
+      reasoning: n.reasoning || n.data?.reasoning,
+      parentId: n.parentId || n.data?.parentId,
+    }));
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: SCORE_NODES_PROMPT,
+      messages: [{
+        role: 'user',
+        content: `Idea: "${idea}"\n\nTree nodes to score:\n${JSON.stringify(nodesSummary, null, 2)}`,
+      }],
+    });
+
+    let text = message.content[0]?.text || '{}';
+    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    const scores = JSON.parse(text);
+    res.json({ scores });
+  } catch (err) {
+    console.error('Score nodes error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/extract-template ───────────────────────────────
+
+const EXTRACT_TEMPLATE_PROMPT = `You are a meta-cognitive analyst. Given a finalized product thinking tree (one that has survived critique and been refined), extract its underlying structural pattern as a reusable template.
+
+Your job: abstract the tree into a domain-agnostic structural pattern that captures HOW this tree was organized, not WHAT it was about.
+
+For each node in the abstracted template, output:
+- type: the node type (as-is from the tree)
+- label_pattern: an abstract description of what kind of content goes here (e.g., "primary user segment", "core technical constraint", "key success metric")
+- parentType: the type of its parent node (null for root)
+- depth: how deep in the tree (0 for seed, 1 for direct children, etc.)
+
+Also provide:
+- domain: the domain this template is best suited for (e.g. "product ideation", "marketing campaign", "sales strategy")
+- idea_summary: a one-line abstracted description of the original idea
+
+Output a JSON object:
+{
+  "domain": "string",
+  "idea_summary": "string (1 sentence)",
+  "structure": [
+    { "type": "string", "label_pattern": "string", "parentType": "string|null", "depth": 0 }
+  ]
+}
+
+Output ONLY the JSON object. No markdown, no explanation.`;
+
+app.post('/api/extract-template', async (req, res) => {
+  const { nodes, idea } = req.body;
+  if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
+
+  try {
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: EXTRACT_TEMPLATE_PROMPT,
+      messages: [{
+        role: 'user',
+        content: `Idea: "${idea}"\n\nFinalized tree:\n${JSON.stringify(nodes, null, 2)}`,
+      }],
+    });
+
+    let text = message.content[0]?.text || '{}';
+    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    const template = JSON.parse(text);
+    res.json(template);
+  } catch (err) {
+    console.error('Extract template error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1509,6 +1689,63 @@ Generate the change manifest now.`,
   }
 });
 
+// ── Shared fetch helpers ──────────────────────────────────────
+
+const FETCH_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (compatible; IdeaGraphBot/1.0)',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+};
+
+function stripHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractInternalLinks(html, baseUrl) {
+  const { origin } = new URL(baseUrl);
+  const linkRegex = /<a[^>]+href=["']([^"'#]+)["']/gi;
+  const seen = new Set();
+  const links = [];
+  let match;
+  while ((match = linkRegex.exec(html)) !== null) {
+    try {
+      const href = match[1];
+      // Skip mailto, tel, javascript, anchors, external links, assets
+      if (/^(mailto:|tel:|javascript:)/.test(href)) continue;
+      const resolved = new URL(href, baseUrl).href.split('#')[0].split('?')[0];
+      if (!resolved.startsWith(origin)) continue;
+      if (seen.has(resolved)) continue;
+      if (/\.(png|jpg|jpeg|gif|svg|css|js|ico|pdf|zip|mp4|webp|woff|ttf)$/i.test(resolved)) continue;
+      seen.add(resolved);
+      links.push(resolved);
+    } catch { /* skip malformed URLs */ }
+  }
+  return links;
+}
+
+async function fetchPage(url, maxChars = 12000) {
+  try {
+    const response = await fetch(url, { headers: FETCH_HEADERS });
+    if (!response.ok) return null;
+    const html = await response.text();
+    const text = stripHtml(html).slice(0, maxChars);
+    return { url, text, html };
+  } catch {
+    return null;
+  }
+}
+
 // ── POST /api/fetch-url ────────────────────────────────────────
 // Proxy-fetches a URL and returns stripped plain text (for JD scraping)
 
@@ -1517,35 +1754,317 @@ app.post('/api/fetch-url', async (req, res) => {
   if (!url) return res.status(400).json({ error: 'url is required' });
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; IdeaGraphBot/1.0)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-    const html = await response.text();
-
-    // Strip scripts, styles, and HTML tags; decode common entities
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&#\d+;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 12000);
-
-    res.json({ text });
+    const result = await fetchPage(url);
+    if (!result) throw new Error('Failed to fetch page');
+    res.json({ text: result.text });
   } catch (err) {
     console.error('fetch-url error:', err.message);
     res.status(500).json({ error: `Failed to fetch URL: ${err.message}` });
+  }
+});
+
+// ── POST /api/crawl-site ──────────────────────────────────────
+// Crawls a website: fetches the root page, discovers internal links,
+// then fetches the most important subpages. Returns all page content.
+
+app.post('/api/crawl-site', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+
+  const MAX_PAGES = 8;
+  const PER_PAGE_CHARS = 6000;
+
+  try {
+    // 1. Fetch the root page
+    const root = await fetchPage(url, PER_PAGE_CHARS);
+    if (!root) throw new Error('Failed to fetch root page');
+
+    // 2. Extract internal links
+    const internalLinks = extractInternalLinks(root.html, url);
+
+    // 3. Prioritize important pages — common high-value paths first
+    const priorityPatterns = [
+      /\/(about|company|team)/i,
+      /\/(solution|product|service|feature)/i,
+      /\/(pricing|plan)/i,
+      /\/(platform|technology|how-it-works)/i,
+      /\/(integrat|partner|api)/i,
+      /\/(case-stud|customer|testimonial|success)/i,
+      /\/(blog|resource|whitepaper)/i,
+      /\/(contact|demo|trial)/i,
+    ];
+
+    const scored = internalLinks.map(link => {
+      let score = 0;
+      for (const p of priorityPatterns) {
+        if (p.test(link)) { score += 10; break; }
+      }
+      // Shorter paths tend to be more important top-level pages
+      const pathDepth = (new URL(link).pathname.match(/\//g) || []).length;
+      score -= pathDepth;
+      return { link, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const topLinks = scored.slice(0, MAX_PAGES - 1).map(s => s.link);
+
+    // 4. Fetch subpages in parallel
+    const subResults = await Promise.all(topLinks.map(link => fetchPage(link, PER_PAGE_CHARS)));
+    const pages = [
+      { url: root.url, text: root.text },
+      ...subResults.filter(Boolean).map(r => ({ url: r.url, text: r.text })),
+    ];
+
+    console.log(`crawl-site: fetched ${pages.length} pages from ${url}`);
+    res.json({ pages });
+  } catch (err) {
+    console.error('crawl-site error:', err.message);
+    res.status(500).json({ error: `Failed to crawl site: ${err.message}` });
+  }
+});
+
+// ── POST /api/generate-multi (Multi-Agent: 3 Lenses + Merge) ─
+
+const LENS_ANALOGICAL_PROMPT = SYSTEM_PROMPT + `
+
+REASONING LENS: ANALOGICAL THINKING
+Your approach: For this input, first identify the 2-3 most structurally similar existing systems, products, or solutions (from any domain). Map their architecture, user flows, and key decisions onto this idea. Your tree should be grounded in proven patterns — what worked elsewhere and how it translates here.
+
+For each node, your reasoning should reference the specific analogy.
+
+Mark every node with "lens": "analogical" in the JSON output.`;
+
+const LENS_FIRST_PRINCIPLES_PROMPT = SYSTEM_PROMPT + `
+
+REASONING LENS: FIRST-PRINCIPLES DECOMPOSITION
+Your approach: Ignore existing solutions entirely. Decompose this idea to its fundamental truths — what are the atomic facts, constraints, and user needs? Then rebuild the solution from scratch based only on those fundamentals.
+
+For each node, your reasoning should trace back to a fundamental truth.
+
+Mark every node with "lens": "first_principles" in the JSON output.`;
+
+const LENS_ADVERSARIAL_PROMPT = SYSTEM_PROMPT + `
+
+REASONING LENS: ADVERSARIAL / FAILURE-MODE THINKING
+Your approach: Start from the assumption that this idea will fail. Identify the 3-5 most likely failure modes, then work backwards — what would the idea need to look like to survive each failure mode? Your tree should be a pre-mortem turned into a solution.
+
+For each node, your reasoning should reference the failure mode it defends against.
+
+Mark every node with "lens": "adversarial" in the JSON output.`;
+
+const MULTI_AGENT_MERGE_PROMPT = `You are a synthesis AI merging three independent analyses of the same idea into a single, unified thinking tree. Each analysis used a different reasoning lens:
+
+1. **Analogical**: Drew on existing systems and products as structural templates
+2. **First-principles**: Decomposed to fundamental truths and rebuilt from scratch
+3. **Adversarial**: Started from failure modes and worked backwards to a resilient design
+
+Your job: create a SINGLE coherent tree that takes the best insights from all three lenses. Rules:
+- Output a _meta line first (same format as the individual analyses)
+- Prefer nodes that appear (in different forms) across multiple lenses — these are convergent insights
+- Include unique high-value nodes from any single lens if they add genuinely new dimensions
+- Resolve contradictions by picking the more specific/actionable version
+- Preserve the "lens" field on each node so the UI can show which lens(es) contributed
+- If a node synthesizes insights from multiple lenses, use "lens": "synthesis"
+- Target 18-25 nodes total (don't just concatenate — merge and synthesize)
+
+Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences referencing which lens(es) informed this)", "relatedIds": [], "lens": "analogical|first_principles|adversarial|synthesis"}
+
+Output rules: one JSON object per line. _meta line first, then nodes. No markdown, no arrays.`;
+
+app.post('/api/generate-multi', async (req, res) => {
+  let { idea, mode, fetchedUrlContent, templateGuidance } = req.body;
+  if (!idea) return res.status(400).json({ error: 'idea is required' });
+
+  sseHeaders(res);
+
+  // Build the base user content (reuse logic from /api/generate)
+  let baseUserContent;
+  if (fetchedUrlContent?.length) {
+    const userProvided = fetchedUrlContent.filter(u => !u.entityName);
+    const enriched = fetchedUrlContent.filter(u => u.entityName);
+    let contentBlock = '';
+    if (userProvided.length) {
+      contentBlock += 'CONTENT FROM USER-REFERENCED URLs:\n' +
+        userProvided.map(u => `--- ${u.url} ---\n${u.text}`).join('\n\n');
+    }
+    if (enriched.length) {
+      contentBlock += '\n\nAUTO-RESEARCHED CONTEXT:\n' +
+        enriched.map(u => `--- ${u.entityName} (${u.url}) ---\n${u.text}`).join('\n\n');
+    }
+    baseUserContent = `USER'S REQUEST: "${idea}"\n\n${contentBlock}\n\nGenerate the thinking tree.`;
+  } else {
+    baseUserContent = `Analyze this input and generate the appropriate thinking tree:\n\n"${idea}"`;
+  }
+
+  if (templateGuidance?.length) {
+    baseUserContent += `\n\nSTRUCTURAL TEMPLATES:\n${JSON.stringify(templateGuidance, null, 2)}`;
+  }
+
+  try {
+    // Phase 1: Run 3 lenses in parallel
+    res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Lens 1/3: Analogical thinking...' })}\n\n`);
+
+    const lensPrompts = [
+      { prompt: LENS_ANALOGICAL_PROMPT, name: 'analogical' },
+      { prompt: LENS_FIRST_PRINCIPLES_PROMPT, name: 'first_principles' },
+      { prompt: LENS_ADVERSARIAL_PROMPT, name: 'adversarial' },
+    ];
+
+    const lensResults = await Promise.all(lensPrompts.map(async (lens, i) => {
+      const message = await client.messages.create({
+        model: 'claude-opus-4-5',
+        max_tokens: 4096,
+        system: lens.prompt,
+        messages: [{ role: 'user', content: baseUserContent }],
+      });
+      // Send progress after each lens completes
+      if (i === 0) res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Lens 2/3: First-principles thinking...' })}\n\n`);
+      if (i === 1) res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Lens 3/3: Adversarial thinking...' })}\n\n`);
+      return message.content[0]?.text || '';
+    }));
+
+    // Phase 2: Merge
+    res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Merging 3 perspectives into unified tree...' })}\n\n`);
+
+    const mergeInput = lensResults.map((result, i) =>
+      `=== ${lensPrompts[i].name.toUpperCase()} LENS OUTPUT ===\n${result}`
+    ).join('\n\n');
+
+    const mergeMessage = `Original idea: "${idea}"\n\nThree independent analyses to merge:\n\n${mergeInput}\n\nMerge these into a single unified tree. Output _meta line first, then nodes.`;
+
+    const mergeStream = client.messages.stream({
+      model: 'claude-opus-4-5',
+      max_tokens: 4096,
+      system: MULTI_AGENT_MERGE_PROMPT,
+      messages: [{ role: 'user', content: mergeMessage }],
+    });
+
+    await streamToSSE(res, mergeStream);
+  } catch (err) {
+    console.error('Multi-agent error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+});
+
+// ── Chat Companion ────────────────────────────────────────────
+
+const CHAT_PERSONAS = {
+  idea:     'You are a product strategist. Help the user turn their thinking tree into actionable outputs — proposals, emails, PRDs, pitch decks. Be specific, concise, and grounded in the tree analysis.',
+  codebase: 'You are a senior software engineer. Help the user turn their codebase analysis into actionable outputs — technical specs, architecture docs, READMEs, migration plans. Be specific and grounded in the tree analysis.',
+  resume:   'You are a career coach. Help the user turn their resume strategy tree into actionable outputs — cover letters, LinkedIn summaries, interview prep, and targeted resume bullets. Be specific and grounded in the tree analysis.',
+  decision: 'You are a decision analyst. Help the user turn their decision tree into actionable outputs — decision briefs, pros/cons summaries, stakeholder emails, recommendation memos. Be specific and grounded in the tree analysis.',
+  writing:  'You are a writing editor. Help the user turn their writing analysis tree into actionable outputs — blog posts, article outlines, social threads, essay drafts. Be specific and grounded in the tree analysis.',
+  plan:     'You are a project manager. Help the user turn their project plan tree into actionable outputs — project plans, timelines, resource briefs, status updates. Be specific and grounded in the tree analysis.',
+};
+
+app.post('/api/chat', (req, res) => {
+  const { messages, treeContext, idea, mode } = req.body;
+
+  if (!messages || !messages.length) {
+    return res.status(400).json({ error: 'messages required' });
+  }
+
+  sseHeaders(res);
+
+  const persona = CHAT_PERSONAS[mode] || CHAT_PERSONAS.idea;
+
+  let systemPrompt = persona;
+  if (treeContext) {
+    systemPrompt += `\n\nThe user has generated the following thinking tree for their input "${idea || ''}":\n\n${treeContext}\n\nUse this tree as deep context. Reference specific nodes and insights when relevant. Your outputs should be grounded in this analysis.`;
+  }
+
+  const stream = client.messages.stream({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    system: systemPrompt,
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+  });
+
+  // Stream raw text chunks (not JSON nodes) for chat
+  let started = false;
+  stream.on('text', (text) => {
+    started = true;
+    res.write(`data: ${JSON.stringify({ text })}\n\n`);
+  });
+
+  stream.on('finalMessage', () => {
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+
+  stream.on('error', (err) => {
+    console.error('Chat stream error:', err);
+    if (!started) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    }
+    res.end();
+  });
+});
+
+// ── Expand Suggestion ─────────────────────────────────────────
+
+const EXPAND_SUGGESTION_PROMPT = `You are a product thinking AI. You receive a suggestion from a debate critique round and a full existing tree. Your job:
+
+1. FIRST, output a single "anchor" node that represents this suggestion, placed under the most appropriate existing parent node.
+2. THEN, output 5-8 child nodes that expand on the suggestion — concrete sub-points, implementation details, metrics, constraints, or related features.
+
+Output rules: one JSON object per line. No markdown, no explanations, no array wrappers.
+
+Each node: {"id": "string", "parentId": "string", "type": "string", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional ids"]}
+
+The FIRST node (the anchor) MUST have:
+- parentId set to the id of the most relevant existing node in the tree
+- An id starting with "sug_"
+- A type that fits the suggestion's nature (feature, constraint, metric, insight, etc.)
+
+All subsequent nodes MUST have parentId pointing to either the anchor node or another new node you created.
+Use ids like "sug_1", "sug_detail_1", "sug_detail_2", etc.`;
+
+app.post('/api/expand-suggestion', async (req, res) => {
+  const { suggestion, idea, nodes, mode, dynamicTypes } = req.body;
+  if (!suggestion) return res.status(400).json({ error: 'suggestion is required' });
+
+  sseHeaders(res);
+
+  const treeContext = (nodes || []).map(n =>
+    `- [${n.type}] id="${n.id}" parentId="${n.parentId || 'null'}" label="${n.label}"`
+  ).join('\n');
+
+  const availableTypes = dynamicTypes?.length
+    ? dynamicTypes.map(t => t.type).join(', ')
+    : 'seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight';
+
+  const userMessage = `Suggestion to expand: "${suggestion}"
+
+Original idea: "${idea || ''}"
+Mode: ${mode || 'idea'}
+
+Available node types: ${availableTypes}
+
+Existing tree:
+${treeContext}
+
+Place the suggestion under the most relevant existing node, then expand it with 5-8 child nodes.`;
+
+  let prompt = EXPAND_SUGGESTION_PROMPT;
+  if (dynamicTypes?.length) {
+    const typeList = dynamicTypes.map(t => t.type).join(', ');
+    prompt += `\n\nAvailable node types for this tree: ${typeList}`;
+  }
+
+  try {
+    const stream = client.messages.stream({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: prompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    await streamToSSE(res, stream);
+  } catch (err) {
+    console.error('Expand suggestion error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
   }
 });
 

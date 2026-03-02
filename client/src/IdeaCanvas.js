@@ -54,6 +54,8 @@ export default function IdeaCanvas({
   nodes,
   edges,
   isGenerating,
+  isScoring,
+  progressText,
   onNodeClick,
   onNodeContextMenu,
   onCloseContextMenu,
@@ -163,7 +165,31 @@ export default function IdeaCanvas({
           }}
         >
           <PulsingDot />
-          AGENT THINKING...
+          {progressText || 'AGENT THINKING...'}
+        </div>
+      )}
+      {isScoring && !isGenerating && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#16161f',
+            border: '1px solid #2a2a3a',
+            borderRadius: '20px',
+            padding: '8px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            fontSize: '11px',
+            color: '#8888aa',
+            letterSpacing: '0.06em',
+            zIndex: 10,
+          }}
+        >
+          <PulsingDot />
+          SCORING NODES...
         </div>
       )}
     </div>
