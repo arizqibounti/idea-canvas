@@ -215,33 +215,83 @@ function TimelineBar2D({ roundRange, onRoundRangeChange, isPlaying, onPlayToggle
   );
 }
 
+// ── Access Denied screen (403 — email not in allowlist) ──
+function AccessDenied({ email, onLogout }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100vh', background: '#0a0a0f', color: '#e8e8f0', fontFamily: 'var(--font-mono, monospace)' }}>
+      <div style={{ textAlign: 'center', maxWidth: 420, padding: '0 24px' }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ fontSize: 16, marginBottom: 8, letterSpacing: '0.08em', color: '#f87171' }}>ACCESS DENIED</h2>
+        <p style={{ fontSize: 13, opacity: 0.6, marginBottom: 24, lineHeight: 1.6 }}>
+          <strong style={{ color: '#e8e8f0' }}>{email}</strong> is not authorized to use ThoughtClaw.
+          <br />Contact the administrator for access.
+        </p>
+        <button
+          onClick={onLogout}
+          style={{
+            background: 'transparent', border: '1px solid #2a2a3a', borderRadius: 8,
+            color: '#8888aa', padding: '10px 24px', cursor: 'pointer', fontSize: 12,
+            letterSpacing: '0.06em', fontFamily: 'inherit',
+          }}
+        >
+          SIGN OUT
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Loading screen ──
+function LoadingScreen() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100vh', background: '#0a0a0f', color: '#6c63ff', fontFamily: 'var(--font-mono, monospace)' }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>◈</div>
+        <div style={{ fontSize: 12, letterSpacing: '0.1em', opacity: 0.7 }}>LOADING...</div>
+      </div>
+    </div>
+  );
+}
+
 // ── Route wrapper: /share/:id → ShareViewer, landing page if not logged in, else → main app ──
 function AppRouter() {
-  const { user, loading, isConfigured } = useAuth();
+  const { user, loading, logout, isConfigured } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
+  const [accessDenied, setAccessDenied] = useState(false);
 
-  // Share links are always public (no auth needed)
+  // Check access on first authenticated API call
+  useEffect(() => {
+    if (!user || !isConfigured) return;
+    // Ping health-like endpoint to check if user is allowed
+    authFetch(`${API_URL}/api/usage`)
+      .then(res => {
+        if (res.status === 403) setAccessDenied(true);
+      })
+      .catch(() => { /* ignore network errors */ });
+  }, [user, isConfigured]);
+
+  // Share links require auth
   const shareMatch = window.location.pathname.match(/^\/share\/([a-zA-Z0-9_-]+)$/);
   if (shareMatch) {
+    if (loading) return <LoadingScreen />;
+    if (isConfigured && !user) return <LandingPage shareId={shareMatch[1]} />;
+    if (accessDenied) return <AccessDenied email={user?.email} onLogout={logout} />;
     return <ShareViewer shareId={shareMatch[1]} />;
   }
 
   // Show loading while Firebase checks auth state
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: '#0a0a0f', color: '#6c63ff', fontFamily: 'var(--font-mono, monospace)' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>◈</div>
-          <div style={{ fontSize: 12, letterSpacing: '0.1em', opacity: 0.7 }}>LOADING...</div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen />;
 
   // If Firebase is configured and user not signed in, show landing page
   if (isConfigured && !user) {
     return <LandingPage />;
+  }
+
+  // If user is signed in but not authorized (403 from server)
+  if (accessDenied) {
+    return <AccessDenied email={user?.email} onLogout={logout} />;
   }
 
   // Authenticated (or auth not configured = local dev)

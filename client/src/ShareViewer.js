@@ -1,6 +1,7 @@
 // ── Share Viewer ─────────────────────────────────────────────
 // Standalone view for shared tree links. Fetches snapshot from
 // /api/shares/:id and renders it in a read-only ReactFlow canvas.
+// Requires authentication — redirects to login if not signed in.
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
@@ -15,6 +16,7 @@ import '@xyflow/react/dist/style.css';
 import IdeaNode from './IdeaNode';
 import { getNodeConfig } from './nodeConfig';
 import { computeLayout, buildEdges } from './layoutUtils';
+import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 const nodeTypes = { ideaNode: IdeaNode };
@@ -109,13 +111,16 @@ function ShareViewerInner({ share }) {
 export default function ShareViewer({ shareId }) {
   const [share, setShare] = useState(null);
   const [error, setError] = useState(null);
+  const [errorCode, setErrorCode] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!shareId) return;
     setLoading(true);
-    fetch(`${API_URL}/api/shares/${shareId}`)
+    authFetch(`${API_URL}/api/shares/${shareId}`)
       .then((res) => {
+        if (res.status === 401) { setErrorCode(401); throw new Error('Sign in to view this shared tree'); }
+        if (res.status === 403) { setErrorCode(403); throw new Error('Your account is not authorized to view this content'); }
         if (res.status === 410) return res.json().then((d) => { throw new Error('This share link has expired'); });
         if (res.status === 404) throw new Error('Share not found');
         if (!res.ok) throw new Error(`Error loading share (${res.status})`);
@@ -124,6 +129,7 @@ export default function ShareViewer({ shareId }) {
       .then((data) => {
         setShare(data);
         setError(null);
+        setErrorCode(null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -141,7 +147,7 @@ export default function ShareViewer({ shareId }) {
   if (error) {
     return (
       <div className="share-viewer-status">
-        <div className="share-error-icon">✕</div>
+        <div className="share-error-icon">{errorCode === 403 ? '🔒' : '✕'}</div>
         <span className="share-error-text">{error}</span>
         <a href="/" className="share-back-link">Go to ThoughtClaw</a>
       </div>

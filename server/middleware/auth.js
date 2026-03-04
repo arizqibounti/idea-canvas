@@ -11,6 +11,24 @@ let authReady = false;
 // In production (Cloud Run), set ENABLE_AUTH=true to require Firebase tokens.
 const AUTH_ENABLED = process.env.ENABLE_AUTH === 'true';
 
+// ── Email Allowlist ─────────────────────────────────────────────
+// Restrict access to specific emails and/or email domains.
+// If both are empty, all authenticated users are allowed (no restriction).
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
+  .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const ALLOWED_DOMAINS = (process.env.ALLOWED_DOMAINS || '')
+  .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+
+function isEmailAllowed(email) {
+  // If no allowlist configured, allow everyone
+  if (ALLOWED_EMAILS.length === 0 && ALLOWED_DOMAINS.length === 0) return true;
+  const lower = (email || '').toLowerCase();
+  if (ALLOWED_EMAILS.includes(lower)) return true;
+  const domain = lower.split('@')[1];
+  if (domain && ALLOWED_DOMAINS.includes(domain)) return true;
+  return false;
+}
+
 function initAdmin() {
   if (!AUTH_ENABLED) {
     console.log('Auth disabled (set ENABLE_AUTH=true to enforce)');
@@ -23,6 +41,11 @@ function initAdmin() {
     }
     authReady = true;
     console.log('Firebase Admin initialized — auth enforced');
+    if (ALLOWED_EMAILS.length || ALLOWED_DOMAINS.length) {
+      console.log(`Access restricted to: ${ALLOWED_EMAILS.length} email(s), ${ALLOWED_DOMAINS.length} domain(s)`);
+    } else {
+      console.log('No email allowlist — all authenticated users can access');
+    }
   } catch (err) {
     console.log('Firebase Admin not available — auth disabled (all requests allowed)');
   }
@@ -47,6 +70,7 @@ async function verifyToken(token) {
 /**
  * requireAuth — Express middleware.
  * Blocks request with 401 if no valid Bearer token.
+ * Blocks with 403 if email is not in the allowlist.
  * When auth is disabled (no Firebase Admin), allows all requests through.
  */
 async function requireAuth(req, res, next) {
@@ -67,6 +91,11 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 
+  // Check email allowlist
+  if (!isEmailAllowed(user.email)) {
+    return res.status(403).json({ error: 'Access denied. Your email is not authorized to use this application.' });
+  }
+
   req.user = user;
   next();
 }
@@ -74,6 +103,7 @@ async function requireAuth(req, res, next) {
 /**
  * optionalAuth — Express middleware.
  * Attaches req.user if valid token present, but doesn't block if missing.
+ * Still enforces email allowlist if token is present.
  */
 async function optionalAuth(req, res, next) {
   if (!authReady) {
@@ -84,7 +114,11 @@ async function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.split('Bearer ')[1];
-    req.user = await verifyToken(token);
+    const user = await verifyToken(token);
+    if (user && !isEmailAllowed(user.email)) {
+      return res.status(403).json({ error: 'Access denied. Your email is not authorized to use this application.' });
+    }
+    req.user = user;
   } else {
     req.user = null;
   }

@@ -52,7 +52,8 @@ const shares = require('./gateway/shares');
 // ── Public Routes (no auth needed) ──────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-app.get('/api/shares/:id', optionalAuth, async (req, res) => {
+// Share links require auth + allowlist in production (locked down)
+app.get('/api/shares/:id', requireAuth, async (req, res) => {
   try {
     const share = await shares.loadShare(req.params.id);
     if (!share) return res.status(404).json({ error: 'Share not found' });

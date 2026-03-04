@@ -19,7 +19,7 @@ const MODES = [
   { icon: '◉', label: 'PLAN', desc: 'Project roadmapping', color: '#69db7c' },
 ];
 
-export default function LandingPage() {
+export default function LandingPage({ shareId }) {
   const { login } = useAuth();
 
   return (
@@ -29,8 +29,10 @@ export default function LandingPage() {
         <div className="landing-logo">◈</div>
         <h1 className="landing-title">THOUGHTCLAW</h1>
         <p className="landing-tagline">
-          AI-powered structured thinking. Turn any idea into a visual thinking tree
-          with research agents, multi-agent debate, and interactive exploration.
+          {shareId
+            ? 'Sign in with Google to view this shared thinking tree.'
+            : 'AI-powered structured thinking. Turn any idea into a visual thinking tree with research agents, multi-agent debate, and interactive exploration.'
+          }
         </p>
         <button className="landing-cta" onClick={login}>
           <svg width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: 8, verticalAlign: 'middle' }}>
