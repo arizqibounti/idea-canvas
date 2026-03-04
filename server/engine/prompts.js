@@ -1002,11 +1002,53 @@ ${JSON.stringify(nodes, null, 2)}
 Now synthesize the debate into tree updates. Update challenged nodes with debate-validated reasoning and add any missing synthesis nodes.`;
 }
 
+// ── Fractal expansion prompt ─────────────────────────────────
+
+const FRACTAL_EXPAND_PROMPT = `You are a thinking AI performing a fractal expansion on a specific concept.
+
+Given a "focus node" and its ancestor chain (root → ... → focus), generate NEW child
+nodes that decompose this concept into its most important sub-dimensions.
+
+ADAPTIVE DEPTH: Generate between 2 and 7 children based on the concept's complexity:
+- Simple/concrete concepts (e.g. a specific metric, keyword): 2-3 children
+- Moderate concepts (e.g. a feature, requirement): 3-5 children
+- Rich/abstract concepts (e.g. a strategy, problem space): 5-7 children
+
+Each child should reveal a NEW dimension not already in the tree. Think: what would
+someone discover if they "zoomed in" on this concept? Prioritize non-obvious insights.
+
+Output rules: one JSON per line, no markdown, no arrays.
+Node shape: {"id": "string", "parentId": "string", "type": "string", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)"}
+
+- All direct children MUST have parentId = focus node's id
+- Use ids prefixed with "fx_{focusNodeId}_" (e.g. "fx_feature_1_sub1")
+- Do NOT output the focus node or any existing nodes
+- Each child must have a unique, descriptive id`;
+
+// ── Fractal select prompt (autonomous mode) ──────────────────
+
+const FRACTAL_SELECT_PROMPT = `You are a strategic thinking AI evaluating which concept in this tree deserves
+deeper exploration. Given a set of leaf nodes (unexplored concepts) and the full
+tree context, select the ONE node with the highest "depth potential."
+
+Consider:
+- Novelty: Which concept, if expanded, would reveal the most non-obvious insights?
+- Strategic importance: Which is most critical to the overall idea's success?
+- Underexplored: Which concept has the most hidden complexity not yet surfaced?
+- Surprise factor: Which would a human be most likely to overlook?
+
+Output a single JSON object:
+{"selectedNodeId": "...", "reasoning": "1-2 sentences why this node deserves deeper exploration"}
+
+Output ONLY the JSON. No markdown, no explanation.`;
+
 module.exports = {
   SYSTEM_PROMPT,
   RESUME_SYSTEM_PROMPT,
   REGENERATE_PROMPT,
   DRILL_PROMPT,
+  FRACTAL_EXPAND_PROMPT,
+  FRACTAL_SELECT_PROMPT,
   SCORE_NODES_PROMPT,
   EXTRACT_TEMPLATE_PROMPT,
   MOCKUP_PROMPT,

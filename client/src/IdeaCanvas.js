@@ -84,6 +84,7 @@ export default function IdeaCanvas({
   onNodeClick,
   onNodeContextMenu,
   onCloseContextMenu,
+  onNodeDoubleClick,
   drillStack,
   onExitDrill,
   onJumpToBreadcrumb,
@@ -114,6 +115,13 @@ export default function IdeaCanvas({
     [onNodeClick]
   );
 
+  const handleNodeDoubleClick = useCallback(
+    (_, node) => {
+      if (onNodeDoubleClick) onNodeDoubleClick(node.id);
+    },
+    [onNodeDoubleClick]
+  );
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <ReactFlow
@@ -131,6 +139,7 @@ export default function IdeaCanvas({
         nodesDraggable={!isGenerating}
         elementsSelectable={true}
         onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
         onNodeContextMenu={handleNodeContextMenu}
         onPaneClick={onCloseContextMenu}
       >

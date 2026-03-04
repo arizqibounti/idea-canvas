@@ -24,6 +24,8 @@ The application is running with all core, meta, and infrastructure features buil
 - [x] `/api/generate-research` — Research mode (plan strategy → crawl URLs → synthesize tree)
 - [x] `/api/regenerate` — Branch expansion (5–10 nodes); accepts `dynamicTypes`
 - [x] `/api/drill` — Deep-dive node generation (12–15 nodes); accepts `dynamicTypes`
+- [x] `/api/fractal-expand` — Fractal expansion of leaf nodes (2–7 adaptive children based on complexity)
+- [x] `/api/fractal-select` — AI evaluates leaf nodes, selects most promising for autonomous exploration
 - [x] `/api/mockup` — Animated HTML prototype generation
 - [x] `/api/analyze-codebase` — Codebase reverse-engineering (20–30 nodes)
 - [x] `/api/score-nodes` — Node quality scoring (relevance, specificity, actionability)
@@ -63,6 +65,8 @@ The application is running with all core, meta, and infrastructure features buil
 - [x] Codebase upload UI (drag-and-drop, file filtering)
 - [x] Node search with dimming of non-matching nodes
 - [x] Cross-link toggle for non-parent relationship edges
+- [x] Fractal exploration: ⊕ inline expand on leaf nodes, branch collapse/expand (▸/▾ chevrons), depth indicators (L2+), unexplored leaf node glow, double-click drill
+- [x] Autonomous ∞ Explore mode: AI-driven curiosity engine (1–10 configurable rounds), live progress with AI reasoning, ∞ badge on auto-explored nodes, stop anytime
 
 ### Frontend — Panels
 - [x] Debate panel with mode-specific titles, personas, start/stop labels, consensus messages, suggestion chips (`DebatePanel.js`)
@@ -121,6 +125,23 @@ The application is running with all core, meta, and infrastructure features buil
 - [x] `dynamicTypes` threading to regenerate and drill endpoints
 
 ---
+
+### Fractal Exploration
+- [x] Server: `FRACTAL_EXPAND_PROMPT` — adaptive 2–7 child decomposition with complexity-based count
+- [x] Server: `FRACTAL_SELECT_PROMPT` — AI evaluates leaf nodes for autonomous selection
+- [x] Server: `handleFractalExpand` — SSE streaming of fractal children (max_tokens 2048)
+- [x] Server: `handleFractalSelect` — non-streaming JSON response with selectedNodeId + reasoning
+- [x] Server: Routes `/api/fractal-expand` and `/api/fractal-select` wired
+- [x] Client: `handleFractalExpand(nodeId)` — builds ancestor chain, streams children, marks expanded
+- [x] Client: `handleToggleCollapse(nodeId)` — toggles collapse state, re-layouts canvas
+- [x] Client: `handleAutoFractal(idea, maxRounds, onProgress)` — autonomous loop with abort controller
+- [x] Client: `filterCollapsed(nodes, collapsedSet)` — BFS utility to hide collapsed subtrees
+- [x] Client: `computeDepths(nodes)` — BFS depth assignment for all nodes
+- [x] Client: IdeaNode ⊕ expand button on leaf nodes, collapse chevron (▸/▾ + count) on parents
+- [x] Client: Unexplored leaf glow effect, depth indicator (L2+), ∞ auto-explore badge
+- [x] Client: ∞ EXPLORE toolbar button + auto-fractal panel (slider 1–10 rounds, progress, stop)
+- [x] Client: Double-click drill via `onNodeDoubleClick` in IdeaCanvas
+- [x] CSS: Fractal expand/collapse/glow/pulse animations, auto-fractal panel styles
 
 ## Potential Next Steps
 

@@ -10,6 +10,21 @@ const IdeaNode = memo(({ data }) => {
   const searchActive = data.searchActive === true;
   const searchMatch = data.searchMatch !== false;
   const dimmedBySearch = searchActive && !searchMatch;
+  const isUnexplored = (data.childCount === 0) && !data.expanded && !data.isExpanding;
+  const isLeaf = data.childCount === 0;
+
+  // Build box shadow — add subtle bottom glow for unexplored leaves
+  let boxShadow;
+  if (isStarred) {
+    boxShadow = '0 0 0 2px #ffd43b, 0 0 28px rgba(255,212,59,0.3)';
+  } else if (isSelected) {
+    boxShadow = `0 0 0 2px ${config.color}, 0 0 24px ${config.glow}`;
+  } else {
+    boxShadow = `0 0 12px ${config.glow}, 0 2px 8px rgba(0,0,0,0.4)`;
+  }
+  if (isUnexplored && isInRange) {
+    boxShadow += ', 0 4px 14px rgba(108,99,255,0.2)';
+  }
 
   return (
     <div
@@ -23,11 +38,7 @@ const IdeaNode = memo(({ data }) => {
         position: 'relative',
         fontFamily: 'var(--font-mono)',
         cursor: isInRange ? 'pointer' : 'default',
-        boxShadow: isStarred
-          ? `0 0 0 2px #ffd43b, 0 0 28px rgba(255,212,59,0.3)`
-          : isSelected
-            ? `0 0 0 2px ${config.color}, 0 0 24px ${config.glow}`
-            : `0 0 12px ${config.glow}, 0 2px 8px rgba(0,0,0,0.4)`,
+        boxShadow,
         transition: 'opacity 0.3s ease, filter 0.3s ease, box-shadow 0.2s ease',
         animation: 'nodeAppear 0.3s ease forwards',
         opacity: dimmedBySearch ? 0.35 : (isInRange ? 1 : 0.08),
@@ -56,6 +67,33 @@ const IdeaNode = memo(({ data }) => {
         }}>
           {data.score}/10
         </div>
+      )}
+
+      {/* Depth indicator */}
+      {data.depth >= 2 && (
+        <span style={{
+          position: 'absolute', top: 6, left: 10,
+          fontSize: 8, fontWeight: 600, color: '#555580',
+          letterSpacing: '0.04em', opacity: 0.7,
+          fontFamily: 'var(--font-mono)',
+        }}>
+          L{data.depth}
+        </span>
+      )}
+
+      {/* Auto-explored badge */}
+      {data.autoExplored && (
+        <span
+          title="Auto-explored by fractal mode"
+          style={{
+            position: 'absolute', top: 6,
+            right: data.score != null ? (isStarred ? 100 : 50) : (isStarred ? 65 : 10),
+            fontSize: 10, color: '#c084fc', opacity: 0.8,
+            fontWeight: 700,
+          }}
+        >
+          ∞
+        </span>
       )}
 
       {/* Type badge */}
@@ -126,18 +164,66 @@ const IdeaNode = memo(({ data }) => {
         border: `2px solid ${config.bg}`, bottom: -5,
       }} />
 
-      {/* Child count badge */}
-      {data.childCount > 0 && (
-        <div style={{
-          position: 'absolute', bottom: -18, left: '50%',
+      {/* Bottom area: fractal expand OR collapse/expand OR child count */}
+      {data.isExpanding ? (
+        /* Loading state during expansion */
+        <div className="fractal-expanding" style={{
+          position: 'absolute', bottom: -20, left: '50%',
           transform: 'translateX(-50%)',
-          background: config.bg, border: `1px solid ${config.border}`,
-          borderRadius: 10, padding: '1px 6px',
-          fontSize: 9, fontWeight: 700, color: config.color,
-          opacity: 0.8, zIndex: 1, fontFamily: 'var(--font-mono)',
         }}>
-          {data.childCount}
+          <span className="fractal-pulse" />
         </div>
+      ) : isLeaf && isInRange && !dimmedBySearch ? (
+        /* Fractal expand button — shown on leaf nodes */
+        <button
+          className="fractal-expand-btn"
+          onClick={(e) => { e.stopPropagation(); data.onFractalExpand?.(data.nodeId); }}
+          title="Expand this idea fractally"
+          style={{
+            position: 'absolute', bottom: -16, left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#16161f', border: `1px solid ${config.border}`,
+            borderRadius: 12, padding: '2px 10px',
+            fontSize: 12, fontWeight: 700, color: '#6c63ff',
+            cursor: 'pointer', zIndex: 2, fontFamily: 'var(--font-mono)',
+            transition: 'all 0.2s ease',
+            opacity: 0.7,
+          }}
+          onMouseEnter={e => { e.target.style.opacity = '1'; e.target.style.background = '#1e1e2e'; e.target.style.borderColor = '#6c63ff'; }}
+          onMouseLeave={e => { e.target.style.opacity = '0.7'; e.target.style.background = '#16161f'; e.target.style.borderColor = config.border; }}
+        >
+          ⊕
+        </button>
+      ) : data.childCount > 0 ? (
+        /* Collapse/expand chevron with child count */
+        <button
+          className="fractal-collapse-btn"
+          onClick={(e) => { e.stopPropagation(); data.onToggleCollapse?.(data.nodeId); }}
+          title={data.isCollapsed ? 'Expand children' : 'Collapse children'}
+          style={{
+            position: 'absolute', bottom: -18, left: '50%',
+            transform: 'translateX(-50%)',
+            background: config.bg, border: `1px solid ${config.border}`,
+            borderRadius: 10, padding: '1px 8px',
+            fontSize: 9, fontWeight: 700, color: config.color,
+            cursor: 'pointer', zIndex: 2, fontFamily: 'var(--font-mono)',
+            display: 'flex', alignItems: 'center', gap: 3,
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <span style={{ fontSize: 8 }}>{data.isCollapsed ? '▸' : '▾'}</span>
+          {data.childCount}
+        </button>
+      ) : null}
+
+      {/* Unexplored glow effect */}
+      {isUnexplored && isInRange && !dimmedBySearch && (
+        <div className="fractal-glow" style={{
+          position: 'absolute', bottom: -2, left: '10%', right: '10%',
+          height: 4, borderRadius: 2,
+          background: 'linear-gradient(90deg, transparent, rgba(108,99,255,0.4), transparent)',
+          pointerEvents: 'none',
+        }} />
       )}
     </div>
   );

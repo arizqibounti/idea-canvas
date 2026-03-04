@@ -7,6 +7,10 @@ const {
   LENS_FIRST_PRINCIPLES_PROMPT,
   LENS_ADVERSARIAL_PROMPT,
   MULTI_AGENT_MERGE_PROMPT,
+  REGENERATE_PROMPT,
+  DRILL_PROMPT,
+  FRACTAL_EXPAND_PROMPT,
+  FRACTAL_SELECT_PROMPT,
 } = require('./prompts');
 
 const { sseHeaders, streamToSSE } = require('../utils/sse');
@@ -308,8 +312,174 @@ async function handleGenerateResearch(client, req, res) {
   }
 }
 
+// ── POST /api/regenerate ──────────────────────────────────────
+
+async function handleRegenerate(client, req, res) {
+  const { node, parentContext, dynamicTypes } = req.body;
+  if (!node) return res.status(400).json({ error: 'node is required' });
+
+  sseHeaders(res);
+
+  // Build user message with ancestor chain for context
+  const ancestors = (parentContext || []).map(
+    (n) => `- [${n.type}] "${n.label}" (id: ${n.id})`
+  ).join('\n');
+
+  let userMessage = `Focus node to expand:\n- [${node.type}] "${node.label}" (id: ${node.id})\nReasoning: ${node.reasoning || 'N/A'}`;
+  if (ancestors) {
+    userMessage = `Ancestor chain (root → parent):\n${ancestors}\n\n${userMessage}`;
+  }
+
+  // Thread dynamic types if provided (adaptive mode)
+  let systemPrompt = REGENERATE_PROMPT;
+  if (dynamicTypes?.length) {
+    const typeList = dynamicTypes.map(t => `${t.type} (${t.label})`).join(', ');
+    systemPrompt += `\n\nAVAILABLE DYNAMIC TYPES for this tree: ${typeList}\nUse these types instead of the default product-thinking types listed above. You may also use "seed" if needed.`;
+  }
+
+  try {
+    const stream = client.messages.stream({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    await streamToSSE(res, stream);
+  } catch (err) {
+    console.error('Regenerate error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+}
+
+// ── POST /api/drill ──────────────────────────────────────────
+
+async function handleDrill(client, req, res) {
+  const { node, fullContext, dynamicTypes } = req.body;
+  if (!node) return res.status(400).json({ error: 'node is required' });
+
+  sseHeaders(res);
+
+  // Build user message with full tree context
+  const treeContext = (fullContext || []).map(
+    (n) => `- [${n.type}] "${n.label}" (id: ${n.id}, parent: ${n.parentId || 'root'})`
+  ).join('\n');
+
+  let userMessage = `Focus node for deep-dive:\n- [${node.type}] "${node.label}" (id: ${node.id})\nReasoning: ${node.reasoning || 'N/A'}`;
+  if (treeContext) {
+    userMessage = `Full tree context:\n${treeContext}\n\n${userMessage}`;
+  }
+
+  // Thread dynamic types if provided (adaptive mode)
+  let systemPrompt = DRILL_PROMPT;
+  if (dynamicTypes?.length) {
+    const typeList = dynamicTypes.map(t => `${t.type} (${t.label})`).join(', ');
+    systemPrompt += `\n\nAVAILABLE DYNAMIC TYPES for this tree: ${typeList}\nUse these types instead of the default product-thinking types listed above. You may also use "seed" if needed.`;
+  }
+
+  try {
+    const stream = client.messages.stream({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    await streamToSSE(res, stream);
+  } catch (err) {
+    console.error('Drill error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+}
+
+// ── POST /api/fractal-expand ──────────────────────────────────
+
+async function handleFractalExpand(client, req, res) {
+  const { node, ancestorChain, dynamicTypes, treeSnapshot } = req.body;
+  if (!node) return res.status(400).json({ error: 'node is required' });
+
+  sseHeaders(res);
+
+  // Build ancestor chain context
+  const ancestors = (ancestorChain || []).map(
+    (n) => `- [${n.type}] "${n.label}" (id: ${n.id})`
+  ).join('\n');
+
+  let userMessage = `Focus node to fractal-expand:\n- [${node.type}] "${node.label}" (id: ${node.id})\nReasoning: ${node.reasoning || 'N/A'}`;
+
+  if (ancestors) {
+    userMessage = `Ancestor chain (root → focus):\n${ancestors}\n\n${userMessage}`;
+  }
+
+  // Include tree snapshot to avoid duplicate concepts
+  if (treeSnapshot?.length) {
+    const snapshot = treeSnapshot.map(n => `[${n.type}] "${n.label}"`).join(', ');
+    userMessage += `\n\nExisting tree concepts (DO NOT duplicate these): ${snapshot}`;
+  }
+
+  // Thread dynamic types if provided
+  let systemPrompt = FRACTAL_EXPAND_PROMPT;
+  if (dynamicTypes?.length) {
+    const typeList = dynamicTypes.map(t => `${t.type} (${t.label})`).join(', ');
+    systemPrompt += `\n\nAVAILABLE TYPES for this tree: ${typeList}\nUse these types for new nodes.`;
+  }
+
+  try {
+    const stream = client.messages.stream({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    await streamToSSE(res, stream);
+  } catch (err) {
+    console.error('Fractal expand error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+}
+
+// ── POST /api/fractal-select (autonomous mode) ───────────────
+
+async function handleFractalSelect(client, req, res) {
+  const { leafNodes, fullContext, idea } = req.body;
+  if (!leafNodes?.length) return res.status(400).json({ error: 'leafNodes required' });
+
+  try {
+    const leafList = leafNodes.map(
+      (n) => `- [${n.type}] "${n.label}" (id: ${n.id}) — ${n.reasoning || 'no reasoning'}`
+    ).join('\n');
+
+    const contextStr = (fullContext || []).map(
+      (n) => `- [${n.type}] "${n.label}" (id: ${n.id}, parent: ${n.parentId || 'root'})`
+    ).join('\n');
+
+    const userMessage = `Original idea: "${idea || 'N/A'}"\n\nFull tree context:\n${contextStr}\n\nLeaf nodes (candidates for expansion):\n${leafList}\n\nSelect the one node with the highest depth potential.`;
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      system: FRACTAL_SELECT_PROMPT,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+    const text = message.content[0]?.text || '{}';
+    // Parse the JSON response
+    const match = text.match(/\{[\s\S]*\}/);
+    const result = match ? JSON.parse(match[0]) : { selectedNodeId: leafNodes[0].id, reasoning: 'Default selection' };
+    res.json(result);
+  } catch (err) {
+    console.error('Fractal select error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   handleGenerate,
   handleGenerateMulti,
   handleGenerateResearch,
+  handleRegenerate,
+  handleDrill,
+  handleFractalExpand,
+  handleFractalSelect,
 };

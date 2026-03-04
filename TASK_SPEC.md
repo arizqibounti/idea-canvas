@@ -28,25 +28,32 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - Preserves adaptive types via `dynamicTypes` parameter
 
 ### 5. Deep Drill-Down
-- 12–15 node deep-dive into any branch
+- 12–15 node deep-dive into any branch (double-click any node)
 - Breadcrumb UI tracks drill depth; preserves adaptive types
 
-### 6. Feature Mockup Generator
+### 6. Fractal Exploration
+- **Inline ⊕ Expansion**: Click the ⊕ button on any leaf node to fractally expand it into 2–7 adaptive AI children (count based on concept complexity)
+- **Branch Collapse/Expand**: Chevron toggles (▸/▾) on parent nodes to collapse/expand subtrees with child count badges
+- **Depth Visualization**: Level indicators (L2, L3, ...) on nodes at depth ≥ 2; unexplored leaf nodes glow purple
+- **Autonomous ∞ Explore Mode**: AI curiosity engine that autonomously explores the tree for 1–10 configurable rounds — selects most promising leaf, expands it, repeats. Live progress with AI reasoning, stoppable anytime, ∞ badge on auto-explored nodes
+- Supports infinite depth — expand any node, then expand its children, indefinitely
+
+### 7. Feature Mockup Generator
 - Generate animated HTML prototype from any feature node
 - Self-contained, no external dependencies; 320×568px phone viewport
 
-### 7. Codebase Analysis
+### 8. Codebase Analysis
 - Drag-and-drop codebase folder for reverse-engineering
 - Surfaces features, architecture patterns, user segments, tech debt (20–30 nodes)
 - Configurable goals: features / architecture / users
 
-### 8. Resume Mode
+### 9. Resume Mode
 - Paste JD or enter JD URL; optionally upload resume PDF
 - Generates resume strategy tree (requirement, skill_match, skill_gap, achievement, keyword, story, positioning)
 - Mode-specific debate (hiring manager vs career coach)
 - **Apply to Resume** → change manifest modal with specific text changes
 
-### 9. Mode-Specific Autonomous Debate
+### 10. Mode-Specific Autonomous Debate
 - Multi-round debate (up to 5 rounds) with domain-specific personas:
   - Idea: VC Critic vs Architect (panel: "VC CRITIQUE")
   - Resume: Hiring Manager vs Career Coach ("HIRING REVIEW")
@@ -57,22 +64,22 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - Debate finalize synthesizes consensus into tree updates
 - Suggestion chips expand debate insights into new tree branches
 
-### 10. AI Chat Companion
+### 11. AI Chat Companion
 - Mode-specific personas (Product Strategist, Career Coach, Tech Advisor, Decision Analyst, Writing Editor, Project Advisor)
 - Full thinking tree loaded as context for grounded responses
 - Rich markdown rendering: code blocks with syntax highlighting and copy buttons, tables, lists, blockquotes
 - Mode-specific quick action buttons
 
-### 11. A2UI Canvas Panel
+### 12. A2UI Canvas Panel
 - Generate self-contained interactive HTML visualizations from tree analysis
 - Manage collection of generated artifacts with tabbed preview
 
-### 12. Export & Sharing
+### 13. Export & Sharing
 - **Share via Link**: Firestore-backed shareable links with public viewer
 - **Export**: PNG, SVG, interactive HTML, clipboard copy
 - **GitHub Export**: Create new repo with README.md, SPEC.md, DEBATE.md, CLAUDE.md
 
-### 13. Authentication & Persistence
+### 14. Authentication & Persistence
 - **Firebase Auth**: Google sign-in with landing page for unauthenticated users
 - **Session Dashboard**: Grid of saved sessions with mode badges, node counts, timestamps
 - **Firestore**: Server-side session/share/usage persistence
@@ -81,13 +88,13 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - **Rate Limiting**: 60 req/min general, 10 req/min generation
 - **Usage Tracking**: Daily generation limits with visual indicator
 
-### 14. Visualization
+### 15. Visualization
 - **3D Graph**: Force-directed view with rounds on X-axis, type clusters on YZ
 - **2D Timeline**: Round range slider, play/pause, speed, round isolation
 - **Cross-Links**: Toggle non-parent relationship edges
 - **Node Search**: Text filter with dimming of non-matching nodes
 
-### 15. Meta Features
+### 16. Meta Features
 - **Node Scoring**: Quality scoring (relevance, specificity, actionability)
 - **Template Extraction**: Extract structural templates for reuse
 - **Memory Layer**: Cross-session pattern analysis (blindspots, biases, strengths)
@@ -98,7 +105,7 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 
 - **Frontend**: React 19, Create React App, @xyflow/react, dagre, react-markdown, remark-gfm, react-force-graph-3d, Firebase Auth SDK
 - **Backend**: Node.js, Express, @anthropic-ai/sdk, firebase-admin, ws, express-rate-limit
-- **AI Models**: `claude-opus-4-5` (debate/generation with extended thinking), `claude-sonnet-4-20250514` (chat/utilities)
+- **AI Models**: `claude-opus-4-5` (debate/generation with extended thinking), `claude-sonnet-4-20250514` (chat/utilities/fractal expand/fractal select)
 - **Streaming**: Server-Sent Events (SSE)
 - **Persistence**: Firebase/Firestore (server) + localStorage (client) + WebSocket (sync)
 - **Infrastructure**: Docker, CORS, rate limiting, Firebase Auth

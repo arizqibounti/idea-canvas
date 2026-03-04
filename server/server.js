@@ -35,7 +35,7 @@ const client = new Anthropic();
 
 // ── Engine handlers ──────────────────────────────────────────
 
-const { handleGenerate, handleGenerateMulti, handleGenerateResearch } = require('./engine/generate');
+const { handleGenerate, handleGenerateMulti, handleGenerateResearch, handleRegenerate, handleDrill, handleFractalExpand, handleFractalSelect } = require('./engine/generate');
 const { handleDebateCritique, handleDebateRebut, handleDebateFinalize, handleExpandSuggestion } = require('./engine/debate');
 const { handleScoreNodes, handleExtractTemplate, handleAnalyzeCodebase, handleReflect, handleCritique } = require('./engine/analyze');
 const { handleChat } = require('./engine/chat');
@@ -87,6 +87,10 @@ app.get('/api/usage', async (req, res) => {
 app.post('/api/generate',          generationLimit, (req, res) => handleGenerate(client, req, res));
 app.post('/api/generate-multi',    generationLimit, (req, res) => handleGenerateMulti(client, req, res));
 app.post('/api/generate-research', generationLimit, (req, res) => handleGenerateResearch(client, req, res));
+app.post('/api/regenerate',        generationLimit, (req, res) => handleRegenerate(client, req, res));
+app.post('/api/drill',             generationLimit, (req, res) => handleDrill(client, req, res));
+app.post('/api/fractal-expand',    generationLimit, (req, res) => handleFractalExpand(client, req, res));
+app.post('/api/fractal-select',    (req, res) => handleFractalSelect(client, req, res));
 
 // Analysis & evaluation
 app.post('/api/score-nodes',       (req, res) => handleScoreNodes(client, req, res));

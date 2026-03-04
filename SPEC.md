@@ -34,11 +34,23 @@ An AI-powered structured thinking visualization tool that takes any input — pr
    - Accepts optional `dynamicTypes` to preserve adaptive node types
 
 5. **Deep Drill-Down**
-   - Drill into a specific node for a 12–15 node deep-dive
+   - Drill into a specific node for a 12–15 node deep-dive (double-click any node)
    - Goes significantly more granular than the base tree
    - Breadcrumb UI tracks drill depth; preserves adaptive types
 
-6. **Feature Mockup Generator**
+6. **Fractal Exploration**
+   - **Inline ⊕ Expansion**: Click the ⊕ button on any leaf node to fractally decompose it into 2–7 adaptive AI-generated children based on concept complexity (simple → 2–3, moderate → 3–5, rich/abstract → 5–7)
+   - **Branch Collapse/Expand**: Chevron toggles (▸/▾) on parent nodes to collapse/expand subtrees; collapsed nodes display child count badge
+   - **Depth Visualization**: Level indicators (L2, L3, ...) shown on nodes at depth ≥ 2; unexplored leaf nodes emit a subtle purple glow to signal further exploration potential
+   - **Autonomous ∞ Explore Mode**: AI-driven curiosity engine that autonomously explores the tree for 1–10 configurable rounds:
+     1. Collects all leaf (unexplored) nodes
+     2. AI selects the most promising node based on novelty, strategic importance, and surprise factor
+     3. Fractally expands the selected node
+     4. Repeats for N rounds with live progress (round indicator, AI reasoning, node count)
+     5. User can stop at any time; auto-explored nodes marked with ∞ badge
+   - Supports infinite depth — expand any node, then expand its children, and so on
+
+7. **Feature Mockup Generator**
    - Select any feature node to generate an animated HTML prototype
    - Self-contained single HTML file, no external dependencies
    - Auto-plays and loops a scripted demo; 320×568px phone viewport
@@ -255,6 +267,39 @@ Deep-dive into a specific node.
 ```
 **Response:** SSE stream of 12–15 new nodes
 
+### POST /api/fractal-expand
+Fractal expand a leaf node into adaptive children.
+
+**Request:**
+```json
+{
+  "node": "Node (required)",
+  "ancestorChain": "Node[] (ancestor path from root to focus node)",
+  "dynamicTypes": "[{type, label, icon}] (optional)",
+  "treeSnapshot": "Node[] (full tree for duplicate avoidance)"
+}
+```
+**Response:** SSE stream of 2–7 new child nodes
+
+### POST /api/fractal-select
+AI evaluates leaf nodes and selects the most promising for autonomous exploration. **Non-streaming.**
+
+**Request:**
+```json
+{
+  "leafNodes": "Node[] (unexplored leaf nodes)",
+  "fullContext": "string (tree context summary)",
+  "idea": "string (original input)"
+}
+```
+**Response:**
+```json
+{
+  "selectedNodeId": "string",
+  "reasoning": "string (1-2 sentences why)"
+}
+```
+
 ### POST /api/analyze-codebase
 Reverse-engineer codebase into a tree.
 
@@ -439,6 +484,6 @@ In Idea mode, the AI declares domain-specific types via the `_meta` protocol. Ea
 ## AI Model Configuration
 
 - **claude-opus-4-5**: Debate (critique/rebut/finalize), generation — extended thinking enabled (8000 budget tokens)
-- **claude-sonnet-4-20250514**: Chat companion, regeneration, drill, scoring, expand-suggestion, canvas
+- **claude-sonnet-4-20250514**: Chat companion, regeneration, drill, fractal expand, fractal select, scoring, expand-suggestion, canvas
 - **Max tokens**: Varies by endpoint (4096–12000)
 - **Streaming**: SSE for generation, debate rebut/finalize, chat, canvas; non-streaming for critique verdict, mockup, reflect, export

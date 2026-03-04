@@ -434,6 +434,12 @@ export default function App({ initialSession, onBackToDashboard }) {
   const [showCanvas, setShowCanvas] = useState(false);
   const [canvasArtifacts, setCanvasArtifacts] = useState([]);
 
+  // ── Auto-Fractal (∞ EXPLORE) ────────────────────────────
+  const [showAutoFractal, setShowAutoFractal] = useState(false);
+  const [autoFractalRounds, setAutoFractalRounds] = useState(5);
+  const [autoFractalRunning, setAutoFractalRunning] = useState(false);
+  const [autoFractalProgress, setAutoFractalProgress] = useState(null);
+
   // ── 3D Canvas ─────────────────────────────────────────────
   const [is3D, setIs3D] = useState(false);
 
@@ -1115,6 +1121,25 @@ export default function App({ initialSession, onBackToDashboard }) {
     }
   }, [resumePdf, idea$, debateRoundsRef, resumeJobLabel]);
 
+  // ── Auto-Fractal handler ────────────────────────────────
+  const handleStartAutoFractal = useCallback(async () => {
+    setAutoFractalRunning(true);
+    setAutoFractalProgress(null);
+    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
+    await idea$.handleAutoFractal(ideaText, autoFractalRounds, (progress) => {
+      setAutoFractalProgress(progress);
+      if (progress.status === 'done') {
+        setAutoFractalRunning(false);
+      }
+    });
+    setAutoFractalRunning(false);
+  }, [idea$, autoFractalRounds, idea, displayMode, resumeJobLabel]);
+
+  const handleStopAutoFractal = useCallback(() => {
+    idea$.handleStopAutoFractal();
+    setAutoFractalRunning(false);
+  }, [idea$]);
+
   // ── Load session handlers ─────────────────────────────────
   const handleLoadIdeaSession = useCallback((session) => {
     idea$.handleLoadSession(session, setIdea);
@@ -1249,14 +1274,17 @@ export default function App({ initialSession, onBackToDashboard }) {
   }, [isPlayingRounds, playbackSpeed, maxRound, is3D]);
 
   // ── Child count map (for badge on parent nodes) ──
+  // Use raw nodes (not filtered/visible) so collapsed parents still show correct counts
   const childCountMap = useMemo(() => {
     const map = {};
-    active.nodes.forEach((n) => {
+    const raw = activeMode === 'idea' ? idea$.rawNodesRef.current : cb$.rawNodesRef.current;
+    (raw || []).forEach((n) => {
       const pid = n.data?.parentId;
       if (pid) map[pid] = (map[pid] || 0) + 1;
     });
     return map;
-  }, [active.nodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active.nodes, activeMode]);
 
   // ── Tree search: match label or reasoning (case-insensitive) ──
   const treeSearchTrim = (treeSearchQuery || '').trim();
@@ -1281,6 +1309,9 @@ export default function App({ initialSession, onBackToDashboard }) {
         searchActive,
         searchMatch,
         childCount: childCountMap[n.id] || 0,
+        // Fractal callbacks
+        onFractalExpand: idea$.handleFractalExpand,
+        onToggleCollapse: idea$.handleToggleCollapse,
       },
     };
   });
@@ -1486,6 +1517,13 @@ export default function App({ initialSession, onBackToDashboard }) {
               >
                 ◈ CANVAS
               </button>
+              <button
+                className={`btn btn-icon ${showAutoFractal ? 'active-icon' : ''}`}
+                onClick={() => setShowAutoFractal((v) => !v)}
+                title="Autonomous fractal exploration — AI recursively expands ideas"
+              >
+                ∞ EXPLORE
+              </button>
               <div className="toolbar-sep" />
               <button
                 className="btn btn-icon btn-share-icon"
@@ -1635,6 +1673,7 @@ export default function App({ initialSession, onBackToDashboard }) {
                 isScoring={isScoring}
                 progressText={multiAgentProgress}
                 onNodeClick={idea$.handleNodeClick}
+                onNodeDoubleClick={idea$.handleDrill}
                 onNodeContextMenu={idea$.handleNodeContextMenu}
                 onCloseContextMenu={idea$.handleCloseContextMenu}
                 drillStack={idea$.drillStack}
@@ -1773,6 +1812,75 @@ export default function App({ initialSession, onBackToDashboard }) {
           idea={idea}
           gateway={gateway}
         />
+      )}
+
+      {/* ── Auto-Fractal Panel ── */}
+      {showAutoFractal && activeMode === 'idea' && (
+        <div className="auto-fractal-panel">
+          <div className="auto-fractal-header">
+            <span>∞ FRACTAL EXPLORE</span>
+            <button className="panel-close-btn" onClick={() => setShowAutoFractal(false)}>✕</button>
+          </div>
+          {!autoFractalRunning ? (
+            <div className="auto-fractal-config">
+              <label className="auto-fractal-label">
+                Rounds: <strong>{autoFractalRounds}</strong>
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={autoFractalRounds}
+                onChange={(e) => setAutoFractalRounds(Number(e.target.value))}
+                className="auto-fractal-slider"
+              />
+              <div className="auto-fractal-desc">
+                AI will select the most promising leaf node and expand it, repeating for {autoFractalRounds} rounds.
+              </div>
+              <button
+                className="btn btn-generate"
+                onClick={handleStartAutoFractal}
+                disabled={idea$.rawNodesRef.current.length === 0}
+                style={{ width: '100%', marginTop: 8 }}
+              >
+                ▶ START EXPLORATION
+              </button>
+            </div>
+          ) : (
+            <div className="auto-fractal-progress">
+              {autoFractalProgress && autoFractalProgress.status !== 'done' && (
+                <>
+                  <div className="auto-fractal-round">
+                    Round {autoFractalProgress.round}/{autoFractalProgress.maxRounds}
+                  </div>
+                  <div className="auto-fractal-status">
+                    {autoFractalProgress.status === 'selecting'
+                      ? '🔍 Selecting most promising node...'
+                      : `⊕ Expanding: "${idea$.rawNodesRef.current.find(n => n.id === autoFractalProgress.selectedNodeId)?.data?.label || autoFractalProgress.selectedNodeId}"`
+                    }
+                  </div>
+                  {autoFractalProgress.reasoning && (
+                    <div className="auto-fractal-reasoning">
+                      "{autoFractalProgress.reasoning}"
+                    </div>
+                  )}
+                  {autoFractalProgress.newNodeCount > 0 && (
+                    <div className="auto-fractal-count">
+                      +{autoFractalProgress.newNodeCount} nodes added
+                    </div>
+                  )}
+                </>
+              )}
+              <button
+                className="btn btn-stop"
+                onClick={handleStopAutoFractal}
+                style={{ width: '100%', marginTop: 8 }}
+              >
+                ◼ STOP
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Resume Changes Modal ── */}

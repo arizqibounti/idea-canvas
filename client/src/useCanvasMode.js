@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { computeLayout, buildEdges, getSubtree } from './layoutUtils';
+import { computeLayout, buildEdges, getSubtree, filterCollapsed, computeDepths } from './layoutUtils';
 import { getNodeConfig } from './nodeConfig';
 import { authFetch } from './api';
 
@@ -124,15 +124,41 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
   const drillStackRef = useRef([]);
   const dynamicTypesRef = useRef(null); // for adaptive mode regen/drill
   const showCrossLinksRef = useRef(false); // toggle cross-link edges
+  const collapsedNodesRef = useRef(new Set()); // collapsed branch IDs
+  const expandingNodeRef = useRef(null); // currently fractal-expanding node ID
+  const autoFractalAbortRef = useRef(null); // abort controller for auto-fractal
 
   // ── Layout helper ─────────────────────────────────────────
   const applyLayout = useCallback((rawNodes, activeDrillStack) => {
-    const displayRaw = activeDrillStack.length > 0
+    let displayRaw = activeDrillStack.length > 0
       ? getSubtree(rawNodes, activeDrillStack[activeDrillStack.length - 1].nodeId)
       : rawNodes;
+
+    // Filter out collapsed branches
+    displayRaw = filterCollapsed(displayRaw, collapsedNodesRef.current);
+
     const edgeOpts = { nodeConfigGetter: getNodeConfig };
     const parentEdges = buildEdges(displayRaw, edgeOpts);
     const laidOut = computeLayout(displayRaw, parentEdges);
+
+    // Compute depths and child counts for fractal UI
+    const depths = computeDepths(laidOut);
+    const childCountMap = {};
+    rawNodes.forEach(n => {
+      if (n.data.parentId) {
+        childCountMap[n.data.parentId] = (childCountMap[n.data.parentId] || 0) + 1;
+      }
+    });
+
+    // Annotate nodes with fractal data
+    laidOut.forEach(n => {
+      n.data.depth = depths.get(n.id) || 0;
+      n.data.childCount = childCountMap[n.id] || 0;
+      n.data.isCollapsed = collapsedNodesRef.current.has(n.id);
+      n.data.isExpanding = expandingNodeRef.current === n.id;
+      n.data.nodeId = n.id;
+    });
+
     const displayEdges = showCrossLinksRef.current
       ? buildEdges(displayRaw, { ...edgeOpts, showCrossLinks: true })
       : parentEdges;
@@ -177,6 +203,8 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
   const resetCanvas = useCallback(() => {
     rawNodesRef.current = [];
     drillStackRef.current = [];
+    collapsedNodesRef.current = new Set();
+    expandingNodeRef.current = null;
     setDrillStack([]);
     setNodes([]);
     setEdges([]);
@@ -418,6 +446,217 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     setContextMenu(null);
   }, []);
 
+  // ── Toggle collapse/expand branch ──────────────────────────
+  const handleToggleCollapse = useCallback((nodeId) => {
+    const set = collapsedNodesRef.current;
+    if (set.has(nodeId)) {
+      set.delete(nodeId);
+    } else {
+      set.add(nodeId);
+    }
+    collapsedNodesRef.current = new Set(set);
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+  }, [applyLayout]);
+
+  // ── Fractal expand (inline ⊕) ─────────────────────────────
+  const handleFractalExpand = useCallback(async (nodeId) => {
+    if (isGenerating || isRegenerating || expandingNodeRef.current) return;
+
+    const targetNode = rawNodesRef.current.find((n) => n.id === nodeId);
+    if (!targetNode) return;
+
+    // Build ancestor chain
+    const getAncestorChain = (id) => {
+      const result = [];
+      const nodeMap = Object.fromEntries(rawNodesRef.current.map((n) => [n.id, n]));
+      let node = nodeMap[id];
+      while (node?.data?.parentId) {
+        const parent = nodeMap[node.data.parentId];
+        if (!parent) break;
+        result.unshift({
+          id: parent.id, type: parent.data.type,
+          label: parent.data.label, reasoning: parent.data.reasoning,
+        });
+        node = parent;
+      }
+      return result;
+    };
+
+    expandingNodeRef.current = nodeId;
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+
+    const controller = new AbortController();
+
+    try {
+      const ancestorChain = getAncestorChain(nodeId);
+      const treeSnapshot = rawNodesRef.current.map(n => ({
+        type: n.data.type, label: n.data.label,
+      }));
+
+      const res = await authFetch(`${API_URL}/api/fractal-expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          node: { id: targetNode.id, ...targetNode.data },
+          ancestorChain,
+          dynamicTypes: dynamicTypesRef.current || undefined,
+          treeSnapshot,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+      const existingDynConfig = rawNodesRef.current[0]?.data?.dynamicConfig || null;
+      const result = await readSSEStream(res, (nodeData) => {
+        const flowNode = buildFlowNode(nodeData);
+        if (existingDynConfig) flowNode.data.dynamicConfig = existingDynConfig;
+        flowNode.data.expanded = true;
+        rawNodesRef.current = [...rawNodesRef.current, flowNode];
+        applyLayout(rawNodesRef.current, drillStackRef.current);
+        setNodeCount(rawNodesRef.current.length);
+      });
+      if (result.error) setError(result.error);
+
+      // Mark the parent as expanded
+      rawNodesRef.current = rawNodesRef.current.map(n =>
+        n.id === nodeId ? { ...n, data: { ...n.data, expanded: true } } : n
+      );
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message);
+    } finally {
+      expandingNodeRef.current = null;
+      applyLayout(rawNodesRef.current, drillStackRef.current);
+    }
+  }, [isGenerating, isRegenerating, applyLayout]);
+
+  // ── Autonomous fractal mode ────────────────────────────────
+  const handleAutoFractal = useCallback(async (idea, maxRounds = 5, onProgress) => {
+    if (isGenerating || isRegenerating) return null;
+
+    const abortController = new AbortController();
+    autoFractalAbortRef.current = abortController;
+
+    try {
+      for (let round = 1; round <= maxRounds; round++) {
+        if (abortController.signal.aborted) break;
+
+        // 1. Collect all leaf nodes (no children)
+        const childSet = new Set();
+        rawNodesRef.current.forEach(n => {
+          if (n.data.parentId) childSet.add(n.data.parentId);
+        });
+        const leafNodes = rawNodesRef.current
+          .filter(n => !childSet.has(n.id))
+          .map(n => ({
+            id: n.id, type: n.data.type,
+            label: n.data.label, reasoning: n.data.reasoning,
+          }));
+
+        if (leafNodes.length === 0) break;
+
+        // 2. AI selects most promising node
+        onProgress?.({ round, maxRounds, status: 'selecting', reasoning: 'AI is evaluating leaf nodes...' });
+
+        const fullContext = rawNodesRef.current.map(n => ({
+          id: n.id, type: n.data.type, label: n.data.label,
+          reasoning: n.data.reasoning, parentId: n.data.parentId,
+        }));
+
+        const selectRes = await authFetch(`${API_URL}/api/fractal-select`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leafNodes, fullContext, idea }),
+          signal: abortController.signal,
+        });
+        if (!selectRes.ok) throw new Error(`Select error: ${selectRes.status}`);
+
+        const { selectedNodeId, reasoning } = await selectRes.json();
+        if (!selectedNodeId) break;
+
+        onProgress?.({ round, maxRounds, status: 'expanding', selectedNodeId, reasoning });
+
+        // 3. Fractal expand the selected node
+        const targetNode = rawNodesRef.current.find(n => n.id === selectedNodeId);
+        if (!targetNode) break;
+
+        expandingNodeRef.current = selectedNodeId;
+        applyLayout(rawNodesRef.current, drillStackRef.current);
+
+        const ancestorChain = [];
+        const nodeMap = Object.fromEntries(rawNodesRef.current.map(n => [n.id, n]));
+        let walker = nodeMap[selectedNodeId];
+        while (walker?.data?.parentId) {
+          const parent = nodeMap[walker.data.parentId];
+          if (!parent) break;
+          ancestorChain.unshift({
+            id: parent.id, type: parent.data.type,
+            label: parent.data.label, reasoning: parent.data.reasoning,
+          });
+          walker = parent;
+        }
+
+        const treeSnapshot = rawNodesRef.current.map(n => ({
+          type: n.data.type, label: n.data.label,
+        }));
+
+        let newNodeCount = 0;
+        const expandRes = await authFetch(`${API_URL}/api/fractal-expand`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            node: { id: targetNode.id, ...targetNode.data },
+            ancestorChain,
+            dynamicTypes: dynamicTypesRef.current || undefined,
+            treeSnapshot,
+          }),
+          signal: abortController.signal,
+        });
+        if (!expandRes.ok) throw new Error(`Expand error: ${expandRes.status}`);
+
+        const existingDynConfig = rawNodesRef.current[0]?.data?.dynamicConfig || null;
+        await readSSEStream(expandRes, (nodeData) => {
+          const flowNode = buildFlowNode(nodeData);
+          if (existingDynConfig) flowNode.data.dynamicConfig = existingDynConfig;
+          flowNode.data.autoExplored = true;
+          rawNodesRef.current = [...rawNodesRef.current, flowNode];
+          applyLayout(rawNodesRef.current, drillStackRef.current);
+          setNodeCount(rawNodesRef.current.length);
+          newNodeCount++;
+        });
+
+        // Mark source node
+        rawNodesRef.current = rawNodesRef.current.map(n =>
+          n.id === selectedNodeId
+            ? { ...n, data: { ...n.data, expanded: true, autoExplored: true } }
+            : n
+        );
+
+        expandingNodeRef.current = null;
+        applyLayout(rawNodesRef.current, drillStackRef.current);
+
+        onProgress?.({ round, maxRounds, status: 'expanded', selectedNodeId, reasoning, newNodeCount });
+
+        // Brief pause between rounds for visual effect
+        await new Promise(r => setTimeout(r, 600));
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message);
+    } finally {
+      expandingNodeRef.current = null;
+      autoFractalAbortRef.current = null;
+      applyLayout(rawNodesRef.current, drillStackRef.current);
+      onProgress?.({ status: 'done' });
+    }
+  }, [isGenerating, isRegenerating, applyLayout]);
+
+  const handleStopAutoFractal = useCallback(() => {
+    if (autoFractalAbortRef.current) {
+      autoFractalAbortRef.current.abort();
+      autoFractalAbortRef.current = null;
+    }
+    expandingNodeRef.current = null;
+  }, []);
+
   return {
     // State
     nodes, edges, isGenerating, setIsGenerating, isRegenerating, setIsRegenerating,
@@ -433,5 +672,8 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     handleNodeClick, handleGetAncestors, handleSaveNodeEdit, handleRegenerate,
     handleDrill, handleExitDrill, handleJumpToBreadcrumb,
     handleNodeContextMenu, handleCloseContextMenu, handleToggleStar, setNodeScores,
+    // Fractal handlers
+    handleFractalExpand, handleToggleCollapse,
+    handleAutoFractal, handleStopAutoFractal,
   };
 }

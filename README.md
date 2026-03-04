@@ -10,7 +10,12 @@ An AI-powered structured thinking visualization tool that transforms any input �
 - **URL Auto-Detection & Fetching**: URLs in the input are automatically detected, fetched via the server proxy, and their content is included as reference context for the AI.
 - **Multi-Agent Research**: Deep research mode that plans a research strategy, fetches multiple URLs, and synthesizes findings into a comprehensive tree.
 - **Branch Regeneration**: Expand any node with 5–10 new AI-generated child nodes
-- **Deep Drill-Down**: Perform a 12–15 node deep-dive on a specific branch for granular exploration
+- **Deep Drill-Down**: Perform a 12–15 node deep-dive on a specific branch for granular exploration (double-click any node)
+- **Fractal Exploration**: Infinitely deepen any branch like a fractal:
+  - **Inline ⊕ Expansion**: Click the ⊕ button on any leaf node to generate 2–7 adaptive AI children based on concept complexity
+  - **Branch Collapse/Expand**: Chevron toggles (▸/▾) on parent nodes to collapse/expand subtrees with child counts
+  - **Depth Visualization**: Level indicators (L2, L3, ...) on nodes at depth ≥ 2; unexplored leaf nodes glow to signal "there's more"
+  - **Autonomous ∞ Explore**: AI autonomously explores the tree for 1–10 configurable rounds, selecting the most promising node at each step and drilling deeper — a curiosity engine that explores for you
 - **Feature Mockup Generator**: Generate a self-contained, animated HTML prototype from any feature node
 - **Codebase Analysis**: Upload a codebase and Claude reverse-engineers it into a product thinking tree
 - **Steering Instructions**: Guide tree expansion in a specific direction using natural language
@@ -72,8 +77,8 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── AuthContext.js           # Firebase auth provider + Google sign-in
 │       ├── LandingPage.js           # Unauthenticated landing page
 │       ├── SessionDashboard.js      # Saved sessions grid view
-│       ├── IdeaCanvas.js            # ReactFlow canvas with node layout
-│       ├── IdeaNode.js              # Individual node component
+│       ├── IdeaCanvas.js            # ReactFlow canvas with node layout, double-click drill
+│       ├── IdeaNode.js              # Node component (⊕ expand, collapse chevron, depth, glow)
 │       ├── NodeEditPanel.js         # Node detail/edit panel + mockup generation
 │       ├── NodeContextMenu.js       # Right-click context menu
 │       ├── DrillBreadcrumb.js       # Drill-down breadcrumb navigation
@@ -97,8 +102,8 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── exportImage.js           # PNG, SVG, clipboard, interactive HTML export
 │       ├── exportMarkdown.js        # Markdown generation for GitHub export
 │       ├── modeConfig.js            # Mode definitions + auto-detect from input
-│       ├── useCanvasMode.js         # Canvas state hook (nodes, sessions, handlers)
-│       ├── layoutUtils.js           # Dagre tree layout + edge building
+│       ├── useCanvasMode.js         # Canvas state hook (nodes, sessions, fractal expand/collapse, auto-fractal)
+│       ├── layoutUtils.js           # Dagre layout, edge building, collapse filtering, depth computation
 │       ├── nodeConfig.js            # Node type colors/icons, dynamic palette
 │       ├── TemplateStore.js         # Structural template persistence
 │       └── gateway/
@@ -106,8 +111,8 @@ An AI-powered structured thinking visualization tool that transforms any input �
 ├── server/                          # Node.js/Express backend
 │   ├── server.js                    # Express app, route wiring, WebSocket setup
 │   ├── engine/
-│   │   ├── prompts.js               # All system prompts + debate/chat personas
-│   │   ├── generate.js              # Tree generation (single, multi-agent, research)
+│   │   ├── prompts.js               # All system prompts + debate/chat/fractal personas
+│   │   ├── generate.js              # Tree generation (single, multi-agent, research, fractal expand/select)
 │   │   ├── debate.js                # Debate handlers (critique, rebut, finalize)
 │   │   ├── chat.js                  # Chat companion handler
 │   │   ├── analyze.js               # Codebase analysis, scoring, templates
@@ -193,6 +198,8 @@ All `/api/*` endpoints (except `/api/health` and `/api/shares/:id`) require a Fi
 | `/api/generate-research` | POST | Research-mode generation: plans research strategy, crawls URLs, synthesizes findings. SSE stream. |
 | `/api/regenerate` | POST | Expand a specific node with 5–10 child nodes. Accepts `dynamicTypes`. |
 | `/api/drill` | POST | Deep-dive into a branch (12–15 nodes). Accepts `dynamicTypes`. |
+| `/api/fractal-expand` | POST | Fractal expand a leaf node into 2–7 adaptive children based on concept complexity. SSE stream. |
+| `/api/fractal-select` | POST | AI evaluates leaf nodes and selects the most promising one for autonomous exploration. Non-streaming JSON. |
 
 ### Analysis & Scoring
 

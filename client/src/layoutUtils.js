@@ -69,6 +69,69 @@ export function getSubtree(allNodes, rootId) {
   return result;
 }
 
+/**
+ * Filter out descendants of collapsed nodes.
+ * @param {Array} nodes - all flow nodes
+ * @param {Set} collapsedSet - set of collapsed node IDs
+ * @returns {Array} visible nodes (collapsed subtrees hidden)
+ */
+export function filterCollapsed(nodes, collapsedSet) {
+  if (!collapsedSet || collapsedSet.size === 0) return nodes;
+
+  const hiddenParents = new Set(collapsedSet);
+  const visible = [];
+  // BFS from root(s), skipping children of collapsed nodes
+  const childMap = new Map();
+  nodes.forEach((n) => {
+    const pid = n.data.parentId;
+    if (pid) {
+      if (!childMap.has(pid)) childMap.set(pid, []);
+      childMap.get(pid).push(n);
+    }
+  });
+  // Find root nodes (parentId null or not in node set)
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const roots = nodes.filter(n => !n.data.parentId || !nodeIds.has(n.data.parentId));
+  const queue = [...roots];
+  while (queue.length) {
+    const node = queue.shift();
+    visible.push(node);
+    // If collapsed, don't enqueue children
+    if (hiddenParents.has(node.id)) continue;
+    const children = childMap.get(node.id) || [];
+    queue.push(...children);
+  }
+  return visible;
+}
+
+/**
+ * Compute depth level for each node via BFS from root.
+ * @param {Array} nodes - all flow nodes
+ * @returns {Map} nodeId → depth (0-based)
+ */
+export function computeDepths(nodes) {
+  const depths = new Map();
+  const childMap = new Map();
+  nodes.forEach((n) => {
+    const pid = n.data.parentId;
+    if (pid) {
+      if (!childMap.has(pid)) childMap.set(pid, []);
+      childMap.get(pid).push(n.id);
+    }
+  });
+  // Find roots
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const roots = nodes.filter(n => !n.data.parentId || !nodeIds.has(n.data.parentId));
+  const queue = roots.map(n => ({ id: n.id, depth: 0 }));
+  while (queue.length) {
+    const { id, depth } = queue.shift();
+    depths.set(id, depth);
+    const children = childMap.get(id) || [];
+    children.forEach(childId => queue.push({ id: childId, depth: depth + 1 }));
+  }
+  return depths;
+}
+
 export function buildEdges(nodes, { showCrossLinks = false, nodeConfigGetter = null } = {}) {
   const nodeIds = new Set(nodes.map((n) => n.id));
 

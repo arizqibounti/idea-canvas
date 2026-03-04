@@ -19,13 +19,15 @@ The server has been refactored from a monolithic `server.js` into a modular arch
 - [x] Route wiring to engine/gateway modules
 
 #### Engine (`server/engine/`)
-- [x] `prompts.js` — All system prompts, debate personas (per-mode critic/architect/finalize), chat personas, mode server metadata, user message builders
+- [x] `prompts.js` — All system prompts, debate personas (per-mode critic/architect/finalize), chat personas, mode server metadata, user message builders, fractal expand/select prompts
 - [x] `generate.js` — Tree generation handlers:
   - `handleGenerate` — Single-agent adaptive generation with `_meta` protocol
   - `handleGenerateMulti` — Multi-agent (first principles + analogical + adversarial → merge)
   - `handleGenerateResearch` — Research mode (plan → crawl → synthesize)
   - `handleRegenerate` — Branch expansion (5–10 nodes)
   - `handleDrill` — Deep-dive (12–15 nodes)
+  - `handleFractalExpand` — Fractal expansion of leaf nodes (2–7 adaptive children)
+  - `handleFractalSelect` — AI evaluates leaf nodes and selects most promising for autonomous exploration
 - [x] `debate.js` — Debate handlers (critique, rebut, finalize, expand-suggestion)
 - [x] `chat.js` — AI chat companion (mode-specific personas, tree-aware context)
 - [x] `analyze.js` — Codebase analysis, node scoring, template extraction
@@ -65,8 +67,8 @@ The server has been refactored from a monolithic `server.js` into a modular arch
 - [x] `api.js` — Auth-aware fetch wrapper (auto-injects Firebase token)
 
 #### Canvas & Nodes
-- [x] `IdeaCanvas.js` — ReactFlow canvas with dagre hierarchical layout
-- [x] `IdeaNode.js` — Individual node rendering with type-based color/icon, search dimming, lens indicator tooltips
+- [x] `IdeaCanvas.js` — ReactFlow canvas with dagre hierarchical layout, double-click drill-down
+- [x] `IdeaNode.js` — Node rendering with type-based color/icon, search dimming, lens indicator tooltips, ⊕ fractal expand button, collapse/expand chevron, depth indicator (L2+), unexplored glow, ∞ auto-explore badge
 - [x] `NodeEditPanel.js` — Node detail and edit panel + mockup generation
 - [x] `NodeContextMenu.js` — Right-click context menu (drill down, mark as focus)
 - [x] `DrillBreadcrumb.js` — Breadcrumb navigation for drill-down mode
@@ -97,8 +99,8 @@ The server has been refactored from a monolithic `server.js` into a modular arch
 
 #### Config & State
 - [x] `modeConfig.js` — Mode definitions (6 modes) and auto-detect from input text
-- [x] `useCanvasMode.js` — Canvas state hook (nodes, sessions, handlers, auto-save, dynamicTypesRef)
-- [x] `layoutUtils.js` — Dagre layout, edge building, BFS subtree extraction
+- [x] `useCanvasMode.js` — Canvas state hook (nodes, sessions, handlers, auto-save, dynamicTypesRef, fractal expand/collapse, autonomous fractal loop)
+- [x] `layoutUtils.js` — Dagre layout, edge building, BFS subtree extraction, collapse filtering, depth computation
 - [x] `nodeConfig.js` — Node type colors/icons (static + dynamic 12-color palette)
 - [x] `TemplateStore.js` — Structural template persistence
 - [x] `gateway/useGateway.js` — Firestore session sync gateway hook
