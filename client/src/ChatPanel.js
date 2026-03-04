@@ -1,6 +1,9 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 const QUICK_ACTIONS = {
   idea:     [
@@ -41,6 +44,51 @@ const QUICK_ACTIONS = {
   ],
 };
 
+// ── Markdown Renderer ─────────────────────────────────────────
+function ChatMarkdown({ content }) {
+  const components = useMemo(() => ({
+    // Code blocks with copy button + language badge
+    code({ node, inline, className, children, ...props }) {
+      const match = /language-(\w+)/.exec(className || '');
+      const lang = match ? match[1] : '';
+      const codeText = String(children).replace(/\n$/, '');
+
+      if (!inline && (lang || codeText.includes('\n'))) {
+        return (
+          <div className="chat-code-block">
+            {lang && <span className="chat-code-lang">{lang}</span>}
+            <button
+              className="chat-code-copy"
+              onClick={() => navigator.clipboard?.writeText(codeText)}
+              title="Copy code"
+            >⧉</button>
+            <pre><code className={className} {...props}>{children}</code></pre>
+          </div>
+        );
+      }
+      return <code className="chat-inline-code" {...props}>{children}</code>;
+    },
+    // Open links in new tab
+    a({ href, children, ...props }) {
+      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+    },
+    // Tables get wrapper for horizontal scroll
+    table({ children, ...props }) {
+      return (
+        <div className="chat-table-wrap">
+          <table {...props}>{children}</table>
+        </div>
+      );
+    },
+  }), []);
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 function serializeTree(nodes) {
   if (!nodes || !nodes.length) return '';
   return nodes.map(n => {
@@ -48,6 +96,15 @@ function serializeTree(nodes) {
     return `- [${d.type || 'node'}] ${d.label || n.id}${d.reasoning ? ': ' + d.reasoning : ''}`;
   }).join('\n');
 }
+
+const CHAT_MODE_CONFIG = {
+  idea:     { title: 'PRODUCT STRATEGIST', icon: '✦', emptyDesc: 'Your thinking tree is loaded as context. Ask questions or use a quick action below to generate actionable outputs.' },
+  codebase: { title: 'TECH ADVISOR',       icon: '⟨/⟩', emptyDesc: 'Your codebase analysis is loaded as context. Ask questions or use a quick action below to generate technical docs.' },
+  resume:   { title: 'CAREER COACH',       icon: '◎', emptyDesc: 'Your resume strategy tree is loaded as context. Ask questions or use a quick action below to generate career materials.' },
+  decision: { title: 'DECISION ANALYST',   icon: '⚖', emptyDesc: 'Your decision tree is loaded as context. Ask questions or use a quick action below to generate decision docs.' },
+  writing:  { title: 'WRITING EDITOR',     icon: '✦', emptyDesc: 'Your writing analysis is loaded as context. Ask questions or use a quick action below to generate content.' },
+  plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
+};
 
 export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' }) {
   const [messages, setMessages] = useState([]);
@@ -94,7 +151,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
 
     try {
       const treeContext = serializeTree(nodes);
-      const res = await fetch(`${API_URL}/api/chat`, {
+      const res = await authFetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -167,7 +224,26 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
   }, [input, sendMessage]);
 
   const handleCopy = useCallback((text) => {
-    navigator.clipboard.writeText(text);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        // Fallback for non-HTTPS / unfocused contexts
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      });
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
   }, []);
 
   if (!isOpen) return null;
@@ -179,8 +255,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
     <div className="chat-panel">
       <div className="chat-panel-header">
         <div className="chat-panel-title">
-          <span className="chat-panel-icon">✦</span>
-          <span>AI COMPANION</span>
+          <span className="chat-panel-icon">{(CHAT_MODE_CONFIG[mode] || CHAT_MODE_CONFIG.idea).icon}</span>
+          <span>{(CHAT_MODE_CONFIG[mode] || CHAT_MODE_CONFIG.idea).title}</span>
           {hasTree && (
             <span className="chat-node-count">{nodes.length} nodes</span>
           )}
@@ -192,11 +268,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
       <div className="chat-messages" ref={scrollRef}>
         {messages.length === 0 && !streamingText && (
           <div className="chat-empty">
-            <div className="chat-empty-icon">✦</div>
-            <div className="chat-empty-title">AI COMPANION</div>
+            <div className="chat-empty-icon">{(CHAT_MODE_CONFIG[mode] || CHAT_MODE_CONFIG.idea).icon}</div>
+            <div className="chat-empty-title">{(CHAT_MODE_CONFIG[mode] || CHAT_MODE_CONFIG.idea).title}</div>
             <div className="chat-empty-desc">
               {hasTree
-                ? 'Your thinking tree is loaded as context. Ask questions or use a quick action below to generate outputs.'
+                ? (CHAT_MODE_CONFIG[mode] || CHAT_MODE_CONFIG.idea).emptyDesc
                 : 'Generate a thinking tree first, then use the companion to create actionable outputs from it.'}
             </div>
             {hasTree && (
@@ -221,7 +297,9 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
               {msg.role === 'user' ? 'YOU' : 'AI'}
             </div>
             <div className="chat-msg-content">
-              {msg.content}
+              {msg.role === 'assistant'
+                ? <ChatMarkdown content={msg.content} />
+                : msg.content}
             </div>
             {msg.role === 'assistant' && (
               <button
@@ -238,7 +316,10 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
         {streamingText && (
           <div className="chat-msg chat-msg-assistant">
             <div className="chat-msg-label">AI</div>
-            <div className="chat-msg-content">{streamingText}<span className="chat-cursor">▊</span></div>
+            <div className="chat-msg-content chat-msg-streaming">
+              <ChatMarkdown content={streamingText} />
+              <span className="chat-cursor">▊</span>
+            </div>
           </div>
         )}
       </div>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { getNodeConfig } from './nodeConfig';
 import PrototypePlayer from './PrototypePlayer';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 export default function NodeEditPanel({ node, onClose, onSave, onRegenerate, isDisabled, onGetAncestors, allowRegenerate = true }) {
   const [localLabel, setLocalLabel] = useState('');
@@ -66,7 +67,7 @@ export default function NodeEditPanel({ node, onClose, onSave, onRegenerate, isD
         parentId: node.data.parentId,
       };
 
-      const res = await fetch(`${API_URL}/api/mockup`, {
+      const res = await authFetch(`${API_URL}/api/mockup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ featureNode, ancestorContext }),
@@ -111,7 +112,7 @@ export default function NodeEditPanel({ node, onClose, onSave, onRegenerate, isD
         parentId: node.data.parentId,
       };
 
-      const res = await fetch(`${API_URL}/api/mockup`, {
+      const res = await authFetch(`${API_URL}/api/mockup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ featureNode, ancestorContext }),

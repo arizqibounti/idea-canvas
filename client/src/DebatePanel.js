@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { buildFlowNode, readSSEStream } from './useCanvasMode';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 const MAX_ROUNDS = 5;
 
 const CATEGORY_COLORS = {
@@ -94,6 +95,11 @@ const CATEGORY_LABELS = {
 
 const MODE_CONFIG = {
   idea: {
+    panelTitle:       'VC CRITIQUE',
+    panelIcon:        '⚔',
+    emptyTitle:       'VC CRITIQUE',
+    startLabel:       'START CRITIQUE',
+    stopLabel:        'STOP CRITIQUE',
     statusIdle:       'Ready to tear apart your idea.',
     statusCritiquing: 'VC researching and analyzing...',
     statusRebutting:  'Architect researching and responding...',
@@ -103,6 +109,11 @@ const MODE_CONFIG = {
     consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the VC critic is satisfied.${fc > 0 ? ` ${fc} nodes in the tree have been updated to reflect the debate insights.` : ''}`,
   },
   resume: {
+    panelTitle:       'HIRING REVIEW',
+    panelIcon:        '◎',
+    emptyTitle:       'HIRING REVIEW',
+    startLabel:       'START REVIEW',
+    stopLabel:        'STOP REVIEW',
     statusIdle:       'Ready to stress-test your resume strategy.',
     statusCritiquing: 'Hiring manager reviewing strategy...',
     statusRebutting:  'Career coach building responses...',
@@ -112,6 +123,11 @@ const MODE_CONFIG = {
     consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the hiring manager would advance this candidate.${fc > 0 ? ` ${fc} nodes updated with the strengthened strategy.` : ''}`,
   },
   codebase: {
+    panelTitle:       'CODE AUDIT',
+    panelIcon:        '⟨/⟩',
+    emptyTitle:       'CODE AUDIT',
+    startLabel:       'START AUDIT',
+    stopLabel:        'STOP AUDIT',
     statusIdle:       'Ready to audit your codebase architecture.',
     statusCritiquing: 'Security auditor reviewing code...',
     statusRebutting:  'Tech lead proposing solutions...',
@@ -121,6 +137,11 @@ const MODE_CONFIG = {
     consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the security auditor is satisfied with the architectural approach.${fc > 0 ? ` ${fc} nodes updated with hardened technical solutions.` : ''}`,
   },
   decision: {
+    panelTitle:       "DEVIL'S ADVOCATE",
+    panelIcon:        '⚖',
+    emptyTitle:       "DEVIL'S ADVOCATE",
+    startLabel:       'START DEBATE',
+    stopLabel:        'STOP DEBATE',
     statusIdle:       'Ready to stress-test your decision.',
     statusCritiquing: "Devil's advocate analyzing...",
     statusRebutting:  'Strategic advisor responding...',
@@ -130,6 +151,11 @@ const MODE_CONFIG = {
     consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the devil's advocate is satisfied the decision is well-reasoned.${fc > 0 ? ` ${fc} nodes updated with the strengthened analysis.` : ''}`,
   },
   writing: {
+    panelTitle:       'EDITORIAL REVIEW',
+    panelIcon:        '✦',
+    emptyTitle:       'EDITORIAL REVIEW',
+    startLabel:       'START REVIEW',
+    stopLabel:        'STOP REVIEW',
     statusIdle:       'Ready to critique your writing.',
     statusCritiquing: 'Senior editor reviewing...',
     statusRebutting:  'Writer addressing critiques...',
@@ -139,6 +165,11 @@ const MODE_CONFIG = {
     consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the senior editor is satisfied with the writing plan.${fc > 0 ? ` ${fc} nodes updated with the refined editorial direction.` : ''}`,
   },
   plan: {
+    panelTitle:       'RISK ANALYSIS',
+    panelIcon:        '◉',
+    emptyTitle:       'RISK ANALYSIS',
+    startLabel:       'START ANALYSIS',
+    stopLabel:        'STOP ANALYSIS',
     statusIdle:       'Ready to stress-test your plan.',
     statusCritiquing: 'Risk analyst reviewing...',
     statusRebutting:  'Project manager mitigating...',
@@ -321,7 +352,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
     abortRef.current = controller;
 
     try {
-      const res = await fetch(`${API_URL}/api/debate/finalize`, {
+      const res = await authFetch(`${API_URL}/api/debate/finalize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -381,7 +412,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
         const controller = new AbortController();
         abortRef.current = controller;
 
-        const res = await fetch(`${API_URL}/api/debate/critique`, {
+        const res = await authFetch(`${API_URL}/api/debate/critique`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -470,7 +501,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
         const controller = new AbortController();
         abortRef.current = controller;
 
-        const res = await fetch(`${API_URL}/api/debate/rebut`, {
+        const res = await authFetch(`${API_URL}/api/debate/rebut`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -559,8 +590,8 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
     <div className="debate-panel">
       <div className="debate-panel-header">
         <div className="debate-panel-title">
-          <span className="debate-panel-icon">⚔</span>
-          <span>DEVIL'S ADVOCATE</span>
+          <span className="debate-panel-icon">{(MODE_CONFIG[mode] || MODE_CONFIG.idea).panelIcon}</span>
+          <span>{(MODE_CONFIG[mode] || MODE_CONFIG.idea).panelTitle}</span>
           {currentRound > 0 && (
             <span className="debate-panel-round-counter">
               round {currentRound}/{MAX_ROUNDS}
@@ -597,13 +628,13 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
         )}
         {hasConsensus && (
           <span className="debate-status-text consensus">
-            ✓ CONSENSUS REACHED — tree updated with debate insights
+            ✓ {(MODE_CONFIG[mode] || MODE_CONFIG.idea).consensusTitle} — tree updated
           </span>
         )}
         {isStopped && rounds.length === 0 && <span className="debate-status-text">Stopped.</span>}
         {isStopped && rounds.length > 0 && !hasConsensus && (
           <span className="debate-status-text stopped">
-            {rounds.length >= MAX_ROUNDS ? `Max ${MAX_ROUNDS} rounds reached.` : 'Debate paused.'}
+            {rounds.length >= MAX_ROUNDS ? `Max ${MAX_ROUNDS} rounds reached.` : 'Paused.'}
           </span>
         )}
       </div>
@@ -612,8 +643,8 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
       <div className="debate-rounds-log" ref={scrollRef}>
         {rounds.length === 0 && status === 'idle' && (
           <div className="debate-empty">
-            <div className="debate-empty-icon">⚔</div>
-            <div className="debate-empty-title">AUTONOMOUS DEBATE</div>
+            <div className="debate-empty-icon">{(MODE_CONFIG[mode] || MODE_CONFIG.idea).panelIcon}</div>
+            <div className="debate-empty-title">{(MODE_CONFIG[mode] || MODE_CONFIG.idea).emptyTitle}</div>
             <div className="debate-empty-desc">
               {(MODE_CONFIG[mode] || MODE_CONFIG.idea).emptyDesc(MAX_ROUNDS)}
             </div>
@@ -658,11 +689,11 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
             onClick={handleStart}
             disabled={!nodes?.length}
           >
-            ⚔ START DEBATE
+            {(MODE_CONFIG[mode] || MODE_CONFIG.idea).panelIcon} {(MODE_CONFIG[mode] || MODE_CONFIG.idea).startLabel}
           </button>
         )}
         {isRunning && (
-          <button className="btn btn-stop" onClick={stop}>■ STOP DEBATE</button>
+          <button className="btn btn-stop" onClick={stop}>■ {(MODE_CONFIG[mode] || MODE_CONFIG.idea).stopLabel}</button>
         )}
         {canResume && (
           <button className="btn btn-debate-resume" onClick={handleResume}>

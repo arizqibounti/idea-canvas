@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 const MEMORY_KEY = 'IDEA_MEMORY_SESSIONS';
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -47,7 +48,7 @@ export default function MemoryInsights({ onDismiss }) {
     if (sessions.length < 2) { setLoading(false); return; }
 
     try {
-      const res = await fetch(`${API_URL}/api/reflect`, {
+      const res = await authFetch(`${API_URL}/api/reflect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessions }),

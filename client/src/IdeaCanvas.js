@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -15,6 +15,31 @@ import { getNodeConfig } from './nodeConfig';
 
 const nodeTypes = { ideaNode: IdeaNode };
 const proOptions = { hideAttribution: true };
+
+// Bridge: exposes useReactFlow() instance to parent via callback ref
+function ReactFlowBridge({ onReady }) {
+  const instance = useReactFlow();
+  useEffect(() => {
+    if (onReady) onReady(instance);
+  }, [instance, onReady]);
+  return null;
+}
+
+// Auto fit-view after generation completes
+function AutoFitView({ isGenerating, nodeCount }) {
+  const { fitView } = useReactFlow();
+  const prevGenerating = useRef(isGenerating);
+  useEffect(() => {
+    if (prevGenerating.current && !isGenerating && nodeCount > 0) {
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.15, duration: 500, maxZoom: 1.2 });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+    prevGenerating.current = isGenerating;
+  }, [isGenerating, nodeCount, fitView]);
+  return null;
+}
 
 // Toolbar inside ReactFlow so useReactFlow() is available
 function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount }) {
@@ -64,6 +89,7 @@ export default function IdeaCanvas({
   onJumpToBreadcrumb,
   searchQuery,
   onSearchChange,
+  onReactFlowReady,
 }) {
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
@@ -114,6 +140,8 @@ export default function IdeaCanvas({
           size={1}
           color="#1e1e2e"
         />
+        <ReactFlowBridge onReady={onReactFlowReady} />
+        <AutoFitView isGenerating={isGenerating} nodeCount={nodes.length} />
         <CanvasToolbar
           searchQuery={searchQuery ?? ''}
           onSearchChange={onSearchChange}

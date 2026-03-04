@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { generateREADME, generateSPEC, generateDEBATE, generateCLAUDE, generateRepoName } from './exportMarkdown';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 const PAT_KEY = 'ig_github_pat';
 
 export default function ExportGitHubModal({ isOpen, onClose, nodes, idea, debateRounds }) {
@@ -53,7 +54,7 @@ export default function ExportGitHubModal({ isOpen, onClose, nodes, idea, debate
 
       setProgress('Creating GitHub repository...');
 
-      const res = await fetch(`${API_URL}/api/export/github`, {
+      const res = await authFetch(`${API_URL}/api/export/github`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

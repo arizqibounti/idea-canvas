@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { computeLayout, buildEdges, getSubtree } from './layoutUtils';
+import { getNodeConfig } from './nodeConfig';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 // ── localStorage helpers ──────────────────────────────────────
 function readSessions(storageKey) {
@@ -128,10 +130,11 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     const displayRaw = activeDrillStack.length > 0
       ? getSubtree(rawNodes, activeDrillStack[activeDrillStack.length - 1].nodeId)
       : rawNodes;
-    const parentEdges = buildEdges(displayRaw);
+    const edgeOpts = { nodeConfigGetter: getNodeConfig };
+    const parentEdges = buildEdges(displayRaw, edgeOpts);
     const laidOut = computeLayout(displayRaw, parentEdges);
     const displayEdges = showCrossLinksRef.current
-      ? buildEdges(displayRaw, { showCrossLinks: true })
+      ? buildEdges(displayRaw, { ...edgeOpts, showCrossLinks: true })
       : parentEdges;
     setNodes(laidOut);
     setEdges(displayEdges);
@@ -313,7 +316,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     abortRef.current = controller;
 
     try {
-      const res = await fetch(`${API_URL}/api/regenerate`, {
+      const res = await authFetch(`${API_URL}/api/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -366,7 +369,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     }));
 
     try {
-      const res = await fetch(`${API_URL}/api/drill`, {
+      const res = await authFetch(`${API_URL}/api/drill`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

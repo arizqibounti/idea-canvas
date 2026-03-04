@@ -18,7 +18,7 @@ const IdeaNode = memo(({ data }) => {
         border: `1px solid ${isStarred ? '#ffd43b' : isSelected ? config.color : config.border}`,
         borderRadius: '8px',
         padding: '12px 14px',
-        width: '220px',
+        width: '260px',
         minHeight: '100px',
         position: 'relative',
         fontFamily: 'var(--font-mono)',
@@ -30,8 +30,8 @@ const IdeaNode = memo(({ data }) => {
             : `0 0 12px ${config.glow}, 0 2px 8px rgba(0,0,0,0.4)`,
         transition: 'opacity 0.3s ease, filter 0.3s ease, box-shadow 0.2s ease',
         animation: 'nodeAppear 0.3s ease forwards',
-        opacity: dimmedBySearch ? 0.2 : (isInRange ? 1 : 0.08),
-        filter: dimmedBySearch ? 'saturate(0.3)' : (isInRange ? 'none' : 'saturate(0.2)'),
+        opacity: dimmedBySearch ? 0.35 : (isInRange ? 1 : 0.08),
+        filter: dimmedBySearch ? 'saturate(0.4) brightness(0.7)' : (isInRange ? 'none' : 'saturate(0.2)'),
         pointerEvents: dimmedBySearch ? 'none' : (isInRange ? 'auto' : 'none'),
       }}
     >
@@ -68,31 +68,44 @@ const IdeaNode = memo(({ data }) => {
           {config.label}
         </span>
         {data.lens && (
-          <span style={{
-            fontSize: 8, marginLeft: 'auto', fontWeight: 600,
-            letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7,
-            color: data.lens === 'analogical' ? '#4dabf7' : data.lens === 'first_principles' ? '#69db7c' : data.lens === 'adversarial' ? '#ff6b6b' : '#c084fc',
-          }}>
+          <span
+            title={data.lens === 'first_principles' ? 'First Principles' : data.lens === 'analogical' ? 'Analogical' : data.lens === 'adversarial' ? 'Adversarial' : 'Synthesis'}
+            style={{
+              fontSize: 8, marginLeft: 'auto', fontWeight: 600,
+              letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7,
+              color: data.lens === 'analogical' ? '#4dabf7' : data.lens === 'first_principles' ? '#69db7c' : data.lens === 'adversarial' ? '#ff6b6b' : '#c084fc',
+            }}
+          >
             {data.lens === 'first_principles' ? 'FP' : data.lens === 'analogical' ? 'AN' : data.lens === 'adversarial' ? 'ADV' : 'SYN'}
           </span>
         )}
       </div>
 
       {/* Label */}
-      <div style={{
-        color: '#e8e8f0', fontSize: '13px', fontWeight: '600',
-        lineHeight: '1.4', marginBottom: '8px', letterSpacing: '0.01em',
-      }}>
+      <div
+        style={{
+          color: '#e8e8f0', fontSize: '13px', fontWeight: '600',
+          lineHeight: '1.4', marginBottom: '8px', letterSpacing: '0.01em',
+          display: '-webkit-box', WebkitLineClamp: 3,
+          WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        }}
+        title={data.label}
+      >
         {data.label}
       </div>
 
       {/* Reasoning */}
       {data.reasoning && (
-        <div style={{
-          color: '#7070a0', fontSize: '11px', lineHeight: '1.5',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          paddingTop: '7px', fontStyle: 'italic',
-        }}>
+        <div
+          style={{
+            color: '#8888b8', fontSize: '11px', lineHeight: '1.5',
+            borderTop: '1px solid rgba(255,255,255,0.06)',
+            paddingTop: '7px', fontStyle: 'italic',
+            display: '-webkit-box', WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}
+          title={data.reasoning}
+        >
           {data.reasoning}
         </div>
       )}
@@ -101,7 +114,7 @@ const IdeaNode = memo(({ data }) => {
       <div style={{
         position: 'absolute', left: 0, top: '10px', bottom: '10px',
         width: '3px', background: config.color,
-        borderRadius: '0 2px 2px 0', opacity: 0.7,
+        borderRadius: '0 2px 2px 0', opacity: 0.85,
       }} />
 
       <Handle type="target" position={Position.Top} style={{
@@ -112,6 +125,20 @@ const IdeaNode = memo(({ data }) => {
         background: config.color, width: 8, height: 8,
         border: `2px solid ${config.bg}`, bottom: -5,
       }} />
+
+      {/* Child count badge */}
+      {data.childCount > 0 && (
+        <div style={{
+          position: 'absolute', bottom: -18, left: '50%',
+          transform: 'translateX(-50%)',
+          background: config.bg, border: `1px solid ${config.border}`,
+          borderRadius: 10, padding: '1px 6px',
+          fontSize: 9, fontWeight: 700, color: config.color,
+          opacity: 0.8, zIndex: 1, fontFamily: 'var(--font-mono)',
+        }}>
+          {data.childCount}
+        </div>
+      )}
     </div>
   );
 });

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { authFetch } from './api';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 // ── ResumeInput ───────────────────────────────────────────────
 // Full-panel component shown when resume mode is active and the canvas is empty.
@@ -26,7 +27,7 @@ export default function ResumeInput({ onAnalyzeReady }) {
     setIsFetching(true);
     setFetchError(null);
     try {
-      const res = await fetch(`${API_URL}/api/fetch-url`, {
+      const res = await authFetch(`${API_URL}/api/fetch-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: jdUrl.trim() }),

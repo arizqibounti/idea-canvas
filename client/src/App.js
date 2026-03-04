@@ -18,9 +18,59 @@ import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConf
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
 import { readTemplates, saveTemplate } from './TemplateStore';
+import { useGateway } from './gateway/useGateway';
+import CanvasPanel from './CanvasPanel';
+import ExportDropdown from './ExportDropdown';
+import { exportToPng, exportToSvg, copyToClipboard, downloadDataUrl, downloadSvg, generateInteractiveHtml, downloadHtml } from './exportImage';
+import ShareModal from './ShareModal';
+import ShareViewer from './ShareViewer';
+import { useAuth } from './AuthContext';
+import { setTokenGetter, authFetch } from './api';
+import LandingPage from './LandingPage';
+import SessionDashboard from './SessionDashboard';
 import './App.css';
 
-const API_URL = 'http://localhost:5001';
+const API_URL = process.env.REACT_APP_API_URL || '';
+const WS_URL = API_URL
+  ? API_URL.replace(/^http/, 'ws') + '/ws'
+  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+// Mode-specific toolbar button labels & tooltips
+const DEBATE_LABELS = {
+  idea:     { icon: '⚔', label: 'CRITIQUE',  tooltip: 'VC critique of your idea' },
+  resume:   { icon: '◎', label: 'REVIEW',    tooltip: 'Hiring manager review of resume strategy' },
+  codebase: { icon: '⟨/⟩', label: 'AUDIT',  tooltip: 'Security audit of codebase architecture' },
+  decision: { icon: '⚖', label: 'ADVOCATE',  tooltip: "Devil's advocate analysis of your decision" },
+  writing:  { icon: '✦', label: 'EDITORIAL', tooltip: 'Senior editor review of your writing' },
+  plan:     { icon: '◉', label: 'RISK',      tooltip: 'Risk analyst review of your plan' },
+};
+
+const CHAT_LABELS = {
+  idea:     { title: 'STRATEGIST', tooltip: 'Product strategist companion' },
+  resume:   { title: 'COACH',     tooltip: 'Career coach companion' },
+  codebase: { title: 'ADVISOR',   tooltip: 'Tech advisor companion' },
+  decision: { title: 'ANALYST',   tooltip: 'Decision analyst companion' },
+  writing:  { title: 'EDITOR',    tooltip: 'Writing editor companion' },
+  plan:     { title: 'PLANNER',   tooltip: 'Project advisor companion' },
+};
+
+// Helper: stream generation via WebSocket, with same callback pattern as readSSEStream
+// Returns null if WS send fails (caller should fall back to REST)
+function streamViaGateway(gateway, type, params, onNode) {
+  return new Promise((resolve) => {
+    const reqId = gateway.send(type, params, {
+      onNode: (data) => onNode(data),
+      onMeta: (data) => onNode({ ...data, _meta: true }),
+      onProgress: (stage) => onNode({ _progress: true, stage }),
+      onText: (data) => onNode(data),
+      onResult: (data) => resolve({ done: true, result: data }),
+      onCanvasArtifact: (data) => onNode({ _canvas: true, ...data }),
+      onDone: () => resolve({ done: true }),
+      onError: (message) => resolve({ error: message }),
+    });
+    if (!reqId) resolve(null); // null signals: fall back to REST
+  });
+}
 
 const LEGEND_GROUPS = {
   Product: ['seed', 'problem', 'user_segment', 'job_to_be_done', 'feature', 'constraint', 'metric', 'insight'],
@@ -165,7 +215,56 @@ function TimelineBar2D({ roundRange, onRoundRangeChange, isPlaying, onPlayToggle
   );
 }
 
-export default function App() {
+// ── Route wrapper: /share/:id → ShareViewer, landing page if not logged in, else → main app ──
+function AppRouter() {
+  const { user, loading, isConfigured } = useAuth();
+  const [activeSession, setActiveSession] = useState(null);
+
+  // Share links are always public (no auth needed)
+  const shareMatch = window.location.pathname.match(/^\/share\/([a-zA-Z0-9_-]+)$/);
+  if (shareMatch) {
+    return <ShareViewer shareId={shareMatch[1]} />;
+  }
+
+  // Show loading while Firebase checks auth state
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: '100vh', background: '#0a0a0f', color: '#6c63ff', fontFamily: 'var(--font-mono, monospace)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>◈</div>
+          <div style={{ fontSize: 12, letterSpacing: '0.1em', opacity: 0.7 }}>LOADING...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // If Firebase is configured and user not signed in, show landing page
+  if (isConfigured && !user) {
+    return <LandingPage />;
+  }
+
+  // Authenticated (or auth not configured = local dev)
+  // Show dashboard unless a session is active
+  if (!activeSession) {
+    return (
+      <SessionDashboard
+        onOpenSession={(session) => setActiveSession(session)}
+        onNewSession={() => setActiveSession({ isNew: true })}
+      />
+    );
+  }
+
+  return (
+    <App
+      initialSession={activeSession}
+      onBackToDashboard={() => setActiveSession(null)}
+    />
+  );
+}
+
+export { AppRouter };
+export default function App({ initialSession, onBackToDashboard }) {
   // ── Mode ──────────────────────────────────────────────────
   const [manualMode, setManualMode]   = useState(null); // null = follow auto-detect
   const [detectedMode, setDetectedMode] = useState(null);
@@ -190,9 +289,51 @@ export default function App() {
   const [isGeneratingChanges, setIsGeneratingChanges] = useState(false);
   const [resumeChangesError, setResumeChangesError]   = useState(null);
 
+  // ── Auth ────────────────────────────────────────────────
+  const { user: authUser, getToken, logout: authLogout } = useAuth();
+
+  // Wire up the API fetch wrapper with the auth token on mount
+  useEffect(() => {
+    setTokenGetter(getToken);
+  }, [getToken]);
+
+  // ── Gateway (WebSocket) ─────────────────────────────────
+  const gateway = useGateway(WS_URL, getToken);
+  const gatewayRef = useRef(gateway);
+  gatewayRef.current = gateway;
+
   // ── Canvas hooks ──────────────────────────────────────────
   const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea' });
   const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName' });
+
+  // ── Load initial session from dashboard ───────────────────
+  const initialSessionLoaded = useRef(false);
+  useEffect(() => {
+    if (initialSessionLoaded.current || !initialSession || initialSession.isNew) return;
+    initialSessionLoaded.current = true;
+
+    // Determine which canvas mode to load into
+    const sessionMode = initialSession.mode || 'idea';
+
+    if (sessionMode === 'codebase') {
+      // Load into codebase canvas
+      if (initialSession.rawNodes?.length) {
+        cb$.handleLoadSession(initialSession, (label) => setCbFolderName(label));
+      }
+      setManualMode('codebase');
+    } else {
+      // Load into idea canvas (for all non-codebase modes)
+      if (initialSession.rawNodes?.length) {
+        idea$.handleLoadSession(initialSession, (label) => setIdea(label));
+      } else if (initialSession.idea) {
+        setIdea(initialSession.idea);
+      }
+      if (sessionMode !== 'idea') {
+        setManualMode(sessionMode);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Dynamic type config for adaptive mode ────────────────
   const dynamicConfigRef = useRef(null);    // built color/icon map
@@ -224,8 +365,74 @@ export default function App() {
   // ── Chat Companion ────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
 
-  // ── Export to GitHub ────────────────────────────────────────
+  // ── Export & Share ───────────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+  const reactFlowRef = useRef(null);
+
+  // ── User profile & usage ───────────────────────────────────
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [usageData, setUsageData] = useState(null);
+
+  // Fetch usage data on mount and close user menu on outside click
+  useEffect(() => {
+    authFetch(`${API_URL}/api/usage`).then(r => r.ok ? r.json() : null).then(d => d && setUsageData(d)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!showUserMenu) return;
+    const close = () => setShowUserMenu(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showUserMenu]);
+
+  const handleExport = useCallback(async (key) => {
+    if (key === 'github') {
+      setShowExportModal(true);
+      return;
+    }
+    const rfInstance = reactFlowRef.current;
+    if (!rfInstance) return;
+    setIsExporting(true);
+    try {
+      switch (key) {
+        case 'png': {
+          const dataUrl = await exportToPng(rfInstance);
+          downloadDataUrl(dataUrl, `idea-canvas-${Date.now()}.png`);
+          break;
+        }
+        case 'svg': {
+          const svgStr = await exportToSvg(rfInstance);
+          downloadSvg(svgStr, `idea-canvas-${Date.now()}.svg`);
+          break;
+        }
+        case 'clipboard': {
+          await copyToClipboard(rfInstance);
+          setToastMsg('Copied to clipboard!');
+          setTimeout(() => setToastMsg(''), 2200);
+          break;
+        }
+        case 'html': {
+          const rawNodes = idea$.rawNodesRef.current;
+          const html = generateInteractiveHtml(rawNodes, idea);
+          downloadHtml(html, `idea-canvas-${Date.now()}.html`);
+          break;
+        }
+        default: break;
+      }
+    } catch (err) {
+      console.error('Export failed:', err);
+      setToastMsg('Export failed — see console');
+      setTimeout(() => setToastMsg(''), 3000);
+    }
+    setIsExporting(false);
+  }, [idea]);
+
+  // ── A2UI Canvas ───────────────────────────────────────────
+  const [showCanvas, setShowCanvas] = useState(false);
+  const [canvasArtifacts, setCanvasArtifacts] = useState([]);
 
   // ── 3D Canvas ─────────────────────────────────────────────
   const [is3D, setIs3D] = useState(false);
@@ -246,8 +453,8 @@ export default function App() {
   // ── Node scoring ─────────────────────────────────────────
   const [isScoring, setIsScoring] = useState(false);
 
-  // ── Multi-agent generation ───────────────────────────────
-  const [useMultiAgent, setUseMultiAgent] = useState(false);
+  // ── Generation mode: single | multi | research ───────────
+  const [genMode, setGenMode] = useState('single');
   const [multiAgentProgress, setMultiAgentProgress] = useState(null);
 
   // ── Auto-save ─────────────────────────────────────────────
@@ -275,7 +482,7 @@ export default function App() {
     if (!rawNodes?.length || !ideaText?.trim()) return;
     setIsScoring(true);
     try {
-      const res = await fetch(`${API_URL}/api/score-nodes`, {
+      const res = await authFetch(`${API_URL}/api/score-nodes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -337,7 +544,7 @@ export default function App() {
 
               if (isRootDomain) {
                 // Crawl the full site — fetches homepage + key subpages
-                const r = await fetch(`${API_URL}/api/crawl-site`, {
+                const r = await authFetch(`${API_URL}/api/crawl-site`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ url }),
@@ -349,7 +556,7 @@ export default function App() {
                 return (pages || []).filter(p => p.text).map(p => ({ url: p.url, text: p.text }));
               } else {
                 // Specific page — fetch just that URL
-                const r = await fetch(`${API_URL}/api/fetch-url`, {
+                const r = await authFetch(`${API_URL}/api/fetch-url`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ url }),
@@ -376,39 +583,43 @@ export default function App() {
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const res = await fetch(`${API_URL}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance }),
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
       const seenTypes = [];
-      const result = await readSSEStream(res, (nodeData) => {
-        // Intercept _meta line
+      const onNodeData = (nodeData) => {
         if (nodeData._meta) {
           const config = buildDynamicConfig(nodeData.types || []);
           dynamicConfigRef.current = config;
           dynamicTypesRef.current = nodeData.types || [];
           idea$.dynamicTypesRef.current = nodeData.types || [];
           setDynamicDomain(nodeData.domain || 'Canvas');
-          return; // don't add _meta as a node
+          return;
         }
         const flowNode = buildFlowNode(nodeData);
-        // Attach dynamic config to node data for rendering
-        if (dynamicConfigRef.current) {
-          flowNode.data.dynamicConfig = dynamicConfigRef.current;
-        }
+        if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
         idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
         idea$.applyLayout(idea$.rawNodesRef.current, []);
         idea$.setNodeCount(idea$.rawNodesRef.current.length);
-        // Track seen types for legend
         if (nodeData.type && !seenTypes.includes(nodeData.type)) {
           seenTypes.push(nodeData.type);
           setDynamicLegendTypes([...seenTypes]);
         }
-      });
+      };
+
+      let result;
+      if (gatewayRef.current.connected) {
+        result = await streamViaGateway(gatewayRef.current, 'generate', genParams, onNodeData);
+      }
+      if (!result) {
+        // WS not available or send failed — fall back to REST+SSE
+        const res = await authFetch(`${API_URL}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(genParams),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        result = await readSSEStream(res, onNodeData);
+      }
       if (result.error) idea$.setError(result.error);
       saveVersionAndMemory(idea, idea$.rawNodesRef.current);
     } catch (err) {
@@ -456,12 +667,12 @@ export default function App() {
               const path = parsed.pathname.replace(/\/+$/, '');
               const isRootDomain = !path || path === '';
               if (isRootDomain) {
-                const r = await fetch(`${API_URL}/api/crawl-site`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                const r = await authFetch(`${API_URL}/api/crawl-site`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
                 if (!r.ok) return null;
                 const { pages } = await r.json();
                 return (pages || []).filter(p => p.text).map(p => ({ url: p.url, text: p.text }));
               } else {
-                const r = await fetch(`${API_URL}/api/fetch-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                const r = await authFetch(`${API_URL}/api/fetch-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
                 if (!r.ok) return null;
                 const { text } = await r.json();
                 return text ? [{ url, text }] : null;
@@ -481,16 +692,9 @@ export default function App() {
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const res = await fetch(`${API_URL}/api/generate-multi`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance }),
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
       const seenTypes = [];
-      const result = await readSSEStream(res, (nodeData) => {
+      const onNodeData = (nodeData) => {
         if (nodeData._progress) {
           setMultiAgentProgress(nodeData.stage);
           return;
@@ -513,7 +717,134 @@ export default function App() {
           seenTypes.push(nodeData.type);
           setDynamicLegendTypes([...seenTypes]);
         }
-      });
+      };
+
+      let result;
+      if (gatewayRef.current.connected) {
+        result = await streamViaGateway(gatewayRef.current, 'generate-multi', genParams, onNodeData);
+      }
+      if (!result) {
+        const res = await authFetch(`${API_URL}/api/generate-multi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(genParams),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        result = await readSSEStream(res, onNodeData);
+      }
+      if (result.error) idea$.setError(result.error);
+      saveVersionAndMemory(idea, idea$.rawNodesRef.current);
+    } catch (err) {
+      if (err.name !== 'AbortError') idea$.setError(err.message);
+    } finally {
+      idea$.setIsGenerating(false);
+      setMultiAgentProgress(null);
+      setIsFetchingUrl(false);
+      if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
+        setShowDebate(true);
+        setDebateAutoStart(true);
+        triggerScoring(idea$.rawNodesRef.current, idea.trim());
+      }
+    }
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
+
+  const handleGenerateResearch = useCallback(async () => {
+    if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
+    idea$.resetCanvas();
+    idea$.setIsGenerating(true);
+    setMultiAgentProgress('Planning research strategy...');
+    setRedirectState('idle');
+    setDebateAutoStart(false);
+    dynamicConfigRef.current = null;
+    dynamicTypesRef.current = null;
+    setDynamicDomain(null);
+    setDynamicLegendTypes([]);
+
+    if (idea$.abortRef.current) idea$.abortRef.current.abort();
+    const controller = new AbortController();
+    idea$.abortRef.current = controller;
+
+    try {
+      // URL detection (same as handleGenerate)
+      let fetchedUrlContent = null;
+      const urlRegex = /https?:\/\/[^\s"'<>]+/g;
+      const urls = idea.trim().match(urlRegex);
+      if (urls?.length) {
+        setIsFetchingUrl(true);
+        try {
+          const fetches = urls.map(async (url) => {
+            try {
+              const parsed = new URL(url);
+              const path = parsed.pathname.replace(/\/+$/, '');
+              const isRootDomain = !path || path === '';
+              if (isRootDomain) {
+                const r = await authFetch(`${API_URL}/api/crawl-site`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                if (!r.ok) return null;
+                const { pages } = await r.json();
+                return (pages || []).filter(p => p.text).map(p => ({ url: p.url, text: p.text }));
+              } else {
+                const r = await authFetch(`${API_URL}/api/fetch-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), signal: controller.signal });
+                if (!r.ok) return null;
+                const { text } = await r.json();
+                return text ? [{ url, text }] : null;
+              }
+            } catch { return null; }
+          });
+          const results = await Promise.all(fetches);
+          fetchedUrlContent = results.filter(Boolean).flat();
+          if (!fetchedUrlContent.length) fetchedUrlContent = null;
+        } finally {
+          setIsFetchingUrl(false);
+        }
+      }
+
+      const allTemplates = readTemplates();
+      const templateGuidance = allTemplates.length > 0
+        ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
+        : undefined;
+
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
+      const seenTypes = [];
+      const onNodeData = (nodeData) => {
+        if (nodeData._progress) {
+          setMultiAgentProgress(nodeData.stage);
+          return;
+        }
+        if (nodeData._meta) {
+          const config = buildDynamicConfig(nodeData.types || []);
+          dynamicConfigRef.current = config;
+          dynamicTypesRef.current = nodeData.types || [];
+          idea$.dynamicTypesRef.current = nodeData.types || [];
+          setDynamicDomain(nodeData.domain || 'Canvas');
+          setMultiAgentProgress(null);
+          return;
+        }
+        const flowNode = buildFlowNode(nodeData);
+        if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
+        idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+        idea$.applyLayout(idea$.rawNodesRef.current, []);
+        idea$.setNodeCount(idea$.rawNodesRef.current.length);
+        if (nodeData.type && !seenTypes.includes(nodeData.type)) {
+          seenTypes.push(nodeData.type);
+          setDynamicLegendTypes([...seenTypes]);
+        }
+      };
+
+      let result;
+      if (gatewayRef.current.connected) {
+        result = await streamViaGateway(gatewayRef.current, 'generate-research', genParams, onNodeData);
+      }
+      if (!result) {
+        const res = await authFetch(`${API_URL}/api/generate-research`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(genParams),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        result = await readSSEStream(res, onNodeData);
+      }
       if (result.error) idea$.setError(result.error);
       saveVersionAndMemory(idea, idea$.rawNodesRef.current);
     } catch (err) {
@@ -537,8 +868,11 @@ export default function App() {
   }, [active]);
 
   const handleKeyDown = useCallback((e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); useMultiAgent ? handleGenerateMulti() : handleGenerate(); }
-  }, [handleGenerate]);
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      genMode === 'research' ? handleGenerateResearch() : genMode === 'multi' ? handleGenerateMulti() : handleGenerate();
+    }
+  }, [handleGenerate, handleGenerateMulti, handleGenerateResearch, genMode]);
 
   // ── Textarea auto-resize ────────────────────────────────
   const autoResize = useCallback(() => {
@@ -618,7 +952,7 @@ export default function App() {
     }));
 
     try {
-      const res = await fetch(`${API_URL}/api/generate`, {
+      const res = await authFetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idea: idea.trim(), steeringInstruction: steeringText.trim(), existingNodes }),
@@ -664,7 +998,7 @@ export default function App() {
     cb$.abortRef.current = controller;
 
     try {
-      const res = await fetch(`${API_URL}/api/analyze-codebase`, {
+      const res = await authFetch(`${API_URL}/api/analyze-codebase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -707,7 +1041,7 @@ export default function App() {
     idea$.abortRef.current = controller;
 
     try {
-      const res = await fetch(`${API_URL}/api/generate`, {
+      const res = await authFetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -755,7 +1089,7 @@ export default function App() {
     setShowResumeChanges(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/resume/changes`, {
+      const res = await authFetch(`${API_URL}/api/resume/changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -831,7 +1165,7 @@ export default function App() {
     try {
       const rawNodes = idea$.rawNodesRef.current;
       if (!rawNodes?.length) return;
-      const res = await fetch(`${API_URL}/api/extract-template`, {
+      const res = await authFetch(`${API_URL}/api/extract-template`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -855,7 +1189,7 @@ export default function App() {
     const rawNodes = idea$.rawNodesRef.current;
     if (!rawNodes?.length) return;
 
-    const res = await fetch(`${API_URL}/api/expand-suggestion`, {
+    const res = await authFetch(`${API_URL}/api/expand-suggestion`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -914,6 +1248,16 @@ export default function App() {
     return () => { if (playbackTimerRef.current) clearInterval(playbackTimerRef.current); };
   }, [isPlayingRounds, playbackSpeed, maxRound, is3D]);
 
+  // ── Child count map (for badge on parent nodes) ──
+  const childCountMap = useMemo(() => {
+    const map = {};
+    active.nodes.forEach((n) => {
+      const pid = n.data?.parentId;
+      if (pid) map[pid] = (map[pid] || 0) + 1;
+    });
+    return map;
+  }, [active.nodes]);
+
   // ── Tree search: match label or reasoning (case-insensitive) ──
   const treeSearchTrim = (treeSearchQuery || '').trim();
   const displayNodes = active.nodes.map((n) => {
@@ -936,6 +1280,7 @@ export default function App() {
         isInRange: inRange,
         searchActive,
         searchMatch,
+        childCount: childCountMap[n.id] || 0,
       },
     };
   });
@@ -978,6 +1323,11 @@ export default function App() {
       {/* ── Top bar ── */}
       <header className="top-bar">
         <div className="top-bar-left">
+          {onBackToDashboard && (
+            <button className="btn btn-icon btn-back" onClick={onBackToDashboard} title="Back to dashboard">
+              ← BACK
+            </button>
+          )}
           <span className="logo-mark">◈</span>
           <span className="app-title">IDEA CANVAS</span>
         </div>
@@ -1060,16 +1410,17 @@ export default function App() {
                 ) : (
                   <>
                     <button
-                      className={`btn btn-mode-toggle ${useMultiAgent ? 'active' : ''}`}
-                      onClick={() => setUseMultiAgent(v => !v)}
-                      title={useMultiAgent ? 'Multi-agent mode (3 lenses — slower but thorough)' : 'Single-agent mode (fast)'}
+                      className={`btn btn-mode-toggle ${genMode !== 'single' ? 'active' : ''} ${genMode === 'research' ? 'research' : ''}`}
+                      onClick={() => setGenMode(prev => prev === 'single' ? 'multi' : prev === 'multi' ? 'research' : 'single')}
+                      title={genMode === 'single' ? 'Single agent (fast)' : genMode === 'multi' ? 'Multi-agent (3 lenses)' : 'Research agents (deep research + generation)'}
                       style={{ padding: '6px 8px', fontSize: 9, marginRight: 4 }}
                     >
-                      {useMultiAgent ? '◈×3' : '◈×1'}
+                      {genMode === 'single' ? '◈×1' : genMode === 'multi' ? '◈×3' : '⊛ R'}
                     </button>
-                    <button className="btn btn-generate" onClick={useMultiAgent ? handleGenerateMulti : handleGenerate} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
-                      {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
+                    <button className="btn btn-generate" onClick={genMode === 'research' ? handleGenerateResearch : genMode === 'multi' ? handleGenerateMulti : handleGenerate} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
+                      {isFetchingUrl ? '◌ FETCHING URL...' : genMode === 'research' ? '▶ RESEARCH & GENERATE' : '▶ GENERATE'}
                     </button>
+                    {gateway.connected && <span style={{ fontSize: 8, color: '#51cf66', marginLeft: 4, opacity: 0.7 }} title="WebSocket Gateway connected">⚡WS</span>}
                   </>
                 )}
               </>
@@ -1110,35 +1461,41 @@ export default function App() {
               ⬛ SAVE
             </button>
           )}
-          {/* Debate button — shown when canvas has nodes in idea mode */}
+          {/* Panels group — debate, chat, canvas */}
           {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
-            <button
-              className={`btn btn-icon btn-debate-icon ${showDebate ? 'active-icon' : ''}`}
-              onClick={() => setShowDebate((v) => !v)}
-              title="Autonomous Devil's Advocate debate"
-            >
-              ⚔ DEBATE
-            </button>
-          )}
-          {/* Chat Companion — shown when canvas has nodes in idea mode */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
-            <button
-              className={`btn btn-icon btn-chat-icon ${showChat ? 'active-icon' : ''}`}
-              onClick={() => setShowChat((v) => !v)}
-              title="AI Chat Companion"
-            >
-              ✦ CHAT
-            </button>
-          )}
-          {/* Export — shown when canvas has nodes in idea mode */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
-            <button
-              className="btn btn-icon btn-export-icon"
-              onClick={() => setShowExportModal(true)}
-              title="Export to GitHub"
-            >
-              ⬆ EXPORT
-            </button>
+            <>
+              <div className="toolbar-sep" />
+              <button
+                className={`btn btn-icon btn-debate-icon ${showDebate ? 'active-icon' : ''}`}
+                onClick={() => setShowDebate((v) => !v)}
+                title={(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).tooltip}
+              >
+                {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).icon} {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).label}
+              </button>
+              <button
+                className={`btn btn-icon btn-chat-icon ${showChat ? 'active-icon' : ''}`}
+                onClick={() => setShowChat((v) => !v)}
+                title={(CHAT_LABELS[displayMode] || CHAT_LABELS.idea).tooltip}
+              >
+                ✦ {(CHAT_LABELS[displayMode] || CHAT_LABELS.idea).title}
+              </button>
+              <button
+                className={`btn btn-icon btn-canvas-icon ${showCanvas ? 'active-icon' : ''}`}
+                onClick={() => setShowCanvas((v) => !v)}
+                title="A2UI Canvas — Interactive Visualizations"
+              >
+                ◈ CANVAS
+              </button>
+              <div className="toolbar-sep" />
+              <button
+                className="btn btn-icon btn-share-icon"
+                onClick={() => setShowShareModal(true)}
+                title="Share tree via link"
+              >
+                ⊞ SHARE
+              </button>
+              <ExportDropdown onExport={handleExport} isExporting={isExporting} />
+            </>
           )}
           {/* 3D toggle — shown when canvas has nodes in idea mode */}
           {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
@@ -1162,6 +1519,27 @@ export default function App() {
           )}
           {active.savedSessions.length > 0 && (
             <button className="btn btn-icon" onClick={() => active.setShowLoadModal(true)}>▤ LOAD</button>
+          )}
+
+          {/* Usage indicator + User profile */}
+          {usageData && (
+            <div className={`usage-indicator${usageData.remaining <= 3 ? (usageData.remaining === 0 ? ' exhausted' : ' warning') : ''}`}>
+              {usageData.remaining === 0 ? '⊘' : '◈'} {usageData.generationsToday}/{usageData.limit}
+            </div>
+          )}
+          {authUser && (
+            <div className="user-profile" onClick={() => setShowUserMenu(v => !v)}>
+              {authUser.photoURL
+                ? <img src={authUser.photoURL} alt="" className="user-avatar" referrerPolicy="no-referrer" />
+                : <div className="user-avatar-fallback">{(authUser.displayName || authUser.email || '?')[0].toUpperCase()}</div>
+              }
+              {showUserMenu && (
+                <div className="user-dropdown">
+                  <div className="user-dropdown-email">{authUser.email}</div>
+                  <button className="user-dropdown-item" onClick={(e) => { e.stopPropagation(); authLogout(); }}>Sign out</button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -1264,6 +1642,7 @@ export default function App() {
                 onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
                 searchQuery={treeSearchQuery}
                 onSearchChange={setTreeSearchQuery}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
               />
             </ReactFlowProvider>
           )
@@ -1384,6 +1763,18 @@ export default function App() {
         mode={displayMode}
       />
 
+      {/* ── A2UI Canvas Panel ── */}
+      {showCanvas && (
+        <CanvasPanel
+          onClose={() => setShowCanvas(false)}
+          artifacts={canvasArtifacts}
+          setArtifacts={setCanvasArtifacts}
+          nodes={idea$.rawNodesRef.current}
+          idea={idea}
+          gateway={gateway}
+        />
+      )}
+
       {/* ── Resume Changes Modal ── */}
       <ResumeChangesModal
         isOpen={showResumeChanges}
@@ -1402,6 +1793,16 @@ export default function App() {
         idea={idea}
         debateRounds={debateRoundsRef.current}
       />
+
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        nodes={idea$.rawNodesRef.current}
+        idea={idea}
+      />
+
+      {/* Toast notification */}
+      {toastMsg && <div className="export-toast">{toastMsg}</div>}
 
       <footer className="legend">
         {dynamicDomain && dynamicLegendTypes.length > 0 ? (
