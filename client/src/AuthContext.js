@@ -1,10 +1,19 @@
 // ── Firebase Auth Context ──────────────────────────────────────
 // Provides Google sign-in via Firebase Auth.
 // Manages auth state, ID token (auto-refreshed), and sign-in/out.
+// Uses popup sign-in with redirect fallback if popup is blocked.
 
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  signOut,
+} from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -33,13 +42,16 @@ export function AuthProvider({ children }) {
   const tokenRef = useRef(null);
   const [tokenReady, setTokenReady] = useState(!isConfigured);
 
-  // Listen for auth state changes
+  // Listen for auth state changes + process any pending redirect
   useEffect(() => {
     if (!auth) {
       setLoading(false);
       setTokenReady(true);
       return;
     }
+
+    // Process pending redirect result (from signInWithRedirect fallback)
+    getRedirectResult(auth).catch(() => {});
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -69,12 +81,20 @@ export function AuthProvider({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
+  // Try popup first, fall back to redirect if popup is blocked
   const login = async () => {
     if (!auth) {
       console.warn('Firebase Auth not configured');
       return;
     }
-    return signInWithPopup(auth, new GoogleAuthProvider());
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (err) {
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+        return signInWithRedirect(auth, new GoogleAuthProvider());
+      }
+      throw err;
+    }
   };
 
   const logout = async () => {
