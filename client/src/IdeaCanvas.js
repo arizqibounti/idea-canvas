@@ -42,7 +42,7 @@ function AutoFitView({ isGenerating, nodeCount }) {
 }
 
 // Toolbar inside ReactFlow so useReactFlow() is available
-function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount }) {
+function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount, onCollapseAll, onExpandAll, hasCollapsed }) {
   const { fitView } = useReactFlow();
   const handleFit = useCallback(() => {
     fitView({ padding: 0.2, duration: 400 });
@@ -59,6 +59,25 @@ function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount }) {
         >
           ⊡ Fit view
         </button>
+        {hasCollapsed ? (
+          <button
+            type="button"
+            className="canvas-toolbar-fit"
+            onClick={onExpandAll}
+            title="Expand all collapsed branches"
+          >
+            ⊞ Expand all
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="canvas-toolbar-fit"
+            onClick={onCollapseAll}
+            title="Collapse all branches to top level"
+          >
+            ⊟ Collapse all
+          </button>
+        )}
         <input
           type="text"
           className="canvas-toolbar-search"
@@ -91,6 +110,9 @@ export default function IdeaCanvas({
   searchQuery,
   onSearchChange,
   onReactFlowReady,
+  onCollapseAll,
+  onExpandAll,
+  hasCollapsed,
 }) {
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
@@ -155,6 +177,9 @@ export default function IdeaCanvas({
           searchQuery={searchQuery ?? ''}
           onSearchChange={onSearchChange}
           nodeCount={nodes.length}
+          onCollapseAll={onCollapseAll}
+          onExpandAll={onExpandAll}
+          hasCollapsed={hasCollapsed}
         />
         <Controls
           style={{

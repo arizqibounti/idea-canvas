@@ -400,12 +400,12 @@ export default function App({ initialSession, onBackToDashboard }) {
       switch (key) {
         case 'png': {
           const dataUrl = await exportToPng(rfInstance);
-          downloadDataUrl(dataUrl, `idea-canvas-${Date.now()}.png`);
+          downloadDataUrl(dataUrl, `thoughtclaw-${Date.now()}.png`);
           break;
         }
         case 'svg': {
           const svgStr = await exportToSvg(rfInstance);
-          downloadSvg(svgStr, `idea-canvas-${Date.now()}.svg`);
+          downloadSvg(svgStr, `thoughtclaw-${Date.now()}.svg`);
           break;
         }
         case 'clipboard': {
@@ -417,7 +417,7 @@ export default function App({ initialSession, onBackToDashboard }) {
         case 'html': {
           const rawNodes = idea$.rawNodesRef.current;
           const html = generateInteractiveHtml(rawNodes, idea);
-          downloadHtml(html, `idea-canvas-${Date.now()}.html`);
+          downloadHtml(html, `thoughtclaw-${Date.now()}.html`);
           break;
         }
         default: break;
@@ -1360,7 +1360,7 @@ export default function App({ initialSession, onBackToDashboard }) {
             </button>
           )}
           <span className="logo-mark">◈</span>
-          <span className="app-title">IDEA CANVAS</span>
+          <span className="app-title">THOUGHTCLAW</span>
         </div>
 
         {/* Idea mode input row — hidden when resume mode is showing its own full-panel input */}
@@ -1682,6 +1682,9 @@ export default function App({ initialSession, onBackToDashboard }) {
                 searchQuery={treeSearchQuery}
                 onSearchChange={setTreeSearchQuery}
                 onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+                onCollapseAll={idea$.handleCollapseAll}
+                onExpandAll={idea$.handleExpandAll}
+                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
               />
             </ReactFlowProvider>
           )
@@ -1715,6 +1718,9 @@ export default function App({ initialSession, onBackToDashboard }) {
                 onJumpToBreadcrumb={cb$.handleJumpToBreadcrumb}
                 searchQuery={treeSearchQuery}
                 onSearchChange={setTreeSearchQuery}
+                onCollapseAll={cb$.handleCollapseAll}
+                onExpandAll={cb$.handleExpandAll}
+                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
               />
             </ReactFlowProvider>
           )
@@ -1951,7 +1957,7 @@ export default function App({ initialSession, onBackToDashboard }) {
 const EMPTY_STATE_CONFIG = {
   idea: {
     icon: '◈',
-    title: 'IDEA CANVAS',
+    title: 'THOUGHTCLAW',
     desc: (<>Type an idea above and hit <kbd>Enter</kbd> or <kbd>GENERATE</kbd> to let the agent build your product thinking tree.</>),
     examples: ['"AI code review tool"', '"grocery delivery for seniors"', '"multiplayer design app"'],
   },

@@ -145,7 +145,7 @@ export function generateInteractiveHtml(rawNodes, idea) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Idea Canvas — ${(idea || 'Export').replace(/[<>"]/g, '')}</title>
+<title>ThoughtClaw — ${(idea || 'Export').replace(/[<>"]/g, '')}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0f;overflow:hidden;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;color:#e8e8f0}

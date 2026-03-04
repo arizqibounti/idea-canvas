@@ -1,4 +1,4 @@
-# Idea Canvas — Implementation Plan
+# ThoughtClaw — Implementation Plan
 
 ## Status: Implemented
 
@@ -136,8 +136,8 @@ npm run install-all  # install all dependencies
 ### Docker
 
 ```bash
-docker build -t idea-canvas .
-docker run -p 8080:8080 --env-file .env idea-canvas
+docker build -t thoughtclaw .
+docker run -p 8080:8080 --env-file .env thoughtclaw
 ```
 
 ## Architecture Decisions

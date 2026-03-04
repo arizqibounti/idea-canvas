@@ -176,15 +176,32 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
   // ── Save session helper ───────────────────────────────────
   const saveSession = useCallback((labelValue, rawNodes) => {
     const sessions = readSessions(storageKey);
-    const newSession = {
-      id: new Date().toISOString(),
+    const normalizedLabel = (labelValue || '').toLowerCase().trim();
+
+    // Find existing session with same idea text — update in place (upsert)
+    const existingIdx = sessions.findIndex(
+      s => ((s.label || s[sessionLabel] || '').toLowerCase().trim()) === normalizedLabel
+    );
+
+    const sessionData = {
+      id: existingIdx >= 0 ? sessions[existingIdx].id : new Date().toISOString(),
       [sessionLabel]: labelValue,
-      label: labelValue, // always store as 'label' for LoadModal compatibility
+      label: labelValue,
       rawNodes,
       timestamp: Date.now(),
       nodeCount: rawNodes.length,
     };
-    const updated = [newSession, ...sessions].slice(0, 10);
+
+    let updated;
+    if (existingIdx >= 0) {
+      // Update existing session in place, move to front
+      updated = [sessionData, ...sessions.filter((_, i) => i !== existingIdx)];
+    } else {
+      // New session — prepend
+      updated = [sessionData, ...sessions];
+    }
+
+    updated = updated.slice(0, 10);
     writeSessions(storageKey, updated);
     setSavedSessions(updated);
   }, [storageKey, sessionLabel]);
@@ -458,6 +475,23 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     applyLayout(rawNodesRef.current, drillStackRef.current);
   }, [applyLayout]);
 
+  // ── Collapse all expanded branches ────────────────────────
+  const handleCollapseAll = useCallback(() => {
+    // Find all nodes that have children (i.e. are parents)
+    const parentIds = new Set();
+    rawNodesRef.current.forEach(n => {
+      if (n.data.parentId) parentIds.add(n.data.parentId);
+    });
+    collapsedNodesRef.current = new Set(parentIds);
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+  }, [applyLayout]);
+
+  // ── Expand all collapsed branches ─────────────────────────
+  const handleExpandAll = useCallback(() => {
+    collapsedNodesRef.current = new Set();
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+  }, [applyLayout]);
+
   // ── Fractal expand (inline ⊕) ─────────────────────────────
   const handleFractalExpand = useCallback(async (nodeId) => {
     if (isGenerating || isRegenerating || expandingNodeRef.current) return;
@@ -673,7 +707,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     handleDrill, handleExitDrill, handleJumpToBreadcrumb,
     handleNodeContextMenu, handleCloseContextMenu, handleToggleStar, setNodeScores,
     // Fractal handlers
-    handleFractalExpand, handleToggleCollapse,
+    handleFractalExpand, handleToggleCollapse, handleCollapseAll, handleExpandAll,
     handleAutoFractal, handleStopAutoFractal,
   };
 }

@@ -1,4 +1,4 @@
-# Idea Canvas — Task Plan
+# ThoughtClaw — Task Plan
 
 ## Current Status: Fully Implemented
 

@@ -27,7 +27,7 @@ export default function LandingPage() {
       {/* Hero */}
       <header className="landing-hero">
         <div className="landing-logo">◈</div>
-        <h1 className="landing-title">IDEA CANVAS</h1>
+        <h1 className="landing-title">THOUGHTCLAW</h1>
         <p className="landing-tagline">
           AI-powered structured thinking. Turn any idea into a visual thinking tree
           with research agents, multi-agent debate, and interactive exploration.
@@ -70,7 +70,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="landing-footer">
-        <span style={{ opacity: 0.4 }}>Built with Claude &middot; Idea Canvas</span>
+        <span style={{ opacity: 0.4 }}>Built with Claude &middot; ThoughtClaw</span>
       </footer>
     </div>
   );

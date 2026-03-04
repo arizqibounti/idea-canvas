@@ -1,4 +1,4 @@
-# Idea Canvas — Specification
+# ThoughtClaw — Specification
 
 ## Project Overview
 An AI-powered structured thinking visualization tool that takes any input — product ideas, marketing campaigns, sales strategies, technical architectures, content plans, resumes, decisions, writing projects, and project plans — and generates a domain-adaptive, interactive visual tree. The AI analyzes the input domain, selects the most appropriate node types via a `_meta` protocol, and streams nodes in real-time. Includes mode-specific debate, AI chat companion, sharing, export, and Firebase authentication.

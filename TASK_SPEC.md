@@ -1,4 +1,4 @@
-# Idea Canvas — Task Spec
+# ThoughtClaw — Task Spec
 
 ## Project Overview
 An AI-powered structured thinking visualization tool. Enter any input — product ideas, marketing campaigns, sales strategies, technical architectures, content plans, resumes, decisions, writing projects, project plans — and Claude generates a domain-adaptive visual tree with the most appropriate node types, streamed in real-time. The AI detects the domain, declares types via a `_meta` protocol, and the frontend renders each type with distinct colors and icons. Features mode-specific debate, AI chat companion, sharing, export, and Firebase authentication.

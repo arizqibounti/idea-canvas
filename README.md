@@ -1,4 +1,4 @@
-# Idea Canvas
+# ThoughtClaw
 
 An AI-powered structured thinking visualization tool that transforms any input — product ideas, marketing campaigns, sales strategies, content plans, resumes, decisions, writing projects, and project plans — into interactive, domain-adaptive trees streamed in real-time from Claude AI. The AI analyzes the input domain, selects the most appropriate node types, and generates a tree with distinct visual styling per type.
 
@@ -178,8 +178,8 @@ npm run dev
 ### Docker
 
 ```bash
-docker build -t idea-canvas .
-docker run -p 8080:8080 --env-file .env idea-canvas
+docker build -t thoughtclaw .
+docker run -p 8080:8080 --env-file .env thoughtclaw
 ```
 
 ## API Endpoints

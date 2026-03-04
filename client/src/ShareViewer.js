@@ -48,7 +48,7 @@ function ShareViewerInner({ share }) {
       <div className="share-viewer-header">
         <div className="share-viewer-brand">
           <span className="share-viewer-logo">◈</span>
-          <span className="share-viewer-title">Idea Canvas</span>
+          <span className="share-viewer-title">ThoughtClaw</span>
         </div>
         <div className="share-viewer-info">
           <span className="share-viewer-idea">{share.idea}</span>
@@ -143,7 +143,7 @@ export default function ShareViewer({ shareId }) {
       <div className="share-viewer-status">
         <div className="share-error-icon">✕</div>
         <span className="share-error-text">{error}</span>
-        <a href="/" className="share-back-link">Go to Idea Canvas</a>
+        <a href="/" className="share-back-link">Go to ThoughtClaw</a>
       </div>
     );
   }

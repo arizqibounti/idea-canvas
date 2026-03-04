@@ -73,8 +73,17 @@ export default function SessionDashboard({ onOpenSession, onNewSession }) {
         s => !serverIdeas.has((s.idea || '').toLowerCase().trim())
       );
 
+      // Deduplicate local sessions — keep only most recent per idea text
+      const seenIdeas = new Set();
+      const dedupedLocal = uniqueLocal.filter(s => {
+        const key = (s.idea || '').toLowerCase().trim();
+        if (!key || seenIdeas.has(key)) return false;
+        seenIdeas.add(key);
+        return true;
+      });
+
       // Filter out empty/untitled sessions with 0 nodes
-      const meaningful = [...tagged, ...uniqueLocal].filter(s => {
+      const meaningful = [...tagged, ...dedupedLocal].filter(s => {
         const nodeCount = s.nodeCount || s.rawNodes?.length || 0;
         const hasIdea = s.idea && s.idea.trim() && s.idea.trim() !== 'Untitled session';
         return nodeCount > 0 || hasIdea;
