@@ -22,8 +22,7 @@ function initWebSocket(httpServer, anthropicClient, engineHandlers) {
   httpServer.on('upgrade', async (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname !== '/ws') {
-      socket.destroy();
-      return;
+      return; // Let other upgrade handlers (e.g., /yjs) handle this
     }
 
     // Verify auth token if provided

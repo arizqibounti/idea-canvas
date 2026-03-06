@@ -46,6 +46,7 @@ const { handleCanvasGenerate } = require('./canvas/engine');
 
 // ── Gateway (WebSocket + Sessions) ──────────────────────────
 const { initWebSocket } = require('./gateway/websocket');
+const { initYjsWebSocket } = require('./yjs/yjsServer');
 const sessions = require('./gateway/sessions');
 const shares = require('./gateway/shares');
 
@@ -217,5 +218,6 @@ const engineHandlers = {
 };
 
 initWebSocket(server, client, engineHandlers);
+initYjsWebSocket(server);
 
 module.exports = { app, server, client };

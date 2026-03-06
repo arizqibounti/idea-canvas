@@ -20,7 +20,10 @@
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "three": "^0.183.1",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "y-indexeddb": "^9.0.12",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.29"
   },
   "scripts": {
     "start": "react-scripts start",

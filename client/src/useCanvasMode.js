@@ -102,7 +102,9 @@ export async function readSSEStream(response, onNode) {
  * @param {string} storageKey     - localStorage key for session persistence
  * @param {string} sessionLabel   - label field name used when saving ('idea' | 'folderName')
  */
-export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
+export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }) {
+  // yjsSyncRef: optional ref to Yjs sync object (from useYjsSync)
+  // When set, mutations write-through to Yjs in addition to rawNodesRef
   // ── Canvas state ──────────────────────────────────────────
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -228,7 +230,8 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     setError(null);
     setNodeCount(0);
     setSelectedNode(null);
-  }, []);
+    yjsSyncRef?.current?.writeNodesToYjs([]);
+  }, [yjsSyncRef]);
 
   // ── Stop streaming ────────────────────────────────────────
   const handleStop = useCallback(() => {
@@ -271,13 +274,16 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
 
   // ── Toggle star (converge phase) ──────────────────────────
   const handleToggleStar = useCallback((nodeId) => {
+    const node = rawNodesRef.current.find(n => n.id === nodeId);
+    const newStarred = node ? !node.data.starred : false;
     rawNodesRef.current = rawNodesRef.current.map((n) =>
       n.id === nodeId
-        ? { ...n, data: { ...n.data, starred: !n.data.starred } }
+        ? { ...n, data: { ...n.data, starred: newStarred } }
         : n
     );
     applyLayout(rawNodesRef.current, drillStackRef.current);
-  }, [applyLayout]);
+    yjsSyncRef?.current?.updateNodeInYjs(nodeId, { starred: newStarred });
+  }, [applyLayout, yjsSyncRef]);
 
   // ── Get ancestors ─────────────────────────────────────────
   const handleGetAncestors = useCallback((id) => {
@@ -303,7 +309,13 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
       return n;
     });
     applyLayout(rawNodesRef.current, drillStackRef.current);
-  }, [applyLayout]);
+    // Write-through scores to Yjs
+    if (yjsSyncRef?.current) {
+      Object.entries(scores).forEach(([nodeId, score]) => {
+        if (score != null) yjsSyncRef.current.updateNodeInYjs(nodeId, { score });
+      });
+    }
+  }, [applyLayout, yjsSyncRef]);
 
   // ── Save node edit ────────────────────────────────────────
   const handleSaveNodeEdit = useCallback((nodeId, { label, reasoning }) => {
@@ -318,7 +330,8 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
         : prev
     );
     applyLayout(rawNodesRef.current, drillStackRef.current);
-  }, [applyLayout]);
+    yjsSyncRef?.current?.updateNodeInYjs(nodeId, { label, reasoning });
+  }, [applyLayout, yjsSyncRef]);
 
   // ── Regenerate subtree ────────────────────────────────────
   const handleRegenerate = useCallback(async (nodeId) => {
@@ -354,6 +367,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     rawNodesRef.current = rawNodesRef.current.filter((n) => !descendantIds.has(n.id));
     applyLayout(rawNodesRef.current, drillStackRef.current);
     setNodeCount(rawNodesRef.current.length);
+    yjsSyncRef?.current?.removeNodesFromYjs([...descendantIds]);
     setIsRegenerating(true);
 
     if (abortRef.current) abortRef.current.abort();
@@ -381,6 +395,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
         rawNodesRef.current = [...rawNodesRef.current, flowNode];
         applyLayout(rawNodesRef.current, drillStackRef.current);
         setNodeCount(rawNodesRef.current.length);
+        yjsSyncRef?.current?.addNodeToYjs(flowNode);
       });
       if (result.error) setError(result.error);
     } catch (err) {
@@ -388,7 +403,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     } finally {
       setIsRegenerating(false);
     }
-  }, [isGenerating, isRegenerating, applyLayout]);
+  }, [isGenerating, isRegenerating, applyLayout, yjsSyncRef]);
 
   // ── Drill-down ────────────────────────────────────────────
   const handleDrill = useCallback(async (nodeId) => {
@@ -433,6 +448,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
         rawNodesRef.current = [...rawNodesRef.current, flowNode];
         applyLayout(rawNodesRef.current, drillStackRef.current);
         setNodeCount(rawNodesRef.current.length);
+        yjsSyncRef?.current?.addNodeToYjs(flowNode);
       });
       if (result.error) setError(result.error);
     } catch (err) {
@@ -440,7 +456,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
     } finally {
       setIsGenerating(false);
     }
-  }, [isGenerating, isRegenerating, applyLayout]);
+  }, [isGenerating, isRegenerating, applyLayout, yjsSyncRef]);
 
   const handleExitDrill = useCallback(() => {
     drillStackRef.current = [];
@@ -548,6 +564,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
         rawNodesRef.current = [...rawNodesRef.current, flowNode];
         applyLayout(rawNodesRef.current, drillStackRef.current);
         setNodeCount(rawNodesRef.current.length);
+        yjsSyncRef?.current?.addNodeToYjs(flowNode);
       });
       if (result.error) setError(result.error);
 
@@ -555,13 +572,14 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
       rawNodesRef.current = rawNodesRef.current.map(n =>
         n.id === nodeId ? { ...n, data: { ...n.data, expanded: true } } : n
       );
+      yjsSyncRef?.current?.updateNodeInYjs(nodeId, { expanded: true });
     } catch (err) {
       if (err.name !== 'AbortError') setError(err.message);
     } finally {
       expandingNodeRef.current = null;
       applyLayout(rawNodesRef.current, drillStackRef.current);
     }
-  }, [isGenerating, isRegenerating, applyLayout]);
+  }, [isGenerating, isRegenerating, applyLayout, yjsSyncRef]);
 
   // ── Autonomous fractal mode ────────────────────────────────
   const handleAutoFractal = useCallback(async (idea, maxRounds = 5, onProgress) => {
@@ -656,6 +674,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
           applyLayout(rawNodesRef.current, drillStackRef.current);
           setNodeCount(rawNodesRef.current.length);
           newNodeCount++;
+          yjsSyncRef?.current?.addNodeToYjs(flowNode);
         });
 
         // Mark source node
@@ -664,6 +683,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
             ? { ...n, data: { ...n.data, expanded: true, autoExplored: true } }
             : n
         );
+        yjsSyncRef?.current?.updateNodeInYjs(selectedNodeId, { expanded: true, autoExplored: true });
 
         expandingNodeRef.current = null;
         applyLayout(rawNodesRef.current, drillStackRef.current);
@@ -681,7 +701,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label' }) {
       applyLayout(rawNodesRef.current, drillStackRef.current);
       onProgress?.({ status: 'done' });
     }
-  }, [isGenerating, isRegenerating, applyLayout]);
+  }, [isGenerating, isRegenerating, applyLayout, yjsSyncRef]);
 
   const handleStopAutoFractal = useCallback(() => {
     if (autoFractalAbortRef.current) {

@@ -14,6 +14,7 @@ import ChatPanel from './ChatPanel';
 import ResumeChangesModal from './ResumeChangesModal';
 import ExportGitHubModal from './ExportGitHubModal';
 import Graph3D from './Graph3D';
+import CinematicController from './CinematicController';
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
@@ -28,6 +29,9 @@ import { useAuth } from './AuthContext';
 import { setTokenGetter, authFetch } from './api';
 import LandingPage from './LandingPage';
 import SessionDashboard from './SessionDashboard';
+import { YjsProvider, useYjs } from './yjs/YjsContext';
+import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
+import SyncStatusBar from './yjs/SyncStatusBar';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -281,6 +285,25 @@ function AppRouter() {
     return <ShareViewer shareId={shareMatch[1]} />;
   }
 
+  // Room links — collaborative sessions via Yjs
+  const roomMatch = window.location.pathname.match(/^\/room\/([a-zA-Z0-9_-]+)$/);
+  if (roomMatch) {
+    if (loading) return <LoadingScreen />;
+    if (isConfigured && !user) return <LandingPage roomId={roomMatch[1]} />;
+    if (accessDenied) return <AccessDenied email={user?.email} onLogout={logout} />;
+    return (
+      <YjsProvider roomId={roomMatch[1]}>
+        <App
+          initialSession={{ isNew: true, roomId: roomMatch[1] }}
+          onBackToDashboard={() => {
+            window.history.pushState({}, '', '/');
+            setActiveSession(null);
+          }}
+        />
+      </YjsProvider>
+    );
+  }
+
   // Show loading while Firebase checks auth state
   if (loading) return <LoadingScreen />;
 
@@ -352,8 +375,13 @@ export default function App({ initialSession, onBackToDashboard }) {
   const gatewayRef = useRef(gateway);
   gatewayRef.current = gateway;
 
+  // ── Yjs collaborative context ───────────────────────────
+  const yjs = useYjs(); // null when not in a /room/ URL
+  const yjsSyncRef = useRef(null);
+  yjsSyncRef.current = yjs;
+
   // ── Canvas hooks ──────────────────────────────────────────
-  const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea' });
+  const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea', yjsSyncRef });
   const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName' });
 
   // ── Load initial session from dashboard ───────────────────
@@ -384,6 +412,34 @@ export default function App({ initialSession, onBackToDashboard }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Yjs sync bridge: load remote nodes & subscribe to changes ──
+  useEffect(() => {
+    if (!yjs || !yjs.synced) return;
+
+    // On initial sync, load any remote nodes into canvas
+    const remoteNodes = yjs.readNodesFromYjs();
+    if (remoteNodes.length > 0 && idea$.rawNodesRef.current.length === 0) {
+      idea$.rawNodesRef.current = remoteNodes;
+      idea$.applyLayout(remoteNodes, []);
+      idea$.setNodeCount(remoteNodes.length);
+    } else if (idea$.rawNodesRef.current.length > 0 && remoteNodes.length === 0) {
+      // Migrate existing local nodes into the Yjs doc (one-time)
+      yjs.writeNodesToYjs(idea$.rawNodesRef.current);
+      yjs.writeMetaToYjs({ idea, mode: 'idea' });
+    }
+
+    // Load meta (idea text)
+    const meta = yjs.readMetaFromYjs();
+    if (meta.idea && !idea) setIdea(meta.idea);
+
+    // Subscribe to remote node changes
+    return yjs.onNodesChanged((allNodes) => {
+      idea$.rawNodesRef.current = allNodes;
+      idea$.applyLayout(allNodes, idea$.drillStackRef.current);
+      idea$.setNodeCount(allNodes.length);
+    });
+  }, [yjs?.synced]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Dynamic type config for adaptive mode ────────────────
   const dynamicConfigRef = useRef(null);    // built color/icon map
@@ -490,8 +546,9 @@ export default function App({ initialSession, onBackToDashboard }) {
   const [autoFractalRunning, setAutoFractalRunning] = useState(false);
   const [autoFractalProgress, setAutoFractalProgress] = useState(null);
 
-  // ── 3D Canvas ─────────────────────────────────────────────
-  const [is3D, setIs3D] = useState(false);
+  // ── View Mode ──────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'storyboard' | 'zen'
+  const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
   const [roundRange, setRoundRange]           = useState([0, 12]);
@@ -513,8 +570,9 @@ export default function App({ initialSession, onBackToDashboard }) {
   const [genMode, setGenMode] = useState('single');
   const [multiAgentProgress, setMultiAgentProgress] = useState(null);
 
-  // ── Auto-save ─────────────────────────────────────────────
+  // ── Auto-save (skip when Yjs handles persistence) ────────
   useEffect(() => {
+    if (yjs) return; // Yjs handles persistence via y-indexeddb
     if (activeMode === 'idea') idea$.triggerAutoSave(idea);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idea$.nodeCount, idea, activeMode]);
@@ -641,6 +699,7 @@ export default function App({ initialSession, onBackToDashboard }) {
 
       const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
       const seenTypes = [];
+      if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
         if (nodeData._meta) {
           const config = buildDynamicConfig(nodeData.types || []);
@@ -648,13 +707,19 @@ export default function App({ initialSession, onBackToDashboard }) {
           dynamicTypesRef.current = nodeData.types || [];
           idea$.dynamicTypesRef.current = nodeData.types || [];
           setDynamicDomain(nodeData.domain || 'Canvas');
+          if (yjs) yjs.writeMetaToYjs({ types: nodeData.types, domain: nodeData.domain, idea: idea.trim(), mode: displayMode });
           return;
         }
         const flowNode = buildFlowNode(nodeData);
         if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
-        idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
-        idea$.applyLayout(idea$.rawNodesRef.current, []);
-        idea$.setNodeCount(idea$.rawNodesRef.current.length);
+        if (yjs) {
+          yjs.addNodeToYjs(flowNode);
+          // Yjs observer will update rawNodesRef + applyLayout for all clients
+        } else {
+          idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+          idea$.applyLayout(idea$.rawNodesRef.current, []);
+        }
+        idea$.setNodeCount((idea$.rawNodesRef.current || []).length + 1);
         if (nodeData.type && !seenTypes.includes(nodeData.type)) {
           seenTypes.push(nodeData.type);
           setDynamicLegendTypes([...seenTypes]);
@@ -683,6 +748,7 @@ export default function App({ initialSession, onBackToDashboard }) {
     } finally {
       idea$.setIsGenerating(false);
       setIsFetchingUrl(false);
+      if (yjs) yjs.setLocalGenerating(false);
       // Auto-open debate panel and kick off the loop if generation completed successfully
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         setShowDebate(true);
@@ -690,7 +756,7 @@ export default function App({ initialSession, onBackToDashboard }) {
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -750,6 +816,7 @@ export default function App({ initialSession, onBackToDashboard }) {
 
       const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
       const seenTypes = [];
+      if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
         if (nodeData._progress) {
           setMultiAgentProgress(nodeData.stage);
@@ -762,13 +829,18 @@ export default function App({ initialSession, onBackToDashboard }) {
           idea$.dynamicTypesRef.current = nodeData.types || [];
           setDynamicDomain(nodeData.domain || 'Canvas');
           setMultiAgentProgress(null);
+          if (yjs) yjs.writeMetaToYjs({ types: nodeData.types, domain: nodeData.domain, idea: idea.trim(), mode: displayMode });
           return;
         }
         const flowNode = buildFlowNode(nodeData);
         if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
-        idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
-        idea$.applyLayout(idea$.rawNodesRef.current, []);
-        idea$.setNodeCount(idea$.rawNodesRef.current.length);
+        if (yjs) {
+          yjs.addNodeToYjs(flowNode);
+        } else {
+          idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+          idea$.applyLayout(idea$.rawNodesRef.current, []);
+        }
+        idea$.setNodeCount((idea$.rawNodesRef.current || []).length + 1);
         if (nodeData.type && !seenTypes.includes(nodeData.type)) {
           seenTypes.push(nodeData.type);
           setDynamicLegendTypes([...seenTypes]);
@@ -797,13 +869,14 @@ export default function App({ initialSession, onBackToDashboard }) {
       idea$.setIsGenerating(false);
       setMultiAgentProgress(null);
       setIsFetchingUrl(false);
+      if (yjs) yjs.setLocalGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         setShowDebate(true);
         setDebateAutoStart(true);
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -862,6 +935,7 @@ export default function App({ initialSession, onBackToDashboard }) {
 
       const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
       const seenTypes = [];
+      if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
         if (nodeData._progress) {
           setMultiAgentProgress(nodeData.stage);
@@ -874,13 +948,18 @@ export default function App({ initialSession, onBackToDashboard }) {
           idea$.dynamicTypesRef.current = nodeData.types || [];
           setDynamicDomain(nodeData.domain || 'Canvas');
           setMultiAgentProgress(null);
+          if (yjs) yjs.writeMetaToYjs({ types: nodeData.types, domain: nodeData.domain, idea: idea.trim(), mode: displayMode });
           return;
         }
         const flowNode = buildFlowNode(nodeData);
         if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
-        idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
-        idea$.applyLayout(idea$.rawNodesRef.current, []);
-        idea$.setNodeCount(idea$.rawNodesRef.current.length);
+        if (yjs) {
+          yjs.addNodeToYjs(flowNode);
+        } else {
+          idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+          idea$.applyLayout(idea$.rawNodesRef.current, []);
+        }
+        idea$.setNodeCount((idea$.rawNodesRef.current || []).length + 1);
         if (nodeData.type && !seenTypes.includes(nodeData.type)) {
           seenTypes.push(nodeData.type);
           setDynamicLegendTypes([...seenTypes]);
@@ -909,13 +988,14 @@ export default function App({ initialSession, onBackToDashboard }) {
       idea$.setIsGenerating(false);
       setMultiAgentProgress(null);
       setIsFetchingUrl(false);
+      if (yjs) yjs.setLocalGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         setShowDebate(true);
         setDebateAutoStart(true);
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1582,21 +1662,50 @@ export default function App({ initialSession, onBackToDashboard }) {
               >
                 ⊞ SHARE
               </button>
+              {!yjs && (
+                <button
+                  className="btn btn-icon"
+                  onClick={() => {
+                    const roomId = generateRoomId();
+                    window.location.href = buildRoomUrl(roomId);
+                  }}
+                  title="Start collaborative room"
+                >
+                  ◉ COLLAB
+                </button>
+              )}
               <ExportDropdown onExport={handleExport} isExporting={isExporting} />
             </>
           )}
-          {/* 3D toggle — shown when canvas has nodes in idea mode */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
-            <button
-              className={`btn btn-icon ${is3D ? 'active-icon' : ''}`}
-              onClick={() => setIs3D((v) => !v)}
-              title={is3D ? 'Switch to 2D canvas' : 'Switch to 3D canvas'}
-            >
-              ◈ {is3D ? '2D' : '3D'}
-            </button>
+          {/* Yjs collaboration status bar */}
+          {yjs && (
+            <SyncStatusBar
+              syncStatus={yjs.syncStatus}
+              collaborators={yjs.collaborators}
+              roomId={initialSession?.roomId}
+            />
           )}
-          {/* Cross-links toggle */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && !is3D && (
+          {/* View mode toggles — shown when canvas has nodes in idea mode */}
+          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
+            <>
+              <button
+                className={`btn btn-icon ${viewMode === '3d' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === '3d' ? 'tree' : '3d')}
+                title="Toggle 3D view"
+              >
+                ◈ 3D
+              </button>
+              <button
+                className={`btn btn-icon ${viewMode === 'cinematic' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'cinematic' ? 'tree' : 'cinematic')}
+                title="Cinematic replay"
+              >
+                ▶ CINEMA
+              </button>
+            </>
+          )}
+          {/* Cross-links toggle — only in tree view */}
+          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && viewMode === 'tree' && (
             <button
               className={`btn btn-icon ${showCrossLinks ? 'active-icon' : ''}`}
               onClick={() => setShowCrossLinks((v) => !v)}
@@ -1701,7 +1810,7 @@ export default function App({ initialSession, onBackToDashboard }) {
               )}
               <IdeaEmptyState onMemoryClick={memorySessionCount >= 2 ? () => setShowMemory(true) : null} mode={displayMode} />
             </>
-          ) : is3D ? (
+          ) : viewMode === '3d' ? (
             <Graph3D
               nodes={idea$.rawNodesRef.current}
               onNodeClick={(node3d) => {
@@ -1709,6 +1818,33 @@ export default function App({ initialSession, onBackToDashboard }) {
                 if (raw) idea$.handleNodeClick({ id: raw.id, data: raw.data || raw });
               }}
             />
+          ) : viewMode === 'cinematic' ? (
+            <ReactFlowProvider>
+              <IdeaCanvas
+                nodes={displayNodes}
+                edges={displayEdges}
+                isGenerating={false}
+                isScoring={false}
+                onNodeClick={idea$.handleNodeClick}
+                onNodeDoubleClick={idea$.handleDrill}
+                onNodeContextMenu={idea$.handleNodeContextMenu}
+                onCloseContextMenu={idea$.handleCloseContextMenu}
+                drillStack={idea$.drillStack}
+                onExitDrill={idea$.handleExitDrill}
+                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+                isCinematic={true}
+              />
+              <CinematicController
+                nodes={idea$.rawNodesRef.current}
+                maxRound={maxRound}
+                roundRange={roundRange}
+                setRoundRange={setRoundRange}
+                setIsolatedRound={setIsolatedRound}
+                onExit={() => { setRoundRange([0, maxRound]); setViewMode('tree'); }}
+                getRoundIndex={getRoundIndex}
+              />
+            </ReactFlowProvider>
           ) : (
             <ReactFlowProvider>
               {showMemory && (

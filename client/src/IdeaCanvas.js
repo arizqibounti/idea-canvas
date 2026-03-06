@@ -113,6 +113,7 @@ export default function IdeaCanvas({
   onCollapseAll,
   onExpandAll,
   hasCollapsed,
+  isCinematic = false,
 }) {
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
@@ -152,14 +153,18 @@ export default function IdeaCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
-        fitView
+        fitView={!isCinematic}
         fitViewOptions={{ padding: 0.2, duration: 400 }}
         minZoom={0.05}
         maxZoom={2}
         proOptions={proOptions}
         style={{ background: '#0a0a0f' }}
-        nodesDraggable={!isGenerating}
-        elementsSelectable={true}
+        nodesDraggable={!isGenerating && !isCinematic}
+        panOnDrag={!isCinematic}
+        zoomOnScroll={!isCinematic}
+        zoomOnPinch={!isCinematic}
+        zoomOnDoubleClick={!isCinematic}
+        elementsSelectable={!isCinematic}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeContextMenu={handleNodeContextMenu}
@@ -172,32 +177,38 @@ export default function IdeaCanvas({
           color="#1e1e2e"
         />
         <ReactFlowBridge onReady={onReactFlowReady} />
-        <AutoFitView isGenerating={isGenerating} nodeCount={nodes.length} />
-        <CanvasToolbar
-          searchQuery={searchQuery ?? ''}
-          onSearchChange={onSearchChange}
-          nodeCount={nodes.length}
-          onCollapseAll={onCollapseAll}
-          onExpandAll={onExpandAll}
-          hasCollapsed={hasCollapsed}
-        />
-        <Controls
-          style={{
-            background: '#16161f',
-            border: '1px solid #2a2a3a',
-            borderRadius: '8px',
-            overflow: 'hidden',
-          }}
-        />
-        <MiniMap
-          nodeColor={miniMapNodeColor}
-          maskColor="rgba(10,10,15,0.85)"
-          style={{
-            background: '#111118',
-            border: '1px solid #2a2a3a',
-            borderRadius: '8px',
-          }}
-        />
+        {!isCinematic && <AutoFitView isGenerating={isGenerating} nodeCount={nodes.length} />}
+        {!isCinematic && (
+          <CanvasToolbar
+            searchQuery={searchQuery ?? ''}
+            onSearchChange={onSearchChange}
+            nodeCount={nodes.length}
+            onCollapseAll={onCollapseAll}
+            onExpandAll={onExpandAll}
+            hasCollapsed={hasCollapsed}
+          />
+        )}
+        {!isCinematic && (
+          <Controls
+            style={{
+              background: '#16161f',
+              border: '1px solid #2a2a3a',
+              borderRadius: '8px',
+              overflow: 'hidden',
+            }}
+          />
+        )}
+        {!isCinematic && (
+          <MiniMap
+            nodeColor={miniMapNodeColor}
+            maskColor="rgba(10,10,15,0.85)"
+            style={{
+              background: '#111118',
+              border: '1px solid #2a2a3a',
+              borderRadius: '8px',
+            }}
+          />
+        )}
       </ReactFlow>
 
       <DrillBreadcrumb

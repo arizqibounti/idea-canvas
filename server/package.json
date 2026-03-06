@@ -16,7 +16,9 @@
     "formdata-node": "^6.0.3",
     "node-fetch": "^2.7.0",
     "uuid": "^13.0.0",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.29"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
