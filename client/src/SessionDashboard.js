@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MODES } from './modeConfig';
 import { authFetch } from './api';
 
@@ -10,24 +10,39 @@ function getModeConfig(modeId) {
   return MODES.find(m => m.id === modeId) || MODES[0];
 }
 
-function relativeTime(dateStr) {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  return `${months}mo ago`;
-}
-
 function readLocalSessions(key) {
   try { return JSON.parse(localStorage.getItem(key) || '[]'); }
   catch { return []; }
+}
+
+function groupSessionsByDate(sessions) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const prev7 = new Date(today);
+  prev7.setDate(today.getDate() - 7);
+  const prev30 = new Date(today);
+  prev30.setDate(today.getDate() - 30);
+
+  const groups = [
+    { label: 'Today', sessions: [] },
+    { label: 'Yesterday', sessions: [] },
+    { label: 'Previous 7 days', sessions: [] },
+    { label: 'Previous 30 days', sessions: [] },
+    { label: 'Older', sessions: [] },
+  ];
+
+  for (const session of sessions) {
+    const d = new Date(session.updatedAt || session.createdAt);
+    if (d >= today) groups[0].sessions.push(session);
+    else if (d >= yesterday) groups[1].sessions.push(session);
+    else if (d >= prev7) groups[2].sessions.push(session);
+    else if (d >= prev30) groups[3].sessions.push(session);
+    else groups[4].sessions.push(session);
+  }
+
+  return groups.filter(g => g.sessions.length > 0);
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -36,6 +51,7 @@ export default function SessionDashboard({ onOpenSession, onNewSession }) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch & merge sessions from server + localStorage
   const fetchSessions = useCallback(async () => {
@@ -133,7 +149,7 @@ export default function SessionDashboard({ onOpenSession, onNewSession }) {
     setDeleteConfirm(null);
   }, [deleteConfirm]);
 
-  // Clear delete confirm when clicking elsewhere
+  // Clear delete confirm after timeout
   useEffect(() => {
     if (deleteConfirm) {
       const timer = setTimeout(() => setDeleteConfirm(null), 3000);
@@ -141,90 +157,129 @@ export default function SessionDashboard({ onOpenSession, onNewSession }) {
     }
   }, [deleteConfirm]);
 
+  // ── Filtering & Grouping ────────────────────────────────────────
+
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return sessions;
+    const q = searchQuery.toLowerCase();
+    return sessions.filter(s =>
+      (s.idea || '').toLowerCase().includes(q) ||
+      (getModeConfig(s.mode).label || '').toLowerCase().includes(q)
+    );
+  }, [sessions, searchQuery]);
+
+  const groupedSessions = useMemo(
+    () => groupSessionsByDate(filteredSessions),
+    [filteredSessions]
+  );
+
   // ── Render ─────────────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div className="dashboard-container">
-        <div className="dashboard-loading">
-          <div style={{ fontSize: 32, marginBottom: 12 }}>◈</div>
-          <div style={{ fontSize: 12, letterSpacing: '0.1em', opacity: 0.7 }}>LOADING SESSIONS...</div>
+      <div className="sl-container">
+        <div className="sl-inner">
+          <div className="sl-loading">
+            <div className="sl-loading-spinner" />
+            <span>Loading sessions...</span>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="dashboard-container">
-      <div className="dashboard-header">
-        <div className="dashboard-title">
-          <span className="dashboard-title-icon">◈</span>
-          <span>YOUR SESSIONS</span>
-        </div>
-        <button className="dashboard-new-btn" onClick={onNewSession}>
-          ＋ New Session
-        </button>
-      </div>
-
-      {sessions.length === 0 ? (
-        <div className="dashboard-empty">
-          <div className="dashboard-empty-icon">◈</div>
-          <h3>No sessions yet</h3>
-          <p>Start exploring ideas, analyzing code, crafting resumes, or making decisions.</p>
-          <button className="dashboard-new-btn" onClick={onNewSession}>
-            Start Your First Session
+    <div className="sl-container">
+      <div className="sl-inner">
+        {/* Header */}
+        <div className="sl-header">
+          <button className="sl-new-btn" onClick={onNewSession}>
+            <span className="sl-new-btn-icon">+</span>
+            New session
           </button>
-        </div>
-      ) : (
-        <div className="dashboard-grid">
-          {sessions.map(session => {
-            const mode = getModeConfig(session.mode);
-            const isConfirming = deleteConfirm === session.id;
 
-            return (
-              <div
-                key={session.id}
-                className="dashboard-card"
-                style={{ borderLeftColor: mode.color }}
-                onClick={() => onOpenSession(session)}
-              >
+          {sessions.length > 0 && (
+            <div className="sl-search-wrap">
+              <span className="sl-search-icon">⌕</span>
+              <input
+                className="sl-search"
+                type="text"
+                placeholder="Search sessions..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
                 <button
-                  className={`dashboard-card-delete ${isConfirming ? 'confirming' : ''}`}
-                  onClick={(e) => handleDelete(e, session)}
-                  title={isConfirming ? 'Click again to delete' : 'Delete session'}
+                  className="sl-search-clear"
+                  onClick={() => setSearchQuery('')}
                 >
-                  {isConfirming ? 'Delete?' : '✕'}
+                  ✕
                 </button>
-
-                <div className="dashboard-card-mode">
-                  <span className="dashboard-card-mode-icon" style={{ color: mode.color }}>
-                    {mode.icon}
-                  </span>
-                  <span className="dashboard-card-mode-label" style={{ color: mode.color }}>
-                    {mode.label}
-                  </span>
-                </div>
-
-                <div className="dashboard-card-idea">
-                  {session.idea || 'Untitled session'}
-                </div>
-
-                <div className="dashboard-card-footer">
-                  <span className="dashboard-card-nodes">
-                    {session.nodeCount || session.rawNodes?.length || 0} nodes
-                  </span>
-                  <span className="dashboard-card-time">
-                    {relativeTime(session.updatedAt || session.createdAt)}
-                  </span>
-                  <span className="dashboard-card-source" title={session.source === 'cloud' ? 'Synced to cloud' : 'Local only'}>
-                    {session.source === 'cloud' ? '☁' : '💾'}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+              )}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* List */}
+        <div className="sl-list">
+          {sessions.length === 0 ? (
+            <div className="sl-empty">
+              <div className="sl-empty-icon">◈</div>
+              <h3>No sessions yet</h3>
+              <p>Start exploring ideas, analyzing code, crafting resumes, or making decisions.</p>
+              <button className="sl-new-btn" onClick={onNewSession}>
+                Start your first session
+              </button>
+            </div>
+          ) : groupedSessions.length === 0 ? (
+            <div className="sl-no-results">
+              No sessions matching "{searchQuery}"
+            </div>
+          ) : (
+            groupedSessions.map(group => (
+              <div className="sl-group" key={group.label}>
+                <div className="sl-group-label">{group.label}</div>
+                {group.sessions.map(session => {
+                  const mode = getModeConfig(session.mode);
+                  const isConfirming = deleteConfirm === session.id;
+                  const nodeCount = session.nodeCount || session.rawNodes?.length || 0;
+
+                  return (
+                    <div
+                      key={session.id}
+                      className="sl-row"
+                      onClick={() => onOpenSession(session)}
+                    >
+                      <span className="sl-row-icon" style={{ color: mode.color }}>
+                        {mode.icon}
+                      </span>
+                      <span className="sl-row-title">
+                        {session.idea || 'Untitled session'}
+                      </span>
+                      <span className="sl-row-meta">
+                        {nodeCount > 0 ? `${nodeCount} nodes` : ''}
+                      </span>
+                      <span
+                        className="sl-row-source"
+                        title={session.source === 'cloud' ? 'Synced' : 'Local'}
+                      >
+                        {session.source === 'cloud' ? '☁' : ''}
+                      </span>
+                      <button
+                        className={`sl-row-delete ${isConfirming ? 'confirming' : ''}`}
+                        onClick={(e) => handleDelete(e, session)}
+                        title={isConfirming ? 'Click again to confirm' : 'Delete'}
+                      >
+                        {isConfirming ? 'Delete?' : '✕'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
