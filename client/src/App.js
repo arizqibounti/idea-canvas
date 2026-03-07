@@ -15,6 +15,7 @@ import ResumeChangesModal from './ResumeChangesModal';
 import ExportGitHubModal from './ExportGitHubModal';
 import Graph3D from './Graph3D';
 import CinematicController from './CinematicController';
+import TreeStudio from './TreeStudio';
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
@@ -28,7 +29,7 @@ import ShareViewer from './ShareViewer';
 import { useAuth } from './AuthContext';
 import { setTokenGetter, authFetch } from './api';
 import LandingPage from './LandingPage';
-import SessionDashboard from './SessionDashboard';
+import Sidebar from './Sidebar';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
@@ -259,16 +260,53 @@ function LoadingScreen() {
   );
 }
 
+// ── Empty state shown when no session is selected ──
+function EmptyState({ onNewSession }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-state-title">What are you building?</div>
+      <div className="empty-state-sub">
+        Start a new session or pick one from the sidebar.
+      </div>
+      <div className="empty-state-modes">
+        {MODES.map(m => (
+          <button
+            key={m.id}
+            className="empty-state-chip"
+            onClick={() => onNewSession(m.id)}
+          >
+            <span className="empty-state-chip-icon" style={{ color: m.color }}>{m.icon}</span>
+            {m.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Route wrapper: /share/:id → ShareViewer, landing page if not logged in, else → main app ──
 function AppRouter() {
   const { user, loading, logout, isConfigured } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sidebar_collapsed');
+      if (saved !== null) return saved === 'true';
+      return window.innerWidth <= 768; // default collapsed on mobile
+    } catch { return false; }
+  });
+  const sidebarRef = useRef(null);
+
+  // Persist sidebar collapsed state
+  useEffect(() => {
+    try { localStorage.setItem('sidebar_collapsed', sidebarCollapsed); }
+    catch { /* ignore */ }
+  }, [sidebarCollapsed]);
 
   // Check access on first authenticated API call
   useEffect(() => {
     if (!user || !isConfigured) return;
-    // Ping health-like endpoint to check if user is allowed
     authFetch(`${API_URL}/api/usage`)
       .then(res => {
         if (res.status === 403) setAccessDenied(true);
@@ -276,7 +314,7 @@ function AppRouter() {
       .catch(() => { /* ignore network errors */ });
   }, [user, isConfigured]);
 
-  // Share links require auth
+  // Share links require auth (standalone, no sidebar)
   const shareMatch = window.location.pathname.match(/^\/share\/([a-zA-Z0-9_-]+)$/);
   if (shareMatch) {
     if (loading) return <LoadingScreen />;
@@ -285,7 +323,7 @@ function AppRouter() {
     return <ShareViewer shareId={shareMatch[1]} />;
   }
 
-  // Room links — collaborative sessions via Yjs
+  // Room links — collaborative sessions via Yjs (standalone, no sidebar)
   const roomMatch = window.location.pathname.match(/^\/room\/([a-zA-Z0-9_-]+)$/);
   if (roomMatch) {
     if (loading) return <LoadingScreen />;
@@ -317,27 +355,62 @@ function AppRouter() {
     return <AccessDenied email={user?.email} onLogout={logout} />;
   }
 
-  // Authenticated (or auth not configured = local dev)
-  // Show dashboard unless a session is active
-  if (!activeSession) {
-    return (
-      <SessionDashboard
-        onOpenSession={(session) => setActiveSession(session)}
-        onNewSession={() => setActiveSession({ isNew: true })}
-      />
-    );
-  }
+  // Refresh sidebar after session auto-save
+  const handleSessionSaved = () => {
+    sidebarRef.current?.refresh();
+  };
 
+  // Close sidebar on mobile when a session is opened
+  const handleOpenSession = (session) => {
+    setActiveSession(session);
+    if (window.innerWidth <= 768) setSidebarCollapsed(true);
+  };
+
+  // Authenticated (or auth not configured = local dev)
   return (
-    <App
-      initialSession={activeSession}
-      onBackToDashboard={() => setActiveSession(null)}
-    />
+    <div className="app-layout">
+      {/* Mobile: backdrop when sidebar is open */}
+      {!sidebarCollapsed && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      )}
+      <Sidebar
+        ref={sidebarRef}
+        activeSessionId={activeSession?.id || null}
+        onOpenSession={handleOpenSession}
+        onNewSession={() => { setActiveSession({ isNew: true }); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+      />
+      <div className="app-main">
+        {/* Mobile: floating toggle to reopen sidebar */}
+        {sidebarCollapsed && (
+          <button
+            className="sidebar-mobile-toggle"
+            onClick={() => setSidebarCollapsed(false)}
+          >
+            ☰
+          </button>
+        )}
+        {!activeSession ? (
+          <EmptyState onNewSession={(modeId) => setActiveSession({ isNew: true, mode: modeId })} />
+        ) : (
+          <App
+            key={activeSession.id || 'new-' + (activeSession.mode || 'default')}
+            initialSession={activeSession}
+            onBackToDashboard={null}
+            onSessionSaved={handleSessionSaved}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 
 export { AppRouter };
-export default function App({ initialSession, onBackToDashboard }) {
+export default function App({ initialSession, onBackToDashboard, onSessionSaved }) {
   // ── Mode ──────────────────────────────────────────────────
   const [manualMode, setManualMode]   = useState(null); // null = follow auto-detect
   const [detectedMode, setDetectedMode] = useState(null);
@@ -547,7 +620,7 @@ export default function App({ initialSession, onBackToDashboard }) {
   const [autoFractalProgress, setAutoFractalProgress] = useState(null);
 
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'storyboard' | 'zen'
+  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'cinematic' | 'studio'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -581,6 +654,16 @@ export default function App({ initialSession, onBackToDashboard }) {
     if (activeMode === 'codebase') cb$.triggerAutoSave(cbFolderName);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cb$.nodeCount, cbFolderName, activeMode]);
+
+  // Notify parent (sidebar) after auto-save completes
+  useEffect(() => {
+    if (!onSessionSaved) return;
+    const nodeCount = activeMode === 'codebase' ? cb$.nodeCount : idea$.nodeCount;
+    if (nodeCount === 0) return;
+    const t = setTimeout(() => onSessionSaved(), 1200); // after auto-save debounce
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idea$.nodeCount, cb$.nodeCount]);
 
   // ── Sync cross-links toggle to canvas mode ref ───────────
   useEffect(() => {
@@ -1702,6 +1785,13 @@ export default function App({ initialSession, onBackToDashboard }) {
               >
                 ▶ CINEMA
               </button>
+              <button
+                className={`btn btn-icon ${viewMode === 'studio' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'studio' ? 'tree' : 'studio')}
+                title="Scene studio editor"
+              >
+                ◈ STUDIO
+              </button>
             </>
           )}
           {/* Cross-links toggle — only in tree view */}
@@ -1845,6 +1935,29 @@ export default function App({ initialSession, onBackToDashboard }) {
                 getRoundIndex={getRoundIndex}
               />
             </ReactFlowProvider>
+          ) : viewMode === 'studio' ? (
+            <ReactFlowProvider>
+              <TreeStudio
+                nodes={idea$.rawNodesRef.current}
+                displayNodes={displayNodes}
+                displayEdges={displayEdges}
+                maxRound={maxRound}
+                setRoundRange={setRoundRange}
+                setIsolatedRound={setIsolatedRound}
+                onExit={() => { setRoundRange([0, maxRound]); setViewMode('tree'); }}
+                getRoundIndex={getRoundIndex}
+                sessionName={idea}
+                modeId={displayMode}
+                onNodeClick={idea$.handleNodeClick}
+                onNodeDoubleClick={idea$.handleDrill}
+                onNodeContextMenu={idea$.handleNodeContextMenu}
+                onCloseContextMenu={idea$.handleCloseContextMenu}
+                drillStack={idea$.drillStack}
+                onExitDrill={idea$.handleExitDrill}
+                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+              />
+            </ReactFlowProvider>
           ) : (
             <ReactFlowProvider>
               {showMemory && (
@@ -1913,7 +2026,7 @@ export default function App({ initialSession, onBackToDashboard }) {
         )}
 
         {/* ── 2D Timeline Bar ── */}
-        {!is3D && active.nodes.length > 0 && maxRound > 0 && (
+        {!is3D && viewMode !== 'cinematic' && viewMode !== 'studio' && active.nodes.length > 0 && maxRound > 0 && (
           <TimelineBar2D
             roundRange={roundRange}
             onRoundRangeChange={setRoundRange}
