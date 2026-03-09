@@ -6138,3 +6138,623 @@
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS PAGE
+   ═══════════════════════════════════════════════════════════════ */
+
+.settings-page {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 32px;
+  border-bottom: 1px solid #1a1a1a;
+  background: #0a0a0a;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.settings-back-btn {
+  background: none;
+  border: 1px solid #333;
+  color: #aaa;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+}
+.settings-back-btn:hover {
+  background: #1a1a1a;
+  color: #fff;
+  border-color: #555;
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #fff;
+}
+
+/* ── Tabs ── */
+
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 32px;
+  border-bottom: 1px solid #1a1a1a;
+  background: #0a0a0a;
+  position: sticky;
+  top: 61px;
+  z-index: 10;
+  overflow-x: auto;
+}
+
+.settings-tab {
+  background: none;
+  border: none;
+  color: #666;
+  padding: 12px 20px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.settings-tab:hover {
+  color: #aaa;
+}
+.settings-tab--active {
+  color: #fff;
+  border-bottom-color: #fff;
+}
+
+/* ── Content area ── */
+
+.settings-content {
+  flex: 1;
+  padding: 32px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 16px;
+  letter-spacing: 0.5px;
+}
+
+.settings-subsection-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+  margin-bottom: 12px;
+}
+
+/* ── Cards ── */
+
+.settings-card {
+  background: #111;
+  border: 1px solid #1a1a1a;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.settings-locked {
+  text-align: center;
+  padding: 40px 20px;
+  color: #888;
+}
+.settings-locked-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+.settings-locked p {
+  margin: 4px 0;
+}
+
+/* ── Fields ── */
+
+.settings-field {
+  margin-bottom: 16px;
+}
+
+.settings-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.settings-field-value {
+  font-size: 14px;
+  color: #ccc;
+}
+
+.settings-input {
+  width: 100%;
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.settings-input:focus {
+  border-color: #555;
+}
+
+.settings-select,
+.settings-select-sm {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+.settings-select {
+  padding: 10px 12px;
+}
+.settings-select-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* ── Buttons ── */
+
+.settings-save-btn {
+  margin-top: 12px;
+  background: #fff;
+  color: #000;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.settings-save-btn:hover {
+  opacity: 0.85;
+}
+.settings-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-upgrade-btn {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.settings-upgrade-btn:hover {
+  opacity: 0.9;
+}
+.settings-upgrade-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-portal-btn {
+  background: none;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-portal-btn:hover {
+  background: #1a1a1a;
+  border-color: #555;
+}
+
+.settings-invite-btn {
+  background: #fff;
+  color: #000;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-invite-btn:hover {
+  opacity: 0.85;
+}
+.settings-invite-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-remove-btn {
+  background: none;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-remove-btn:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* ── Avatar ── */
+
+.settings-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.settings-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #333;
+}
+
+/* ── Plan badges ── */
+
+.settings-plan-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  background: #1a1a1a;
+  color: #888;
+  border: 1px solid #333;
+}
+.settings-plan-badge--pro {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+}
+.settings-plan-badge--lg {
+  padding: 6px 16px;
+  font-size: 13px;
+}
+
+.settings-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Role badges ── */
+
+.settings-role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: #1a1a1a;
+  color: #888;
+}
+.settings-role-badge--owner {
+  background: #422006;
+  color: #fbbf24;
+}
+.settings-role-badge--admin {
+  background: #1e1b4b;
+  color: #818cf8;
+}
+.settings-role-badge--member {
+  background: #1a1a1a;
+  color: #aaa;
+}
+.settings-role-badge--viewer {
+  background: #111;
+  color: #666;
+}
+
+/* ── Members ── */
+
+.settings-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #1a1a1a;
+}
+.settings-member-row:last-child {
+  border-bottom: none;
+}
+
+.settings-member-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-member-name {
+  font-size: 14px;
+  color: #e0e0e0;
+}
+
+.settings-member-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Invite form ── */
+
+.settings-invite-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-invite-form .settings-input {
+  flex: 1;
+}
+
+.settings-invite-result {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.settings-invite-url {
+  flex: 1;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ── Usage bar ── */
+
+.settings-usage-bar-wrap {
+  width: 100%;
+  height: 8px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.settings-usage-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.settings-usage-text {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.settings-usage-total {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #666;
+}
+
+/* ── Plan comparison table ── */
+
+.settings-plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.settings-plan-table th,
+.settings-plan-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #1a1a1a;
+}
+.settings-plan-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #888;
+  font-weight: 600;
+}
+.settings-plan-table td {
+  color: #ccc;
+}
+.settings-plan-table td:nth-child(3) {
+  color: #8b5cf6;
+  font-weight: 600;
+}
+
+/* ── Misc ── */
+
+.settings-muted {
+  color: #666;
+  font-size: 12px;
+}
+
+.settings-error {
+  color: #ef4444;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+/* ── Sidebar settings button ── */
+
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #1a1a1a;
+}
+
+.sidebar-settings-btn {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  font-size: 16px;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-settings-btn:hover {
+  background: #1a1a1a;
+  color: #ccc;
+}
+
+/* ── Invite acceptance page ── */
+
+.invite-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  padding: 20px;
+}
+
+.invite-card {
+  background: #111;
+  border: 1px solid #1a1a1a;
+  border-radius: 12px;
+  padding: 40px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.invite-card h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.invite-card p {
+  color: #aaa;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.invite-card .settings-upgrade-btn {
+  margin-top: 20px;
+  width: 100%;
+}
+
+.invite-card .settings-error {
+  margin-top: 16px;
+}
+
+/* ── Upgrade banner ── */
+
+.upgrade-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  border-bottom: 1px solid #4338ca;
+  font-size: 13px;
+  color: #c7d2fe;
+}
+
+.upgrade-banner-btn {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.upgrade-banner-btn:hover {
+  background: #818cf8;
+}
+
+.upgrade-banner-close {
+  background: none;
+  border: none;
+  color: #818cf8;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: auto;
+  padding: 4px;
+}
+
+/* ── Settings responsive ── */
+
+@media (max-width: 768px) {
+  .settings-header {
+    padding: 16px 20px;
+  }
+  .settings-tabs {
+    padding: 0 20px;
+    top: 57px;
+  }
+  .settings-content {
+    padding: 20px;
+  }
+  .settings-plan-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .settings-invite-form {
+    flex-direction: column;
+  }
+  .settings-invite-form .settings-input,
+  .settings-invite-form .settings-select,
+  .settings-invite-form .settings-invite-btn {
+    width: 100%;
+  }
+  .settings-invite-result {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+

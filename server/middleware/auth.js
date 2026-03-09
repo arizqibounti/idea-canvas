@@ -6,6 +6,30 @@
 let admin = null;
 let authReady = false;
 
+// ── Profile cache (60s TTL) ─────────────────────────────────
+const profileCache = new Map();
+const PROFILE_CACHE_TTL = 60 * 1000;
+
+function getCachedProfile(uid) {
+  const entry = profileCache.get(uid);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > PROFILE_CACHE_TTL) {
+    profileCache.delete(uid);
+    return null;
+  }
+  return entry.profile;
+}
+
+function setCachedProfile(uid, profile) {
+  profileCache.set(uid, { profile, ts: Date.now() });
+}
+
+// Lazy-loaded to avoid circular dependency
+let _users = null;
+let _workspaces = null;
+function getUsers() { if (!_users) _users = require('../gateway/users'); return _users; }
+function getWorkspaces() { if (!_workspaces) _workspaces = require('../gateway/workspaces'); return _workspaces; }
+
 // Auth is only enforced when ENABLE_AUTH=true is set.
 // In local dev (no env var), all requests are allowed through with a local user.
 // In production (Cloud Run), set ENABLE_AUTH=true to require Firebase tokens.
@@ -96,7 +120,26 @@ async function requireAuth(req, res, next) {
     return res.status(403).json({ error: 'Access denied. Your email is not authorized to use this application.' });
   }
 
-  req.user = user;
+  // Enrich with profile (plan, personalWorkspaceId, etc.)
+  let profile = getCachedProfile(user.uid);
+  if (!profile) {
+    try {
+      const users = getUsers();
+      const workspaces = getWorkspaces();
+      profile = await users.getOrCreateUser(
+        user.uid, user.email, user.name, null,
+        (name, slug, ownerId, isPersonal) => workspaces.createWorkspace(name, slug, ownerId, isPersonal)
+      );
+      setCachedProfile(user.uid, profile);
+    } catch (err) {
+      console.error('Failed to load user profile:', err.message);
+      // Fall through with basic user info
+    }
+  }
+
+  req.user = profile
+    ? { ...user, plan: profile.plan, personalWorkspaceId: profile.personalWorkspaceId, stripeCustomerId: profile.stripeCustomerId, photoURL: profile.photoURL }
+    : user;
   next();
 }
 

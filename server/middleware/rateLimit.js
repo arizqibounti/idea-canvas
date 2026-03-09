@@ -1,13 +1,23 @@
 // ── Rate Limiting Middleware ────────────────────────────────────
 // In-memory token-bucket rate limiter per user UID.
-// Two tiers: generation limit (expensive AI calls) and general limit (all API).
+// Two tiers: generation limit (plan-based) and general limit (all API).
 
 const buckets = new Map();
 
-// Generation: 20 trees per day (expensive Claude Opus calls)
-const GENERATION_LIMIT = { windowMs: 24 * 60 * 60 * 1000, max: 20 };
+// Plan-based generation limits
+const PLAN_LIMITS = {
+  free: { windowMs: 24 * 60 * 60 * 1000, max: 20 },
+  pro:  { windowMs: 24 * 60 * 60 * 1000, max: 150 },
+};
+
+// Backward compat export
+const GENERATION_LIMIT = PLAN_LIMITS.free;
 // General: 60 requests per minute (all API calls)
 const GENERAL_LIMIT = { windowMs: 60 * 1000, max: 60 };
+
+function getGenerationLimitForUser(user) {
+  return PLAN_LIMITS[user?.plan || 'free'] || PLAN_LIMITS.free;
+}
 
 function checkLimit(key, config) {
   const now = Date.now();
@@ -24,38 +34,41 @@ function checkLimit(key, config) {
   };
 }
 
-function getGenerationCount(userId) {
+function getGenerationCount(userId, plan) {
+  const limit = getGenerationLimitForUser({ plan });
   const key = `gen:${userId}`;
   const bucket = buckets.get(key);
-  if (!bucket) return { used: 0, limit: GENERATION_LIMIT.max };
+  if (!bucket) return { used: 0, limit: limit.max };
   const now = Date.now();
-  if (now - bucket.windowStart > GENERATION_LIMIT.windowMs) {
-    return { used: 0, limit: GENERATION_LIMIT.max };
+  if (now - bucket.windowStart > limit.windowMs) {
+    return { used: 0, limit: limit.max };
   }
-  return { used: bucket.count, limit: GENERATION_LIMIT.max };
+  return { used: bucket.count, limit: limit.max };
 }
 
 /**
  * generationLimit — blocks if user exceeded daily generation quota.
- * Apply to expensive routes: /api/generate, /api/generate-multi, etc.
+ * Limit is based on user's plan (free: 20/day, pro: 150/day).
  */
 function generationLimit(req, res, next) {
   const uid = req.user?.uid;
   if (!uid) return res.status(401).json({ error: 'Auth required' });
 
+  const limit = getGenerationLimitForUser(req.user);
   const key = `gen:${uid}`;
-  const result = checkLimit(key, GENERATION_LIMIT);
+  const result = checkLimit(key, limit);
   if (!result.allowed) {
     return res.status(429).json({
       error: 'Daily generation limit reached',
-      limit: GENERATION_LIMIT.max,
+      limit: limit.max,
       remaining: 0,
       resetMs: result.resetMs,
+      plan: req.user.plan || 'free',
+      upgradable: (req.user.plan || 'free') === 'free',
     });
   }
 
-  // Attach usage info to response headers
-  res.setHeader('X-RateLimit-Limit', GENERATION_LIMIT.max);
+  res.setHeader('X-RateLimit-Limit', limit.max);
   res.setHeader('X-RateLimit-Remaining', result.remaining);
   next();
 }
@@ -80,4 +93,4 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-module.exports = { generationLimit, generalLimit, getGenerationCount, GENERATION_LIMIT };
+module.exports = { generationLimit, generalLimit, getGenerationCount, getGenerationLimitForUser, GENERATION_LIMIT, PLAN_LIMITS };

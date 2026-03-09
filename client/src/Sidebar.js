@@ -49,7 +49,7 @@ function groupSessionsByDate(sessions) {
 // ── Component ────────────────────────────────────────────────────
 
 const Sidebar = forwardRef(function Sidebar(
-  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse },
+  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse, onOpenSettings },
   ref
 ) {
   const [sessions, setSessions] = useState([]);
@@ -258,9 +258,14 @@ const Sidebar = forwardRef(function Sidebar(
               {authUser.displayName || authUser.email || 'User'}
             </span>
           </div>
-          <button className="sidebar-signout" onClick={authLogout} title="Sign out">
-            Sign out
-          </button>
+          <div className="sidebar-footer-actions">
+            <button className="sidebar-settings-btn" onClick={onOpenSettings} title="Settings">
+              ⚙ Settings
+            </button>
+            <button className="sidebar-signout" onClick={authLogout} title="Sign out">
+              Sign out
+            </button>
+          </div>
         </div>
       )}
     </aside>

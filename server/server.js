@@ -18,7 +18,7 @@ const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const { requireAuth, optionalAuth } = require('./middleware/auth');
-const { generationLimit, generalLimit, getGenerationCount, GENERATION_LIMIT } = require('./middleware/rateLimit');
+const { generationLimit, generalLimit, getGenerationCount, getGenerationLimitForUser, GENERATION_LIMIT } = require('./middleware/rateLimit');
 const usage = require('./gateway/usage');
 
 const app = express();
@@ -29,6 +29,21 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
   : null; // null = allow all (dev mode)
 app.use(cors(allowedOrigins ? { origin: allowedOrigins, credentials: true } : undefined));
+
+// ── Stripe webhook (raw body, BEFORE express.json) ───────────
+const billing = require('./gateway/billing');
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const sig = req.headers['stripe-signature'];
+    const event = billing.constructWebhookEvent(req.body, sig);
+    await billing.handleWebhookEvent(event);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Stripe webhook error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 const client = new Anthropic();
@@ -49,6 +64,9 @@ const { initWebSocket } = require('./gateway/websocket');
 const { initYjsWebSocket } = require('./yjs/yjsServer');
 const sessions = require('./gateway/sessions');
 const shares = require('./gateway/shares');
+const users = require('./gateway/users');
+const workspaces = require('./gateway/workspaces');
+const { resolveWorkspace, requireRole } = require('./middleware/workspace');
 
 // ── Public Routes (no auth needed) ──────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -73,12 +91,15 @@ app.use('/api', generalLimit);
 app.get('/api/usage', async (req, res) => {
   try {
     const u = await usage.getUsage(req.user.uid);
-    const inMemory = getGenerationCount(req.user.uid);
+    const planLimit = getGenerationLimitForUser(req.user);
+    const inMemory = getGenerationCount(req.user.uid, req.user.plan);
+    const used = Math.max(u.generationsToday, inMemory.used);
     res.json({
-      generationsToday: Math.max(u.generationsToday, inMemory.used),
+      generationsToday: used,
       totalGenerations: u.totalGenerations || 0,
-      limit: GENERATION_LIMIT.max,
-      remaining: Math.max(0, GENERATION_LIMIT.max - Math.max(u.generationsToday, inMemory.used)),
+      limit: planLimit.max,
+      remaining: Math.max(0, planLimit.max - used),
+      plan: req.user.plan || 'free',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -121,6 +142,188 @@ app.post('/api/chat',              (req, res) => handleChat(client, req, res));
 
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));
+
+// ── User Profile endpoints ──────────────────────────────────
+app.get('/api/me', async (req, res) => {
+  try {
+    const profile = await users.getUser(req.user.uid);
+    if (!profile) return res.status(404).json({ error: 'User not found' });
+    res.json(profile);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/me', async (req, res) => {
+  try {
+    const { name, photoURL } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (photoURL !== undefined) updates.photoURL = photoURL;
+    await users.updateUser(req.user.uid, updates);
+    const profile = await users.getUser(req.user.uid);
+    res.json(profile);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Workspace endpoints ──────────────────────────────────────
+app.get('/api/workspaces', async (req, res) => {
+  try {
+    const list = await workspaces.listUserWorkspaces(req.user.uid);
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workspaces', async (req, res) => {
+  try {
+    if (req.user.plan !== 'pro') {
+      return res.status(403).json({ error: 'Pro plan required to create additional workspaces' });
+    }
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Workspace name is required' });
+    const ws = await workspaces.createWorkspace(name.trim(), null, req.user.uid, false);
+    res.json(ws);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/workspaces/:workspaceId', resolveWorkspace, async (req, res) => {
+  res.json(req.workspace);
+});
+
+app.put('/api/workspaces/:workspaceId', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const { name, settings } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (settings !== undefined) updates.settings = settings;
+    await workspaces.updateWorkspace(req.params.workspaceId, updates);
+    const ws = await workspaces.getWorkspace(req.params.workspaceId);
+    res.json(ws);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Workspace Members endpoints ──────────────────────────────
+const invitations = require('./gateway/invitations');
+
+app.get('/api/workspaces/:workspaceId/members', resolveWorkspace, async (req, res) => {
+  try {
+    const members = await workspaces.listMembers(req.params.workspaceId);
+    res.json(members);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workspaces/:workspaceId/members/invite', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const { email, role } = req.body;
+    const inv = await invitations.createInvitation(req.params.workspaceId, email, role || 'member', req.user.uid);
+    const baseUrl = req.headers.origin || 'https://thoughtclaw.com';
+    res.json({ ...inv, inviteUrl: `${baseUrl}/invite/${inv.token}` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/workspaces/:workspaceId/members/:userId/role', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!['admin', 'member', 'viewer'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    // Can't change the owner's role
+    const target = await workspaces.getWorkspaceMember(req.params.workspaceId, req.params.userId);
+    if (target?.role === 'owner') return res.status(403).json({ error: 'Cannot change owner role' });
+    await workspaces.updateMemberRole(req.params.workspaceId, req.params.userId, role);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/workspaces/:workspaceId/members/:userId', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const target = await workspaces.getWorkspaceMember(req.params.workspaceId, req.params.userId);
+    if (target?.role === 'owner') return res.status(403).json({ error: 'Cannot remove workspace owner' });
+    await workspaces.removeMember(req.params.workspaceId, req.params.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/workspaces/:workspaceId/invitations', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const pending = await invitations.listPendingInvitations(req.params.workspaceId);
+    res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/workspaces/:workspaceId/invitations/:id', resolveWorkspace, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    await invitations.revokeInvitation(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Invitation acceptance (no workspace context needed) ──────
+app.get('/api/invitations/check', async (req, res) => {
+  try {
+    const inv = await invitations.getInvitationByToken(req.query.token);
+    if (!inv) return res.status(404).json({ error: 'Invalid or expired invitation' });
+    const ws = await workspaces.getWorkspace(inv.workspaceId);
+    res.json({ workspaceName: ws?.name, role: inv.role, email: inv.email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/invitations/accept', async (req, res) => {
+  try {
+    const inv = await invitations.acceptInvitation(req.body.token, req.user.uid);
+    res.json({ workspaceId: inv.workspaceId, role: inv.role });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Billing endpoints ────────────────────────────────────────
+app.post('/api/billing/checkout', async (req, res) => {
+  try {
+    const result = await billing.createCheckoutSession(req.user, req.body.workspaceId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/billing/portal', async (req, res) => {
+  try {
+    const result = await billing.createPortalSession(req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/billing/status', async (req, res) => {
+  try {
+    const status = await billing.getBillingStatus(req.user);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Session REST endpoints (user-scoped) ──────────────────────
 app.get('/api/sessions', async (req, res) => {

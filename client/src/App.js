@@ -30,6 +30,8 @@ import { useAuth } from './AuthContext';
 import { setTokenGetter, authFetch } from './api';
 import LandingPage from './LandingPage';
 import Sidebar from './Sidebar';
+import SettingsPage from './settings/SettingsPage';
+import InviteAccept from './InviteAccept';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
@@ -288,6 +290,7 @@ function EmptyState({ onNewSession }) {
 function AppRouter() {
   const { user, loading, logout, isConfigured } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
+  const [showSettings, setShowSettings] = useState(() => window.location.pathname.startsWith('/settings'));
   const [accessDenied, setAccessDenied] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -342,6 +345,14 @@ function AppRouter() {
     );
   }
 
+  // Invite links — accept workspace invitations
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([a-f0-9]+)$/);
+  if (inviteMatch) {
+    if (loading) return <LoadingScreen />;
+    if (isConfigured && !user) return <LandingPage />;
+    return <InviteAccept token={inviteMatch[1]} />;
+  }
+
   // Show loading while Firebase checks auth state
   if (loading) return <LoadingScreen />;
 
@@ -380,9 +391,10 @@ function AppRouter() {
         ref={sidebarRef}
         activeSessionId={activeSession?.id || null}
         onOpenSession={handleOpenSession}
-        onNewSession={() => { setActiveSession({ isNew: true }); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onNewSession={() => { setActiveSession({ isNew: true }); setShowSettings(false); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+        onOpenSettings={() => { setShowSettings(true); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
       />
       <div className="app-main">
         {/* Mobile: floating toggle to reopen sidebar */}
@@ -394,7 +406,9 @@ function AppRouter() {
             ☰
           </button>
         )}
-        {!activeSession ? (
+        {showSettings ? (
+          <SettingsPage onClose={() => { setShowSettings(false); window.history.pushState({}, '', '/'); }} />
+        ) : !activeSession ? (
           <EmptyState onNewSession={(modeId) => setActiveSession({ isNew: true, mode: modeId })} />
         ) : (
           <App
@@ -437,6 +451,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Auth ────────────────────────────────────────────────
   const { user: authUser, getToken, logout: authLogout } = useAuth();
+  const [upgradePrompt, setUpgradePrompt] = useState(null); // { limit, plan }
 
   // Wire up the API fetch wrapper with the auth token on mount
   useEffect(() => {
@@ -707,6 +722,24 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     appendMemory(buildMemoryEntry(ideaText.trim(), rawNodes));
   }, []);
 
+  // ── 429 upgrade check helper ────────────────────────────
+  const checkUpgradable = useCallback(async (res) => {
+    if (res.status === 429) {
+      try {
+        const data = await res.json();
+        if (data.upgradable) {
+          setUpgradePrompt({ limit: data.limit, plan: data.plan });
+          throw new Error('Daily generation limit reached. Upgrade to Pro for more.');
+        }
+        throw new Error(data.error || 'Rate limit exceeded');
+      } catch (e) {
+        if (e.message.includes('limit')) throw e;
+        throw new Error('Rate limit exceeded');
+      }
+    }
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+  }, []);
+
   // ── Idea mode: generate ───────────────────────────────────
   const handleGenerate = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -821,7 +854,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           body: JSON.stringify(genParams),
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        await checkUpgradable(res);
         result = await readSSEStream(res, onNodeData);
       }
       if (result.error) idea$.setError(result.error);
@@ -839,7 +872,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -941,7 +974,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           body: JSON.stringify(genParams),
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        await checkUpgradable(res);
         result = await readSSEStream(res, onNodeData);
       }
       if (result.error) idea$.setError(result.error);
@@ -959,7 +992,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -1060,7 +1093,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           body: JSON.stringify(genParams),
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        await checkUpgradable(res);
         result = await readSSEStream(res, onNodeData);
       }
       if (result.error) idea$.setError(result.error);
@@ -1078,7 +1111,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1867,6 +1900,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           </span>
         )}
       </nav>
+
+      {upgradePrompt && (
+        <div className="upgrade-banner">
+          <span>You've hit {upgradePrompt.limit} generations/day on the {upgradePrompt.plan} plan.</span>
+          <button className="upgrade-banner-btn" onClick={() => { setUpgradePrompt(null); window.history.pushState({}, '', '/settings'); window.location.reload(); }}>
+            Upgrade to Pro
+          </button>
+          <button className="upgrade-banner-close" onClick={() => setUpgradePrompt(null)}>✕</button>
+        </div>
+      )}
 
       {active.error && (
         <div className="error-banner">

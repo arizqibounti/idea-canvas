@@ -29,12 +29,13 @@ function initFirestore() {
 // Initialize on load
 initFirestore();
 
-function newSession(idea, mode, userId) {
+function newSession(idea, mode, userId, workspaceId) {
   return {
     id: uuidv4(),
     idea: idea || '',
     mode: mode || 'idea',
     userId: userId || 'local',
+    workspaceId: workspaceId || null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     meta: null,
@@ -46,8 +47,8 @@ function newSession(idea, mode, userId) {
   };
 }
 
-async function createSession(idea, mode, userId) {
-  const session = newSession(idea, mode, userId);
+async function createSession(idea, mode, userId, workspaceId) {
+  const session = newSession(idea, mode, userId, workspaceId);
   if (useFirestore) {
     await db.collection('sessions').doc(session.id).set(session);
   } else {
