@@ -11,11 +11,15 @@ const {
   DRILL_PROMPT,
   FRACTAL_EXPAND_PROMPT,
   FRACTAL_SELECT_PROMPT,
+  CAUSAL_SYSTEM_PROMPT,
+  AGGREGATE_PROMPT,
+  REFINE_PROMPT,
 } = require('./prompts');
 
-const { sseHeaders, streamToSSE } = require('../utils/sse');
+const { sseHeaders, streamToSSE, streamToSSECollect, parseMessageToNodes } = require('../utils/sse');
 const { fetchPage, enrichEntities } = require('../utils/web');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
+const { saveNodes, getKnowledgeContext } = require('../gateway/knowledge');
 
 // ── POST /api/generate ────────────────────────────────────────
 
@@ -43,7 +47,9 @@ async function handleGenerate(client, req, res) {
   }
 
   // Select system prompt based on the active mode
-  const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
+    : mode === 'causal' ? CAUSAL_SYSTEM_PROMPT
+    : SYSTEM_PROMPT;
 
   // userContent can be a string or an array of content blocks (for PDF)
   let userContent;
@@ -297,14 +303,82 @@ async function handleGenerateResearch(client, req, res) {
       userContent += `\n\nSTRUCTURAL TEMPLATES:\n${JSON.stringify(templateGuidance, null, 2)}`;
     }
 
+    // Zettelkasten: inject knowledge context from past sessions
+    const userId = req.user?.uid || 'local';
+    try {
+      const knowledgeCtx = await getKnowledgeContext(userId, idea);
+      if (knowledgeCtx) userContent += knowledgeCtx;
+    } catch (e) { /* non-fatal */ }
+
+    const systemPrompt = mode === 'causal' ? CAUSAL_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
     const stream = client.messages.stream({
       model: 'claude-opus-4-5',
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
     });
 
-    await streamToSSE(res, stream);
+    // Phase 5: Stream initial tree AND collect nodes for GoT pipeline
+    const collectedNodes = await streamToSSECollect(res, stream);
+
+    // Phase 6: GoT Aggregate — find convergence points across the tree
+    if (collectedNodes.length >= 10) {
+      res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Graph of Thoughts: finding convergence points...' })}\n\n`);
+
+      const nodesSummary = collectedNodes.map(n => {
+        const pids = n.parentIds || (n.parentId ? [n.parentId] : []);
+        return `[${n.type}] "${n.label}" (id: ${n.id}, parents: ${pids.join(',') || 'root'})`;
+      }).join('\n');
+
+      try {
+        const aggregateMsg = await client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2048,
+          system: AGGREGATE_PROMPT,
+          messages: [{ role: 'user', content: `Existing nodes:\n${nodesSummary}\n\nFind convergence points and create synthesis nodes.` }],
+        });
+
+        const synthNodes = parseMessageToNodes(aggregateMsg);
+        for (const syn of synthNodes) {
+          res.write(`data: ${JSON.stringify(syn)}\n\n`);
+        }
+
+        // Phase 7: GoT Refine — strengthen synthesis nodes
+        if (synthNodes.length > 0) {
+          res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Refining synthesis nodes...' })}\n\n`);
+
+          const synthSummary = synthNodes.map(n =>
+            `[${n.type}] "${n.label}" (id: ${n.id}) — ${n.reasoning}`
+          ).join('\n');
+
+          const refineMsg = await client.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 2048,
+            system: REFINE_PROMPT,
+            messages: [{ role: 'user', content: `Synthesis nodes to refine:\n${synthSummary}\n\nStrengthen reasoning with specifics or prune weak nodes.` }],
+          });
+
+          const refinedNodes = parseMessageToNodes(refineMsg);
+          for (const ref of refinedNodes) {
+            res.write(`data: ${JSON.stringify(ref)}\n\n`);
+          }
+        }
+      } catch (gotErr) {
+        console.error('GoT aggregate/refine error:', gotErr.message);
+        // Non-fatal — tree was already generated
+      }
+    }
+
+    // Zettelkasten: save generated nodes to knowledge store
+    if (collectedNodes.length > 0) {
+      saveNodes(userId, null, idea, collectedNodes).catch(e =>
+        console.error('Knowledge save error:', e.message)
+      );
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
   } catch (err) {
     console.error('Research generation error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -362,7 +436,10 @@ async function handleDrill(client, req, res) {
 
   // Build user message with full tree context
   const treeContext = (fullContext || []).map(
-    (n) => `- [${n.type}] "${n.label}" (id: ${n.id}, parent: ${n.parentId || 'root'})`
+    (n) => {
+      const parents = n.parentIds || (n.parentId ? [n.parentId] : []);
+      return `- [${n.type}] "${n.label}" (id: ${n.id}, parents: ${parents.length ? parents.join(',') : 'root'})`;
+    }
   ).join('\n');
 
   let userMessage = `Focus node for deep-dive:\n- [${node.type}] "${node.label}" (id: ${node.id})\nReasoning: ${node.reasoning || 'N/A'}`;
@@ -451,7 +528,10 @@ async function handleFractalSelect(client, req, res) {
     ).join('\n');
 
     const contextStr = (fullContext || []).map(
-      (n) => `- [${n.type}] "${n.label}" (id: ${n.id}, parent: ${n.parentId || 'root'})`
+      (n) => {
+        const parents = n.parentIds || (n.parentId ? [n.parentId] : []);
+        return `- [${n.type}] "${n.label}" (id: ${n.id}, parents: ${parents.length ? parents.join(',') : 'root'})`;
+      }
     ).join('\n');
 
     const userMessage = `Original idea: "${idea || 'N/A'}"\n\nFull tree context:\n${contextStr}\n\nLeaf nodes (candidates for expansion):\n${leafList}\n\nSelect the one node with the highest depth potential.`;

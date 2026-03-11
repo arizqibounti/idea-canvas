@@ -86,27 +86,28 @@ function scoreLinks(links, fetched) {
     .sort((a, b) => b.score - a.score);
 }
 
-async function enrichEntities(client, idea, existingUrls = []) {
+async function enrichEntities(gemini, idea, existingUrls = []) {
   const existingDomains = existingUrls.map(u => {
     try { return new URL(u).hostname.toLowerCase(); } catch { return ''; }
   }).filter(Boolean);
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
-      messages: [{
-        role: 'user',
-        content: `Extract company, organization, or product names from this text that would benefit from website research. Only include names where visiting their website would provide useful context. Do NOT include any entity whose website domain is already in this list: ${existingDomains.join(', ')}
+    const userMessage = `Extract company, organization, or product names from this text that would benefit from website research. Only include names where visiting their website would provide useful context. Do NOT include any entity whose website domain is already in this list: ${existingDomains.join(', ')}
 
 Text: "${idea}"
 
 Return ONLY a JSON array of objects: [{"name": "Entity Name", "url": "https://likely-website.com"}]
-If no entities need research, return []. No explanation, just the JSON array.`,
-      }],
+If no entities need research, return []. No explanation, just the JSON array.`;
+
+    const response = await gemini.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: userMessage,
+      config: {
+        maxOutputTokens: 300,
+      },
     });
 
-    const text = message.content[0]?.text?.trim() || '[]';
+    const text = (response.text || '[]').trim();
     const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
     const entities = JSON.parse(cleaned);
     if (!Array.isArray(entities)) return [];

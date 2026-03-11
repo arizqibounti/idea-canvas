@@ -30,18 +30,19 @@ Output ONLY a JSON object:
 {"dimension":"audience","keyFindings":["finding 1","finding 2"],"segments":[{"name":"...","size":"...","painPoints":["..."],"behaviors":["..."]}],"insights":["user behavior insight"],"gaps":["areas where research was inconclusive"]}`,
 };
 
-async function planResearch(client, idea, existingContent) {
+async function planResearch(gemini, idea, existingContent) {
   try {
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: RESEARCH_PLAN_PROMPT,
-      messages: [{
-        role: 'user',
-        content: `Idea: "${idea}"${existingContent ? `\n\nExisting context:\n${existingContent}` : ''}\n\nPlan the research. Output ONLY the JSON object.`,
-      }],
+    const userMessage = `Idea: "${idea}"${existingContent ? `\n\nExisting context:\n${existingContent}` : ''}\n\nPlan the research. Output ONLY the JSON object.`;
+
+    const response = await gemini.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: userMessage,
+      config: {
+        systemInstruction: RESEARCH_PLAN_PROMPT,
+        maxOutputTokens: 1000,
+      },
     });
-    const text = message.content[0]?.text?.trim() || '{}';
+    const text = (response.text || '{}').trim();
     const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
     const plan = JSON.parse(cleaned);
     // Validate structure
@@ -62,7 +63,7 @@ async function planResearch(client, idea, existingContent) {
   }
 }
 
-async function runResearchAgent(client, agentType, plan, existingContent) {
+async function runResearchAgent(gemini, agentType, plan, existingContent) {
   try {
     const agentPlan = plan[agentType] || { urls: [], questions: [] };
 
@@ -81,17 +82,18 @@ async function runResearchAgent(client, agentType, plan, existingContent) {
       ? fetchedContent.map(r => `--- ${r.url} ---\n${r.text}`).join('\n\n')
       : '(no web content could be fetched)';
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
-      system: RESEARCH_AGENT_PROMPTS[agentType],
-      messages: [{
-        role: 'user',
-        content: `Research questions:\n${agentPlan.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\nWeb content gathered:\n${contentBlock}${existingContent ? `\n\nAdditional context:\n${existingContent}` : ''}\n\nSynthesize your findings. Be specific — cite real names, numbers, and details from the content. Output ONLY the JSON object.`,
-      }],
+    const userMessage = `Research questions:\n${agentPlan.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\nWeb content gathered:\n${contentBlock}${existingContent ? `\n\nAdditional context:\n${existingContent}` : ''}\n\nSynthesize your findings. Be specific — cite real names, numbers, and details from the content. Output ONLY the JSON object.`;
+
+    const response = await gemini.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: userMessage,
+      config: {
+        systemInstruction: RESEARCH_AGENT_PROMPTS[agentType],
+        maxOutputTokens: 1500,
+      },
     });
 
-    const text = message.content[0]?.text?.trim() || '{}';
+    const text = (response.text || '{}').trim();
     const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
     return JSON.parse(cleaned);
   } catch (err) {

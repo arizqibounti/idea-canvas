@@ -49,7 +49,7 @@ function groupSessionsByDate(sessions) {
 // ── Component ────────────────────────────────────────────────────
 
 const Sidebar = forwardRef(function Sidebar(
-  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse, onOpenSettings },
+  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse, onOpenSettings, onOpenKnowledge },
   ref
 ) {
   const [sessions, setSessions] = useState([]);
@@ -259,6 +259,9 @@ const Sidebar = forwardRef(function Sidebar(
             </span>
           </div>
           <div className="sidebar-footer-actions">
+            <button className="sidebar-settings-btn" onClick={onOpenKnowledge} title="Knowledge graph">
+              ⬡ Knowledge
+            </button>
             <button className="sidebar-settings-btn" onClick={onOpenSettings} title="Settings">
               ⚙ Settings
             </button>

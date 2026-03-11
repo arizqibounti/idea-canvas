@@ -20,6 +20,11 @@ const CLIENT_TYPES = {
   SESSION_LIST:      'session:list',
   SESSION_CREATE:    'session:create',
   STOP:              'stop',
+  REFINE_CRITIQUE:    'refine:critique',
+  REFINE_STRENGTHEN:  'refine:strengthen',
+  REFINE_SCORE:       'refine:score',
+  PORTFOLIO_GENERATE: 'portfolio:generate',
+  PORTFOLIO_SCORE:    'portfolio:score',
 };
 
 // Server → Client message types

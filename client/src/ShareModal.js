@@ -3,6 +3,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { authFetch } from './api';
+import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -88,6 +89,26 @@ export default function ShareModal({ isOpen, onClose, nodes, idea }) {
 
         {stage === 'config' && (
           <div className="share-modal-body">
+            {/* Live collaboration option */}
+            <div className="share-field">
+              <label className="share-label">Live Collaborate</label>
+              <button
+                className="share-collab-btn"
+                onClick={() => {
+                  const roomId = generateRoomId();
+                  window.location.href = buildRoomUrl(roomId);
+                }}
+              >
+                <span className="share-perm-icon">◉</span>
+                <div>
+                  <div className="share-perm-label">Start live session</div>
+                  <div className="share-perm-hint">Edit together in real-time</div>
+                </div>
+              </button>
+            </div>
+
+            <div className="share-divider"><span>or share a snapshot</span></div>
+
             <div className="share-field">
               <label className="share-label">Permission</label>
               <div className="share-permission-group">

@@ -13,8 +13,11 @@ let engine = null;
 // Active connections: ws → { sessionId, surface, userId, abortControllers: Map<requestId, AbortController> }
 const connections = new Map();
 
-function initWebSocket(httpServer, anthropicClient, engineHandlers) {
+let geminiClient = null;
+
+function initWebSocket(httpServer, anthropicClient, engineHandlers, gemini) {
   engine = engineHandlers;
+  geminiClient = gemini || null;
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -150,13 +153,13 @@ async function handleMessage(ws, client, raw) {
         await engine.handleGenerateResearch(client, fakeReq, fakeRes);
         break;
       case 'debate:critique':
-        await engine.handleDebateCritique(client, fakeReq, fakeRes);
+        await engine.handleDebateCritique(client, fakeReq, fakeRes, geminiClient);
         break;
       case 'debate:rebut':
-        await engine.handleDebateRebut(client, fakeReq, fakeRes);
+        await engine.handleDebateRebut(client, fakeReq, fakeRes, geminiClient);
         break;
       case 'debate:finalize':
-        await engine.handleDebateFinalize(client, fakeReq, fakeRes);
+        await engine.handleDebateFinalize(client, fakeReq, fakeRes, geminiClient);
         break;
       case 'expand-suggestion':
         await engine.handleExpandSuggestion(client, fakeReq, fakeRes);
@@ -175,6 +178,21 @@ async function handleMessage(ws, client, raw) {
         break;
       case 'mockup':
         await engine.handleMockup(client, fakeReq, fakeRes);
+        break;
+      case 'refine:critique':
+        await engine.handleRefineCritique(client, fakeReq, fakeRes);
+        break;
+      case 'refine:strengthen':
+        await engine.handleRefineStrengthen(client, fakeReq, fakeRes);
+        break;
+      case 'refine:score':
+        await engine.handleRefineScore(client, fakeReq, fakeRes);
+        break;
+      case 'portfolio:generate':
+        await engine.handlePortfolioGenerate(client, fakeReq, fakeRes, geminiClient);
+        break;
+      case 'portfolio:score':
+        await engine.handlePortfolioScore(client, fakeReq, fakeRes, geminiClient);
         break;
       case 'canvas:generate':
         if (engine.handleCanvasGenerate) {

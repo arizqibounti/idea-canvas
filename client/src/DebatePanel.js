@@ -3,7 +3,7 @@ import { buildFlowNode, readSSEStream } from './useCanvasMode';
 import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAX_ROUNDS = 5;
+const MAX_ROUNDS = 2; // Reduced from 5 for faster testing
 
 const CATEGORY_COLORS = {
   // Idea / product mode
@@ -487,6 +487,9 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
       if (!loopRef.current) return;
       if (round >= MAX_ROUNDS) {
         allRoundsRef.current = [...allRoundsRef.current, roundEntry];
+        // Max rounds reached — finalize and trigger pipeline continuation
+        setStatus('finalizing');
+        await runFinalize(currentNodes);
         setStatus('stopped');
         setIsRunning(false);
         loopRef.current = false;

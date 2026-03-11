@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { ReactFlowProvider } from '@xyflow/react';
 import IdeaCanvas from './IdeaCanvas';
 import NodeEditPanel from './NodeEditPanel';
-import LoadModal from './LoadModal';
+
 import NodeContextMenu from './NodeContextMenu';
 import CodebaseUpload from './CodebaseUpload';
 import ResumeInput from './ResumeInput';
@@ -12,18 +12,16 @@ import MemoryInsights, { buildMemoryEntry, appendMemory, readMemory } from './Me
 import DebatePanel from './DebatePanel';
 import ChatPanel from './ChatPanel';
 import ResumeChangesModal from './ResumeChangesModal';
-import ExportGitHubModal from './ExportGitHubModal';
+
 import Graph3D from './Graph3D';
-import CinematicController from './CinematicController';
+
 import TreeStudio from './TreeStudio';
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
 import { readTemplates, saveTemplate } from './TemplateStore';
 import { useGateway } from './gateway/useGateway';
-import CanvasPanel from './CanvasPanel';
-import ExportDropdown from './ExportDropdown';
-import { exportToPng, exportToSvg, copyToClipboard, downloadDataUrl, downloadSvg, generateInteractiveHtml, downloadHtml } from './exportImage';
+
 import ShareModal from './ShareModal';
 import ShareViewer from './ShareViewer';
 import { useAuth } from './AuthContext';
@@ -31,6 +29,14 @@ import { setTokenGetter, authFetch } from './api';
 import LandingPage from './LandingPage';
 import Sidebar from './Sidebar';
 import SettingsPage from './settings/SettingsPage';
+import KnowledgeGraph from './KnowledgeGraph';
+import { useAutoRefine } from './useAutoRefine';
+import RefinePanel from './RefinePanel';
+import PortfolioPanel from './PortfolioPanel';
+import PipelineOverlay from './PipelineOverlay';
+import OutlineView from './OutlineView';
+import FlowchartView from './FlowchartView';
+import MindmapView from './MindmapView';
 import InviteAccept from './InviteAccept';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
@@ -291,6 +297,7 @@ function AppRouter() {
   const { user, loading, logout, isConfigured } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
   const [showSettings, setShowSettings] = useState(() => window.location.pathname.startsWith('/settings'));
+  const [showKnowledge, setShowKnowledge] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -391,10 +398,11 @@ function AppRouter() {
         ref={sidebarRef}
         activeSessionId={activeSession?.id || null}
         onOpenSession={handleOpenSession}
-        onNewSession={() => { setActiveSession({ isNew: true }); setShowSettings(false); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onNewSession={() => { setActiveSession({ isNew: true }); setShowSettings(false); setShowKnowledge(false); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
-        onOpenSettings={() => { setShowSettings(true); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onOpenSettings={() => { setShowSettings(true); setShowKnowledge(false); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onOpenKnowledge={() => { setShowKnowledge(true); setShowSettings(false); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
       />
       <div className="app-main">
         {/* Mobile: floating toggle to reopen sidebar */}
@@ -406,7 +414,9 @@ function AppRouter() {
             ☰
           </button>
         )}
-        {showSettings ? (
+        {showKnowledge ? (
+          <KnowledgeGraph onClose={() => setShowKnowledge(false)} />
+        ) : showSettings ? (
           <SettingsPage onClose={() => { setShowSettings(false); window.history.pushState({}, '', '/'); }} />
         ) : !activeSession ? (
           <EmptyState onNewSession={(modeId) => setActiveSession({ isNew: true, mode: modeId })} />
@@ -471,6 +481,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Canvas hooks ──────────────────────────────────────────
   const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea', yjsSyncRef });
   const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName' });
+
+  // ── Auto-Refine hook ───────────────────────────────────────
+  const refine$ = useAutoRefine({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    dynamicTypesRef: idea$.dynamicTypesRef,
+    yjsSyncRef,
+    setNodeCount: idea$.setNodeCount,
+  });
 
   // ── Load initial session from dashboard ───────────────────
   const initialSessionLoaded = useRef(false);
@@ -559,10 +579,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Chat Companion ────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
 
-  // ── Export & Share ───────────────────────────────────────────
-  const [showExportModal, setShowExportModal] = useState(false);
+  // ── Share ────────────────────────────────────────────────────
   const [showShareModal, setShowShareModal] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const reactFlowRef = useRef(null);
 
@@ -582,60 +600,26 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     return () => document.removeEventListener('click', close);
   }, [showUserMenu]);
 
-  const handleExport = useCallback(async (key) => {
-    if (key === 'github') {
-      setShowExportModal(true);
-      return;
-    }
-    const rfInstance = reactFlowRef.current;
-    if (!rfInstance) return;
-    setIsExporting(true);
-    try {
-      switch (key) {
-        case 'png': {
-          const dataUrl = await exportToPng(rfInstance);
-          downloadDataUrl(dataUrl, `thoughtclaw-${Date.now()}.png`);
-          break;
-        }
-        case 'svg': {
-          const svgStr = await exportToSvg(rfInstance);
-          downloadSvg(svgStr, `thoughtclaw-${Date.now()}.svg`);
-          break;
-        }
-        case 'clipboard': {
-          await copyToClipboard(rfInstance);
-          setToastMsg('Copied to clipboard!');
-          setTimeout(() => setToastMsg(''), 2200);
-          break;
-        }
-        case 'html': {
-          const rawNodes = idea$.rawNodesRef.current;
-          const html = generateInteractiveHtml(rawNodes, idea);
-          downloadHtml(html, `thoughtclaw-${Date.now()}.html`);
-          break;
-        }
-        default: break;
-      }
-    } catch (err) {
-      console.error('Export failed:', err);
-      setToastMsg('Export failed — see console');
-      setTimeout(() => setToastMsg(''), 3000);
-    }
-    setIsExporting(false);
-  }, [idea]);
-
-  // ── A2UI Canvas ───────────────────────────────────────────
-  const [showCanvas, setShowCanvas] = useState(false);
-  const [canvasArtifacts, setCanvasArtifacts] = useState([]);
-
   // ── Auto-Fractal (∞ EXPLORE) ────────────────────────────
   const [showAutoFractal, setShowAutoFractal] = useState(false);
   const [autoFractalRounds, setAutoFractalRounds] = useState(5);
   const [autoFractalRunning, setAutoFractalRunning] = useState(false);
   const [autoFractalProgress, setAutoFractalProgress] = useState(null);
 
+  // ── Auto-Refine (⟲ REFINE) ────────────────────────────
+  const [showRefine, setShowRefine] = useState(false);
+
+  // ── Portfolio (◈ PORTFOLIO) ────────────────────────────
+  const [showPortfolio, setShowPortfolio] = useState(false);
+
+  // ── Post-generation automation options ───────────────────
+  const [autoRefineOnGen, setAutoRefineOnGen] = useState(false);
+  const [autoPortfolioOnGen, setAutoPortfolioOnGen] = useState(false);
+  const [portfolioAutoGen, setPortfolioAutoGen] = useState(false); // triggers auto-generate in PortfolioPanel
+  const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
+
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'cinematic' | 'studio'
+  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'studio'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -655,7 +639,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [isScoring, setIsScoring] = useState(false);
 
   // ── Generation mode: single | multi | research ───────────
-  const [genMode, setGenMode] = useState('single');
   const [multiAgentProgress, setMultiAgentProgress] = useState(null);
 
   // ── Auto-save (skip when Yjs handles persistence) ────────
@@ -1006,6 +989,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setDynamicDomain(null);
     setDynamicLegendTypes([]);
 
+    // Initialise pipeline overlay when automation checkboxes are active
+    if (autoRefineOnGen || autoPortfolioOnGen) {
+      const stages = [
+        { id: 'generate', label: 'Generate', status: 'active', detail: 'Research & multi-agent thinking...' },
+        { id: 'debate', label: 'Debate', status: 'pending', detail: null },
+        ...(autoRefineOnGen ? [{ id: 'refine', label: 'Refine', status: 'pending', detail: null }] : []),
+        ...(autoPortfolioOnGen ? [{ id: 'portfolio', label: 'Portfolio', status: 'pending', detail: null }] : []),
+      ];
+      setPipelineStages(stages);
+    }
+
     if (idea$.abortRef.current) idea$.abortRef.current.abort();
     const controller = new AbortController();
     idea$.abortRef.current = controller;
@@ -1109,6 +1103,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         setShowDebate(true);
         setDebateAutoStart(true);
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
+        // Pipeline: generate done → debate active
+        setPipelineStages(prev => prev?.map(s =>
+          s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
+          s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
+        ));
       }
     }
   }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
@@ -1122,9 +1121,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      genMode === 'research' ? handleGenerateResearch() : genMode === 'multi' ? handleGenerateMulti() : handleGenerate();
+      handleGenerateResearch();
     }
-  }, [handleGenerate, handleGenerateMulti, handleGenerateResearch, genMode]);
+  }, [handleGenerateResearch]);
 
   // ── Textarea auto-resize ────────────────────────────────
   const autoResize = useCallback(() => {
@@ -1386,6 +1385,29 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setAutoFractalRunning(false);
   }, [idea$]);
 
+  // ── Auto-Refine handlers ──────────────────────────────────
+  const handleStartRefine = useCallback(async (rounds = 3) => {
+    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
+    await refine$.handleStartRefine(ideaText, displayMode, rounds);
+  }, [refine$, idea, displayMode, resumeJobLabel]);
+
+  const handleStopRefine = useCallback(() => {
+    refine$.handleStopRefine();
+  }, [refine$]);
+
+  const handleGoDeeper = useCallback(async (additionalRounds = 2) => {
+    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
+    await refine$.handleGoDeeper(ideaText, displayMode, additionalRounds);
+  }, [refine$, idea, displayMode, resumeJobLabel]);
+
+  // Opens the refine panel + starts auto-refine (used by Portfolio panel)
+  const handleOpenAndStartRefine = useCallback(() => {
+    setShowRefine(true);
+    setShowPortfolio(false);
+    // Start with a small delay so the panel renders first
+    setTimeout(() => handleStartRefine(3), 100);
+  }, [handleStartRefine]);
+
   // ── Load session handlers ─────────────────────────────────
   const handleLoadIdeaSession = useCallback((session) => {
     idea$.handleLoadSession(session, setIdea);
@@ -1453,7 +1475,62 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     } catch (err) {
       console.error('Template extraction failed:', err);
     }
-  }, [idea, idea$]);
+
+    // Pipeline: debate done
+    setPipelineStages(prev => prev?.map(s =>
+      s.id === 'debate' ? { ...s, status: 'done', detail: 'Consensus reached' } :
+      s.id === 'refine' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Starting refinement...' } :
+      s.id === 'portfolio' && s.status === 'pending' && !autoRefineOnGen ? { ...s, status: 'active', detail: 'Starting portfolio...' } :
+      s
+    ));
+
+    // Post-debate automation: auto-trigger refine and/or portfolio after consensus
+    if (autoRefineOnGen && !refine$.isRefining) {
+      setShowRefine(true);
+      // Small delay so panel mounts before starting
+      setTimeout(() => {
+        const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
+        refine$.handleStartRefine(ideaText, displayMode, 3, (progress) => {
+          // Update pipeline overlay with refine progress
+          if (progress.status === 'critiquing' || progress.status === 'strengthening' || progress.status === 'scoring') {
+            setPipelineStages(prev => prev?.map(s =>
+              s.id === 'refine' ? {
+                ...s, status: 'active',
+                detail: progress.detail || progress.status,
+                round: progress.round, maxRounds: progress.maxRounds,
+                substages: [
+                  { label: 'Research', status: progress.detail?.includes('research') || progress.detail?.includes('Research') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
+                  { label: 'Lenses', status: progress.detail?.includes('lens') || progress.detail?.includes('Lens') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
+                  { label: 'Critique', status: progress.status === 'critiquing' ? 'active' : progress.status === 'strengthening' || progress.status === 'scoring' ? 'done' : 'pending' },
+                  { label: 'Strengthen', status: progress.status === 'strengthening' ? 'active' : progress.status === 'scoring' ? 'done' : 'pending' },
+                  { label: 'Score', status: progress.status === 'scoring' ? 'active' : 'pending' },
+                ],
+                progress: progress.status === 'critiquing' ? 20 : progress.status === 'strengthening' ? 55 : 85,
+              } : s
+            ));
+          } else if (progress.status === 'round_complete') {
+            setPipelineStages(prev => prev?.map(s =>
+              s.id === 'refine' ? {
+                ...s,
+                detail: `Round ${progress.round}/${progress.maxRounds} — ${progress.oldScore?.toFixed?.(1)} → ${progress.newScore?.toFixed?.(1)}`,
+                progress: Math.round((progress.round / progress.maxRounds) * 100),
+              } : s
+            ));
+          } else if (progress.status === 'complete' || progress.status === 'done') {
+            setPipelineStages(prev => prev?.map(s =>
+              s.id === 'refine' ? { ...s, status: 'done', detail: 'Refinement complete', substages: null, progress: null } :
+              s.id === 'portfolio' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Generating alternatives...' } :
+              s
+            ));
+          }
+        });
+      }, 500);
+    }
+    if (autoPortfolioOnGen) {
+      setShowPortfolio(true);
+      setPortfolioAutoGen(true);
+    }
+  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, refine$, displayMode, resumeJobLabel]);
 
   // ── Suggestion expand: add suggestion node + children to tree ─
   const handleSuggestionExpand = useCallback(async (suggestionText) => {
@@ -1686,18 +1763,19 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   </>
                 ) : (
                   <>
-                    <button
-                      className={`btn btn-mode-toggle ${genMode !== 'single' ? 'active' : ''} ${genMode === 'research' ? 'research' : ''}`}
-                      onClick={() => setGenMode(prev => prev === 'single' ? 'multi' : prev === 'multi' ? 'research' : 'single')}
-                      title={genMode === 'single' ? 'Single agent (fast)' : genMode === 'multi' ? 'Multi-agent (3 lenses)' : 'Research agents (deep research + generation)'}
-                      style={{ padding: '6px 8px', fontSize: 9, marginRight: 4 }}
-                    >
-                      {genMode === 'single' ? '◈×1' : genMode === 'multi' ? '◈×3' : '⊛ R'}
+                    <button className="btn btn-generate" onClick={handleGenerateResearch} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
+                      {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
                     </button>
-                    <button className="btn btn-generate" onClick={genMode === 'research' ? handleGenerateResearch : genMode === 'multi' ? handleGenerateMulti : handleGenerate} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
-                      {isFetchingUrl ? '◌ FETCHING URL...' : genMode === 'research' ? '▶ RESEARCH & GENERATE' : '▶ GENERATE'}
-                    </button>
-                    {gateway.connected && <span style={{ fontSize: 8, color: '#51cf66', marginLeft: 4, opacity: 0.7 }} title="WebSocket Gateway connected">⚡WS</span>}
+                    <div className="gen-auto-options">
+                      <label className="gen-auto-check" title="Auto-run refinement loop after generation">
+                        <input type="checkbox" checked={autoRefineOnGen} onChange={e => setAutoRefineOnGen(e.target.checked)} />
+                        <span>⟲ Refine</span>
+                      </label>
+                      <label className="gen-auto-check" title="Auto-generate alternative approaches after generation">
+                        <input type="checkbox" checked={autoPortfolioOnGen} onChange={e => setAutoPortfolioOnGen(e.target.checked)} />
+                        <span>◈ Portfolio</span>
+                      </label>
+                    </div>
                   </>
                 )}
               </>
@@ -1733,12 +1811,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               ⎇ HISTORY
             </button>
           )}
-          {active.nodeCount > 0 && (
-            <button className="btn btn-icon" onClick={() => active.handleManualSave(activeMode === 'idea' ? idea : cbFolderName)} title="Save session">
-              ⬛ SAVE
-            </button>
-          )}
-          {/* Panels group — debate, chat, canvas */}
+          {/* Panels group — debate, chat */}
           {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
             <>
               <div className="toolbar-sep" />
@@ -1757,40 +1830,34 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 ✦ {(CHAT_LABELS[displayMode] || CHAT_LABELS.idea).title}
               </button>
               <button
-                className={`btn btn-icon btn-canvas-icon ${showCanvas ? 'active-icon' : ''}`}
-                onClick={() => setShowCanvas((v) => !v)}
-                title="A2UI Canvas — Interactive Visualizations"
-              >
-                ◈ CANVAS
-              </button>
-              <button
                 className={`btn btn-icon ${showAutoFractal ? 'active-icon' : ''}`}
                 onClick={() => setShowAutoFractal((v) => !v)}
                 title="Autonomous fractal exploration — AI recursively expands ideas"
               >
                 ∞ EXPLORE
               </button>
+              <button
+                className={`btn btn-icon ${showRefine ? 'active-icon' : ''}`}
+                onClick={() => setShowRefine((v) => !v)}
+                title="Auto-refine — recursive critique and strengthen loop"
+              >
+                ⟲ REFINE
+              </button>
+              <button
+                className={`btn btn-icon ${showPortfolio ? 'active-icon' : ''}`}
+                onClick={() => setShowPortfolio((v) => !v)}
+                title="Generate and compare alternative approaches"
+              >
+                ◈ PORTFOLIO
+              </button>
               <div className="toolbar-sep" />
               <button
                 className="btn btn-icon btn-share-icon"
                 onClick={() => setShowShareModal(true)}
-                title="Share tree via link"
+                title="Share or collaborate"
               >
                 ⊞ SHARE
               </button>
-              {!yjs && (
-                <button
-                  className="btn btn-icon"
-                  onClick={() => {
-                    const roomId = generateRoomId();
-                    window.location.href = buildRoomUrl(roomId);
-                  }}
-                  title="Start collaborative room"
-                >
-                  ◉ COLLAB
-                </button>
-              )}
-              <ExportDropdown onExport={handleExport} isExporting={isExporting} />
             </>
           )}
           {/* Yjs collaboration status bar */}
@@ -1812,18 +1879,32 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 ◈ 3D
               </button>
               <button
-                className={`btn btn-icon ${viewMode === 'cinematic' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'cinematic' ? 'tree' : 'cinematic')}
-                title="Cinematic replay"
-              >
-                ▶ CINEMA
-              </button>
-              <button
                 className={`btn btn-icon ${viewMode === 'studio' ? 'active-icon' : ''}`}
                 onClick={() => setViewMode(v => v === 'studio' ? 'tree' : 'studio')}
                 title="Scene studio editor"
               >
                 ◈ STUDIO
+              </button>
+              <button
+                className={`btn btn-icon ${viewMode === 'outline' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'outline' ? 'tree' : 'outline')}
+                title="Outline / list view"
+              >
+                ≡ OUTLINE
+              </button>
+              <button
+                className={`btn btn-icon ${viewMode === 'flowchart' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'flowchart' ? 'tree' : 'flowchart')}
+                title="Flowchart / DAG view"
+              >
+                ▦ FLOW
+              </button>
+              <button
+                className={`btn btn-icon ${viewMode === 'mindmap' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'mindmap' ? 'tree' : 'mindmap')}
+                title="Mindmap / radial view"
+              >
+                ◎ MINDMAP
               </button>
             </>
           )}
@@ -1837,10 +1918,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               ⇌ LINKS
             </button>
           )}
-          {active.savedSessions.length > 0 && (
-            <button className="btn btn-icon" onClick={() => active.setShowLoadModal(true)}>▤ LOAD</button>
-          )}
-
           {/* Usage indicator + User profile */}
           {usageData && (
             <div className={`usage-indicator${usageData.remaining <= 3 ? (usageData.remaining === 0 ? ' exhausted' : ' warning') : ''}`}>
@@ -1951,33 +2028,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 if (raw) idea$.handleNodeClick({ id: raw.id, data: raw.data || raw });
               }}
             />
-          ) : viewMode === 'cinematic' ? (
-            <ReactFlowProvider>
-              <IdeaCanvas
-                nodes={displayNodes}
-                edges={displayEdges}
-                isGenerating={false}
-                isScoring={false}
-                onNodeClick={idea$.handleNodeClick}
-                onNodeDoubleClick={idea$.handleDrill}
-                onNodeContextMenu={idea$.handleNodeContextMenu}
-                onCloseContextMenu={idea$.handleCloseContextMenu}
-                drillStack={idea$.drillStack}
-                onExitDrill={idea$.handleExitDrill}
-                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
-                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
-                isCinematic={true}
-              />
-              <CinematicController
-                nodes={idea$.rawNodesRef.current}
-                maxRound={maxRound}
-                roundRange={roundRange}
-                setRoundRange={setRoundRange}
-                setIsolatedRound={setIsolatedRound}
-                onExit={() => { setRoundRange([0, maxRound]); setViewMode('tree'); }}
-                getRoundIndex={getRoundIndex}
-              />
-            </ReactFlowProvider>
           ) : viewMode === 'studio' ? (
             <ReactFlowProvider>
               <TreeStudio
@@ -1998,6 +2048,54 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 drillStack={idea$.drillStack}
                 onExitDrill={idea$.handleExitDrill}
                 onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+              />
+            </ReactFlowProvider>
+          ) : viewMode === 'outline' ? (
+            <OutlineView
+              rawNodes={idea$.rawNodesRef.current}
+              displayNodes={displayNodes}
+              onNodeClick={idea$.handleNodeClick}
+              onNodeDoubleClick={idea$.handleDrill}
+              searchQuery={treeSearchQuery}
+              onSearchChange={setTreeSearchQuery}
+              selectedNodeId={active.selectedNode?.id}
+            />
+          ) : viewMode === 'flowchart' ? (
+            <ReactFlowProvider>
+              <FlowchartView
+                displayNodes={displayNodes}
+                onNodeClick={idea$.handleNodeClick}
+                onNodeDoubleClick={idea$.handleDrill}
+                onNodeContextMenu={idea$.handleNodeContextMenu}
+                onCloseContextMenu={idea$.handleCloseContextMenu}
+                drillStack={idea$.drillStack}
+                onExitDrill={idea$.handleExitDrill}
+                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
+                searchQuery={treeSearchQuery}
+                onSearchChange={setTreeSearchQuery}
+                onCollapseAll={idea$.handleCollapseAll}
+                onExpandAll={idea$.handleExpandAll}
+                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+              />
+            </ReactFlowProvider>
+          ) : viewMode === 'mindmap' ? (
+            <ReactFlowProvider>
+              <MindmapView
+                displayNodes={displayNodes}
+                onNodeClick={idea$.handleNodeClick}
+                onNodeDoubleClick={idea$.handleDrill}
+                onNodeContextMenu={idea$.handleNodeContextMenu}
+                onCloseContextMenu={idea$.handleCloseContextMenu}
+                drillStack={idea$.drillStack}
+                onExitDrill={idea$.handleExitDrill}
+                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
+                searchQuery={treeSearchQuery}
+                onSearchChange={setTreeSearchQuery}
+                onCollapseAll={idea$.handleCollapseAll}
+                onExpandAll={idea$.handleExpandAll}
+                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
                 onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
               />
             </ReactFlowProvider>
@@ -2069,7 +2167,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         )}
 
         {/* ── 2D Timeline Bar ── */}
-        {!is3D && viewMode !== 'cinematic' && viewMode !== 'studio' && active.nodes.length > 0 && maxRound > 0 && (
+        {!is3D && viewMode !== 'studio' && viewMode !== 'outline' && viewMode !== 'flowchart' && viewMode !== 'mindmap' && active.nodes.length > 0 && maxRound > 0 && (
           <TimelineBar2D
             roundRange={roundRange}
             onRoundRangeChange={setRoundRange}
@@ -2107,15 +2205,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         />
       )}
 
-      {active.showLoadModal && (
-        <LoadModal
-          sessions={active.savedSessions}
-          onLoad={activeMode === 'idea' ? handleLoadIdeaSession : handleLoadCbSession}
-          onDelete={active.handleDeleteSession}
-          onClose={() => active.setShowLoadModal(false)}
-        />
-      )}
-
       {showHistory && (
         <HistoryModal
           versions={ideaVersions}
@@ -2149,18 +2238,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         idea={displayMode === 'resume' ? resumeJobLabel : idea}
         mode={displayMode}
       />
-
-      {/* ── A2UI Canvas Panel ── */}
-      {showCanvas && (
-        <CanvasPanel
-          onClose={() => setShowCanvas(false)}
-          artifacts={canvasArtifacts}
-          setArtifacts={setCanvasArtifacts}
-          nodes={idea$.rawNodesRef.current}
-          idea={idea}
-          gateway={gateway}
-        />
-      )}
 
       {/* ── Auto-Fractal Panel ── */}
       {showAutoFractal && activeMode === 'idea' && (
@@ -2231,6 +2308,51 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         </div>
       )}
 
+      {/* ── Auto-Refine Panel ── */}
+      {showRefine && (
+        <RefinePanel
+          mode={displayMode}
+          isRefining={refine$.isRefining}
+          refineProgress={refine$.refineProgress}
+          refineHistory={refine$.refineHistory}
+          onStart={handleStartRefine}
+          onStop={handleStopRefine}
+          onGoDeeper={handleGoDeeper}
+          onClose={() => setShowRefine(false)}
+          nodeCount={idea$.rawNodesRef.current.length}
+        />
+      )}
+
+      {/* ── Portfolio Panel ── */}
+      {showPortfolio && (
+        <PortfolioPanel
+          idea={displayMode === 'resume' ? resumeJobLabel : idea}
+          mode={displayMode}
+          onClose={() => setShowPortfolio(false)}
+          rawNodesRef={idea$.rawNodesRef}
+          applyLayout={idea$.applyLayout}
+          drillStackRef={idea$.drillStackRef}
+          setNodeCount={idea$.setNodeCount}
+          yjsSyncRef={yjsSyncRef}
+          onStartRefine={handleOpenAndStartRefine}
+          autoGenerate={portfolioAutoGen}
+          onAutoGenDone={() => setPortfolioAutoGen(false)}
+          onPipelineUpdate={(stage) => {
+            setPipelineStages(prev => prev?.map(s =>
+              s.id === 'portfolio' ? { ...s, ...stage } : s
+            ));
+          }}
+        />
+      )}
+
+      {/* ── Pipeline Activity Overlay ── */}
+      {pipelineStages && (
+        <PipelineOverlay
+          stages={pipelineStages}
+          onClose={() => setPipelineStages(null)}
+        />
+      )}
+
       {/* ── Resume Changes Modal ── */}
       <ResumeChangesModal
         isOpen={showResumeChanges}
@@ -2241,14 +2363,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         error={resumeChangesError}
       />
 
-      {/* ── Export to GitHub Modal ── */}
-      <ExportGitHubModal
-        isOpen={showExportModal}
-        onClose={() => setShowExportModal(false)}
-        nodes={idea$.rawNodesRef.current}
-        idea={idea}
-        debateRounds={debateRoundsRef.current}
-      />
 
       <ShareModal
         isOpen={showShareModal}
