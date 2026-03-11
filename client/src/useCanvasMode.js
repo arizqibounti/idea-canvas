@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { computeLayout, buildEdges, getSubtree, filterCollapsed, computeDepths } from './layoutUtils';
+import { computeForceLayout, buildEdges, getSubtree, filterCollapsed, computeDepths, resetForceLayoutCache } from './layoutUtils';
 import { getNodeConfig } from './nodeConfig';
 import { authFetch } from './api';
 
@@ -53,6 +53,8 @@ export function readVersions(ideaKey) {
 
 // ── Node builder ──────────────────────────────────────────────
 export function buildFlowNode(raw) {
+  // Normalize: support both parentId (legacy) and parentIds (brain architecture)
+  const parentIds = raw.parentIds || (raw.parentId ? [raw.parentId] : []);
   return {
     id: raw.id,
     type: 'ideaNode',
@@ -61,10 +63,13 @@ export function buildFlowNode(raw) {
       type: raw.type,
       label: raw.label,
       reasoning: raw.reasoning,
-      parentId: raw.parentId || null,
+      parentIds,
+      parentId: parentIds[0] || null, // backward compat
       relatedIds: raw.relatedIds || [],
       score: raw.score || null,
       lens: raw.lens || null,
+      polarity: raw.polarity || null,
+      loopId: raw.loopId || null,
     },
   };
 }
@@ -141,15 +146,16 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
 
     const edgeOpts = { nodeConfigGetter: getNodeConfig };
     const parentEdges = buildEdges(displayRaw, edgeOpts);
-    const laidOut = computeLayout(displayRaw, parentEdges);
+    const laidOut = computeForceLayout(displayRaw, parentEdges);
 
     // Compute depths and child counts for fractal UI
     const depths = computeDepths(laidOut);
     const childCountMap = {};
     rawNodes.forEach(n => {
-      if (n.data.parentId) {
-        childCountMap[n.data.parentId] = (childCountMap[n.data.parentId] || 0) + 1;
-      }
+      const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+      pids.forEach(pid => {
+        childCountMap[pid] = (childCountMap[pid] || 0) + 1;
+      });
     });
 
     // Annotate nodes with fractal data
@@ -224,6 +230,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     drillStackRef.current = [];
     collapsedNodesRef.current = new Set();
     expandingNodeRef.current = null;
+    resetForceLayoutCache();
     setDrillStack([]);
     setNodes([]);
     setEdges([]);
@@ -285,16 +292,21 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     yjsSyncRef?.current?.updateNodeInYjs(nodeId, { starred: newStarred });
   }, [applyLayout, yjsSyncRef]);
 
-  // ── Get ancestors ─────────────────────────────────────────
+  // ── Get ancestors (BFS, cycle-safe) ─────────────────────────
   const handleGetAncestors = useCallback((id) => {
     const nodeMap = Object.fromEntries(rawNodesRef.current.map((n) => [n.id, n]));
     const result = [];
-    let node = nodeMap[id];
-    while (node?.data?.parentId) {
-      const parent = nodeMap[node.data.parentId];
-      if (!parent) break;
+    const visited = new Set([id]);
+    const queue = [...(nodeMap[id]?.data?.parentIds || (nodeMap[id]?.data?.parentId ? [nodeMap[id].data.parentId] : []))];
+    while (queue.length) {
+      const pid = queue.shift();
+      if (visited.has(pid)) continue;
+      visited.add(pid);
+      const parent = nodeMap[pid];
+      if (!parent) continue;
       result.unshift(parent);
-      node = parent;
+      const grandParents = parent.data.parentIds || (parent.data.parentId ? [parent.data.parentId] : []);
+      queue.push(...grandParents);
     }
     return result;
   }, []);
@@ -340,19 +352,29 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     const getAncestors = (id) => {
       const result = [];
       const nodeMap = Object.fromEntries(rawNodesRef.current.map((n) => [n.id, n]));
-      let node = nodeMap[id];
-      while (node?.data?.parentId) {
-        const parent = nodeMap[node.data.parentId];
-        if (!parent) break;
+      const visited = new Set([id]);
+      const queue = [...(nodeMap[id]?.data?.parentIds || (nodeMap[id]?.data?.parentId ? [nodeMap[id].data.parentId] : []))];
+      while (queue.length) {
+        const pid = queue.shift();
+        if (visited.has(pid)) continue;
+        visited.add(pid);
+        const parent = nodeMap[pid];
+        if (!parent) continue;
         result.unshift(parent);
-        node = parent;
+        const grandParents = parent.data.parentIds || (parent.data.parentId ? [parent.data.parentId] : []);
+        queue.push(...grandParents);
       }
       return result;
     };
 
-    const getDescendantIds = (id) => {
-      const children = rawNodesRef.current.filter((n) => n.data.parentId === id);
-      return children.flatMap((c) => [c.id, ...getDescendantIds(c.id)]);
+    const getDescendantIds = (id, visited = new Set()) => {
+      if (visited.has(id)) return [];
+      visited.add(id);
+      const children = rawNodesRef.current.filter((n) => {
+        const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+        return pids.includes(id);
+      });
+      return children.flatMap((c) => [c.id, ...getDescendantIds(c.id, visited)]);
     };
 
     const targetNode = rawNodesRef.current.find((n) => n.id === nodeId);
@@ -494,11 +516,12 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
   // ── Collapse all expanded branches ────────────────────────
   const handleCollapseAll = useCallback(() => {
     // Find all nodes that have children (i.e. are parents)
-    const parentIds = new Set();
+    const parentNodeIds = new Set();
     rawNodesRef.current.forEach(n => {
-      if (n.data.parentId) parentIds.add(n.data.parentId);
+      const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+      pids.forEach(pid => parentNodeIds.add(pid));
     });
-    collapsedNodesRef.current = new Set(parentIds);
+    collapsedNodesRef.current = new Set(parentNodeIds);
     applyLayout(rawNodesRef.current, drillStackRef.current);
   }, [applyLayout]);
 
@@ -515,19 +538,24 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     const targetNode = rawNodesRef.current.find((n) => n.id === nodeId);
     if (!targetNode) return;
 
-    // Build ancestor chain
+    // Build ancestor chain (cycle-safe)
     const getAncestorChain = (id) => {
       const result = [];
       const nodeMap = Object.fromEntries(rawNodesRef.current.map((n) => [n.id, n]));
-      let node = nodeMap[id];
-      while (node?.data?.parentId) {
-        const parent = nodeMap[node.data.parentId];
-        if (!parent) break;
+      const visited = new Set([id]);
+      const queue = [...(nodeMap[id]?.data?.parentIds || (nodeMap[id]?.data?.parentId ? [nodeMap[id].data.parentId] : []))];
+      while (queue.length) {
+        const pid = queue.shift();
+        if (visited.has(pid)) continue;
+        visited.add(pid);
+        const parent = nodeMap[pid];
+        if (!parent) continue;
         result.unshift({
           id: parent.id, type: parent.data.type,
           label: parent.data.label, reasoning: parent.data.reasoning,
         });
-        node = parent;
+        const grandParents = parent.data.parentIds || (parent.data.parentId ? [parent.data.parentId] : []);
+        queue.push(...grandParents);
       }
       return result;
     };
@@ -595,7 +623,8 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
         // 1. Collect all leaf nodes (no children)
         const childSet = new Set();
         rawNodesRef.current.forEach(n => {
-          if (n.data.parentId) childSet.add(n.data.parentId);
+          const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+          pids.forEach(pid => childSet.add(pid));
         });
         const leafNodes = rawNodesRef.current
           .filter(n => !childSet.has(n.id))
@@ -636,15 +665,20 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
 
         const ancestorChain = [];
         const nodeMap = Object.fromEntries(rawNodesRef.current.map(n => [n.id, n]));
-        let walker = nodeMap[selectedNodeId];
-        while (walker?.data?.parentId) {
-          const parent = nodeMap[walker.data.parentId];
-          if (!parent) break;
+        const visitedAnc = new Set([selectedNodeId]);
+        const ancQueue = [...(nodeMap[selectedNodeId]?.data?.parentIds || (nodeMap[selectedNodeId]?.data?.parentId ? [nodeMap[selectedNodeId].data.parentId] : []))];
+        while (ancQueue.length) {
+          const pid = ancQueue.shift();
+          if (visitedAnc.has(pid)) continue;
+          visitedAnc.add(pid);
+          const parent = nodeMap[pid];
+          if (!parent) continue;
           ancestorChain.unshift({
             id: parent.id, type: parent.data.type,
             label: parent.data.label, reasoning: parent.data.reasoning,
           });
-          walker = parent;
+          const gp = parent.data.parentIds || (parent.data.parentId ? [parent.data.parentId] : []);
+          ancQueue.push(...gp);
         }
 
         const treeSnapshot = rawNodesRef.current.map(n => ({

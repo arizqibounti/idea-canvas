@@ -12,6 +12,8 @@ const IdeaNode = memo(({ data }) => {
   const dimmedBySearch = searchActive && !searchMatch;
   const isUnexplored = (data.childCount === 0) && !data.expanded && !data.isExpanding;
   const isLeaf = data.childCount === 0;
+  const isConvergence = (data.parentIds?.length || 0) > 1;
+  const hasLoop = !!data.loopId;
 
   // Build box shadow — add subtle bottom glow for unexplored leaves
   let boxShadow;
@@ -96,6 +98,42 @@ const IdeaNode = memo(({ data }) => {
         </span>
       )}
 
+      {/* Convergence badge — multi-parent node */}
+      {isConvergence && (
+        <div
+          title={`Convergence: ${data.parentIds.length} parent connections`}
+          style={{
+            position: 'absolute', top: -10, right: 12,
+            background: '#1e1e2e', border: '1px solid #818cf8',
+            borderRadius: 8, padding: '1px 6px',
+            fontSize: 9, fontWeight: 700, color: '#818cf8',
+            fontFamily: 'var(--font-mono)', zIndex: 3,
+            display: 'flex', alignItems: 'center', gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 10 }}>&#x21E4;</span> {data.parentIds.length}
+        </div>
+      )}
+
+      {/* Loop badge */}
+      {hasLoop && (
+        <div
+          title={`Part of feedback loop: ${data.loopId}`}
+          style={{
+            position: 'absolute', top: -10, left: 12,
+            background: '#1e1e2e',
+            border: `1px solid ${data.loopType === 'balancing' ? '#f59e0b' : '#22c55e'}`,
+            borderRadius: 8, padding: '1px 6px',
+            fontSize: 8, fontWeight: 700,
+            color: data.loopType === 'balancing' ? '#f59e0b' : '#22c55e',
+            fontFamily: 'var(--font-mono)', zIndex: 3,
+            letterSpacing: '0.05em',
+          }}
+        >
+          {data.loopType === 'balancing' ? '⟳ BAL' : '⟲ REINF'}
+        </div>
+      )}
+
       {/* Type badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
         <span style={{ color: config.color, fontSize: '12px' }}>{config.icon}</span>
@@ -148,11 +186,15 @@ const IdeaNode = memo(({ data }) => {
         </div>
       )}
 
-      {/* Left accent bar */}
+      {/* Left accent bar — colored by loop membership if applicable */}
       <div style={{
         position: 'absolute', left: 0, top: '10px', bottom: '10px',
-        width: '3px', background: config.color,
-        borderRadius: '0 2px 2px 0', opacity: 0.85,
+        width: hasLoop ? '4px' : '3px',
+        background: hasLoop
+          ? (data.loopType === 'balancing' ? '#f59e0b' : '#22c55e')
+          : config.color,
+        borderRadius: '0 2px 2px 0',
+        opacity: hasLoop ? 1 : 0.85,
       }} />
 
       <Handle type="target" position={Position.Top} style={{

@@ -162,6 +162,48 @@ export const NODE_TYPES_CONFIG = {
     icon: '⚔',
     label: 'CRITIQUE',
   },
+  // ── Brain architecture: Causal Loops ──────────────────────
+  variable: {
+    color: '#06b6d4',
+    bg: '#0f1922',
+    border: '#06b6d4',
+    glow: 'rgba(6, 182, 212, 0.3)',
+    icon: '⟡',
+    label: 'VARIABLE',
+  },
+  reinforcing_loop: {
+    color: '#22c55e',
+    bg: '#111f14',
+    border: '#22c55e',
+    glow: 'rgba(34, 197, 94, 0.3)',
+    icon: '⟲',
+    label: 'REINFORCING',
+  },
+  balancing_loop: {
+    color: '#f59e0b',
+    bg: '#1f1a12',
+    border: '#f59e0b',
+    glow: 'rgba(245, 158, 11, 0.3)',
+    icon: '⟳',
+    label: 'BALANCING',
+  },
+  // ── Brain architecture: GoT synthesis ─────────────────────
+  synthesis: {
+    color: '#c084fc',
+    bg: '#1a1225',
+    border: '#c084fc',
+    glow: 'rgba(192, 132, 252, 0.3)',
+    icon: '◇',
+    label: 'SYNTHESIS',
+  },
+  aggregation: {
+    color: '#818cf8',
+    bg: '#1a1830',
+    border: '#818cf8',
+    glow: 'rgba(129, 140, 248, 0.3)',
+    icon: '⬡',
+    label: 'AGGREGATION',
+  },
 };
 
 // ── Dynamic palette for AI-declared node types ──────────────

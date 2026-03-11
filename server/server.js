@@ -16,6 +16,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenAI } = require('@google/genai');
 
 const { requireAuth, optionalAuth } = require('./middleware/auth');
 const { generationLimit, generalLimit, getGenerationCount, getGenerationLimitForUser, GENERATION_LIMIT } = require('./middleware/rateLimit');
@@ -47,6 +48,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 app.use(express.json({ limit: '10mb' }));
 
 const client = new Anthropic();
+const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ── Engine handlers ──────────────────────────────────────────
 
@@ -55,6 +57,10 @@ const { handleDebateCritique, handleDebateRebut, handleDebateFinalize, handleExp
 const { handleScoreNodes, handleExtractTemplate, handleAnalyzeCodebase, handleReflect, handleCritique } = require('./engine/analyze');
 const { handleChat } = require('./engine/chat');
 const { handleMockup, handleResumeChanges, handleExportGithub, handleFetchUrl, handleCrawlSite } = require('./engine/specialty');
+
+// ── Auto-refine + Portfolio engines ──────────────────────────
+const { handleRefineCritique, handleRefineStrengthen, handleRefineScore } = require('./engine/refine');
+const { handlePortfolioGenerate, handlePortfolioScore } = require('./engine/portfolio');
 
 // ── Canvas engine ───────────────────────────────────────────
 const { handleCanvasGenerate } = require('./canvas/engine');
@@ -123,10 +129,19 @@ app.post('/api/reflect',           (req, res) => handleReflect(client, req, res)
 app.post('/api/critique',          (req, res) => handleCritique(client, req, res));
 
 // Debate (rate-limited: expensive AI calls)
-app.post('/api/debate/critique',   generationLimit, (req, res) => handleDebateCritique(client, req, res));
-app.post('/api/debate/rebut',      generationLimit, (req, res) => handleDebateRebut(client, req, res));
-app.post('/api/debate/finalize',   generationLimit, (req, res) => handleDebateFinalize(client, req, res));
+app.post('/api/debate/critique',   generationLimit, (req, res) => handleDebateCritique(client, req, res, gemini));
+app.post('/api/debate/rebut',      generationLimit, (req, res) => handleDebateRebut(client, req, res, gemini));
+app.post('/api/debate/finalize',   generationLimit, (req, res) => handleDebateFinalize(client, req, res, gemini));
 app.post('/api/expand-suggestion', (req, res) => handleExpandSuggestion(client, req, res));
+
+// Auto-refine (critique/score lightweight, strengthen rate-limited)
+app.post('/api/refine/critique',    (req, res) => handleRefineCritique(client, req, res));
+app.post('/api/refine/strengthen',  generationLimit, (req, res) => handleRefineStrengthen(client, req, res));
+app.post('/api/refine/score',       (req, res) => handleRefineScore(client, req, res));
+
+// Portfolio (generate rate-limited, score lightweight) — uses Gemini
+app.post('/api/portfolio/generate', generationLimit, (req, res) => handlePortfolioGenerate(client, req, res, gemini));
+app.post('/api/portfolio/score',    (req, res) => handlePortfolioScore(client, req, res, gemini));
 
 // Specialty
 app.post('/api/mockup',            (req, res) => handleMockup(client, req, res));
@@ -142,6 +157,29 @@ app.post('/api/chat',              (req, res) => handleChat(client, req, res));
 
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));
+
+// Zettelkasten knowledge graph
+const knowledge = require('./gateway/knowledge');
+app.get('/api/knowledge/clusters', async (req, res) => {
+  try {
+    const userId = req.user?.uid || 'local';
+    const clusters = await knowledge.getNodeClusters(userId);
+    res.json(clusters);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post('/api/knowledge/similar', async (req, res) => {
+  try {
+    const userId = req.user?.uid || 'local';
+    const { tags } = req.body;
+    if (!tags?.length) return res.json([]);
+    const similar = await knowledge.findSimilar(userId, tags, 10);
+    res.json(similar);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── User Profile endpoints ──────────────────────────────────
 app.get('/api/me', async (req, res) => {
@@ -418,9 +456,14 @@ const engineHandlers = {
   handleChat,
   handleMockup,
   handleCanvasGenerate,
+  handleRefineCritique,
+  handleRefineStrengthen,
+  handleRefineScore,
+  handlePortfolioGenerate,
+  handlePortfolioScore,
 };
 
-initWebSocket(server, client, engineHandlers);
+initWebSocket(server, client, engineHandlers, gemini);
 initYjsWebSocket(server);
 
 module.exports = { app, server, client };

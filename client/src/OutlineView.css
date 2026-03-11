@@ -1,0 +1,233 @@
+/* ── Outline View ───────────────────────────────────── */
+
+.outline-container {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 24px 80px;
+  background: var(--bg-primary);
+  font-family: var(--font-mono);
+}
+
+/* ── Toolbar (sticky) ──────────────────────────────── */
+
+.outline-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(10, 10, 15, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+  margin-bottom: 16px;
+}
+
+.outline-search {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.outline-search:focus {
+  border-color: var(--accent);
+}
+.outline-search::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.outline-toolbar-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.outline-toolbar-btn:hover {
+  background: rgba(108, 99, 255, 0.1);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.outline-node-count {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0.6;
+}
+
+/* ── Node row ──────────────────────────────────────── */
+
+.outline-node-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 28px;
+}
+.outline-node-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.outline-node.selected > .outline-node-row {
+  background: rgba(108, 99, 255, 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.outline-node.dimmed {
+  opacity: 0.3;
+  filter: saturate(0.3);
+  pointer-events: none;
+}
+
+.outline-node.out-of-range {
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+/* ── Collapse chevron ──────────────────────────────── */
+
+.outline-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.outline-collapse-btn:hover {
+  color: var(--text-primary);
+}
+
+.outline-leaf-dot {
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ── Type badge ────────────────────────────────────── */
+
+.outline-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 72px;
+  opacity: 0.85;
+}
+
+.outline-type-icon {
+  font-size: 10px;
+}
+
+/* ── Label ─────────────────────────────────────────── */
+
+.outline-label {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Score badge ───────────────────────────────────── */
+
+.outline-score {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+}
+.outline-score.high { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
+.outline-score.mid  { color: #facc15; background: rgba(250, 204, 21, 0.12); }
+.outline-score.low  { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+
+/* ── Star / focus badge ────────────────────────────── */
+
+.outline-star {
+  color: #ffd43b;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* ── Reasoning preview ─────────────────────────────── */
+
+.outline-reasoning {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1.5;
+  padding: 1px 8px 6px;
+  margin-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  opacity: 0.7;
+}
+
+/* ── Children container (indent line) ──────────────── */
+
+.outline-children {
+  margin-left: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.04);
+  padding-left: 0;
+}
+
+/* ── Lens badge ────────────────────────────────────── */
+
+.outline-lens {
+  font-size: 8px;
+  font-weight: 600;
+  color: #a29bfe;
+  opacity: 0.7;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+/* ── Empty state ───────────────────────────────────── */
+
+.outline-empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  opacity: 0.5;
+}

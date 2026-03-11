@@ -1,0 +1,272 @@
+// ── Auto-Refine engine handlers ──────────────────────────────
+// Now includes research agent + multi-agent lens enrichment.
+
+const {
+  REFINE_CRITIQUE_PROMPT_MAP,
+  REFINE_STRENGTHEN_PROMPT,
+  REFINE_SCORE_PROMPT,
+  LENS_ANALOGICAL_PROMPT,
+  LENS_FIRST_PRINCIPLES_PROMPT,
+  LENS_ADVERSARIAL_PROMPT,
+} = require('./prompts');
+
+const { sseHeaders, streamToSSE } = require('../utils/sse');
+const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
+const { getKnowledgeContext } = require('../gateway/knowledge');
+
+// Fallback to idea mode critique if mode not found
+function getCritiquePrompt(mode) {
+  return REFINE_CRITIQUE_PROMPT_MAP[mode] || REFINE_CRITIQUE_PROMPT_MAP.idea;
+}
+
+// ── Research + multi-agent helper ──────────────────────────────
+// Runs research pipeline + 3 lens analyses on weaknesses, returns enrichment context
+async function buildRefineEnrichment(client, idea, weaknesses, existingContent) {
+  const results = { researchBrief: '', lensInsights: '' };
+
+  try {
+    // Phase 1: Research planning + 3 parallel research agents
+    const existingStr = existingContent || '';
+    const researchPlan = await planResearch(client, idea, existingStr);
+
+    const agentTypes = ['market', 'technology', 'audience'];
+    const agentResults = await Promise.all(
+      agentTypes.map(agentType =>
+        runResearchAgent(client, agentType, researchPlan, existingStr)
+      )
+    );
+    results.researchBrief = buildResearchBrief(agentResults);
+  } catch (err) {
+    console.error('Refine research pipeline error:', err.message);
+    // Non-fatal — continue without research
+  }
+
+  try {
+    // Phase 2: Multi-agent lens analysis of weaknesses
+    const weaknessSummary = weaknesses.map(w =>
+      `- [${w.severity}/10] "${w.nodeLabel}": ${w.reason} (approach: ${w.approach})`
+    ).join('\n');
+
+    const lensInput = `Idea: "${idea}"\n\nWeaknesses identified in the thinking tree:\n${weaknessSummary}\n\nAnalyze these weaknesses and suggest concrete improvements.`;
+
+    const lensPrompts = [
+      { prompt: LENS_ANALOGICAL_PROMPT, name: 'analogical' },
+      { prompt: LENS_FIRST_PRINCIPLES_PROMPT, name: 'first_principles' },
+      { prompt: LENS_ADVERSARIAL_PROMPT, name: 'adversarial' },
+    ];
+
+    const lensResults = await Promise.all(lensPrompts.map(async (lens) => {
+      try {
+        const msg = await client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          system: lens.prompt,
+          messages: [{ role: 'user', content: lensInput }],
+        });
+        return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${msg.content[0]?.text || ''}`;
+      } catch {
+        return '';
+      }
+    }));
+
+    results.lensInsights = lensResults.filter(Boolean).join('\n\n');
+  } catch (err) {
+    console.error('Refine multi-agent lens error:', err.message);
+  }
+
+  return results;
+}
+
+// ── POST /api/refine/critique ────────────────────────────────
+// Lightweight non-streaming critique: identify 2-3 weakest nodes
+
+async function handleRefineCritique(client, req, res) {
+  const { nodes, idea, mode, round, priorWeaknesses } = req.body;
+  if (!nodes?.length || !idea) {
+    return res.status(400).json({ error: 'nodes and idea are required' });
+  }
+
+  try {
+    const systemPrompt = getCritiquePrompt(mode || 'idea');
+
+    // Build node summary (compact — just id, type, label, reasoning)
+    const nodeSummary = nodes.map(n => ({
+      id: n.id || n.data?.nodeId,
+      type: n.type || n.data?.type,
+      label: n.label || n.data?.label,
+      reasoning: n.reasoning || n.data?.reasoning,
+      parentIds: n.parentIds || n.data?.parentIds || [],
+    }));
+
+    let userContent = `Idea: "${idea}"
+Round: ${round || 1}
+
+Tree (${nodeSummary.length} nodes):
+${JSON.stringify(nodeSummary, null, 2)}`;
+
+    if (priorWeaknesses?.length) {
+      userContent += `\n\nPrior weaknesses identified (check if already addressed):
+${JSON.stringify(priorWeaknesses, null, 2)}`;
+    }
+
+    // Inject Zettelkasten knowledge context (non-fatal)
+    const userId = req.user?.uid || 'local';
+    try {
+      const knowledgeCtx = await getKnowledgeContext(userId, idea);
+      if (knowledgeCtx) userContent += knowledgeCtx;
+    } catch { /* non-fatal */ }
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    });
+
+    const text = message.content.map(c => c.text || '').join('');
+
+    // Extract JSON from response (handle potential markdown wrapping)
+    let result;
+    try {
+      result = JSON.parse(text.trim());
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        result = JSON.parse(match[0]);
+      } else {
+        throw new Error('Could not parse critique response');
+      }
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('Refine critique error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ── POST /api/refine/strengthen ──────────────────────────────
+// Streaming SSE: generate new/updated nodes to fix weaknesses
+// Now enriched with research agents + multi-agent lenses
+
+async function handleRefineStrengthen(client, req, res) {
+  const { nodes, idea, mode, weaknesses, dynamicTypes, round } = req.body;
+  if (!nodes?.length || !weaknesses?.length) {
+    return res.status(400).json({ error: 'nodes and weaknesses are required' });
+  }
+
+  sseHeaders(res);
+
+  try {
+    // ── Phase 1: Research + Multi-agent enrichment ───────────
+    res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching context for strengthening...' })}\n\n`);
+    const enrichment = await buildRefineEnrichment(client, idea, weaknesses);
+
+    res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Strengthening weak nodes with enriched context...' })}\n\n`);
+
+    // Build compact node summary
+    const nodeSummary = nodes.map(n => ({
+      id: n.id || n.data?.nodeId,
+      type: n.type || n.data?.type,
+      label: n.label || n.data?.label,
+      reasoning: n.reasoning || n.data?.reasoning,
+      parentIds: n.parentIds || n.data?.parentIds || [],
+    }));
+
+    let userContent = `Idea: "${idea}"
+Round: ${round || 1}
+
+Weaknesses to fix:
+${JSON.stringify(weaknesses, null, 2)}
+
+Full tree context (${nodeSummary.length} nodes — do NOT re-output unchanged nodes):
+${JSON.stringify(nodeSummary, null, 2)}`;
+
+    // Append research brief
+    if (enrichment.researchBrief) {
+      userContent += `\n\n${enrichment.researchBrief}`;
+    }
+
+    // Append multi-agent lens insights
+    if (enrichment.lensInsights) {
+      userContent += `\n\nMULTI-PERSPECTIVE ANALYSIS (use these insights to strengthen nodes with diverse, grounded reasoning):\n${enrichment.lensInsights}`;
+    }
+
+    if (dynamicTypes?.length) {
+      userContent += `\n\nAvailable node types: ${dynamicTypes.map(t => t.type).join(', ')}`;
+    }
+
+    // Zettelkasten context
+    const userId = req.user?.uid || 'local';
+    try {
+      const knowledgeCtx = await getKnowledgeContext(userId, idea);
+      if (knowledgeCtx) userContent += knowledgeCtx;
+    } catch { /* non-fatal */ }
+
+    const stream = client.messages.stream({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: REFINE_STRENGTHEN_PROMPT.replace('{round}', round || 1),
+      messages: [{ role: 'user', content: userContent }],
+    });
+
+    await streamToSSE(res, stream);
+  } catch (err) {
+    console.error('Refine strengthen error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+}
+
+// ── POST /api/refine/score ───────────────────────────────────
+// Quick non-streaming re-evaluation after strengthening
+
+async function handleRefineScore(client, req, res) {
+  const { nodes, idea, mode } = req.body;
+  if (!nodes?.length || !idea) {
+    return res.status(400).json({ error: 'nodes and idea are required' });
+  }
+
+  try {
+    const nodeSummary = nodes.map(n => ({
+      id: n.id || n.data?.nodeId,
+      type: n.type || n.data?.type,
+      label: n.label || n.data?.label,
+      reasoning: n.reasoning || n.data?.reasoning,
+    }));
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 512,
+      system: REFINE_SCORE_PROMPT,
+      messages: [{
+        role: 'user',
+        content: `Idea: "${idea}"\nMode: ${mode || 'idea'}\n\nTree (${nodeSummary.length} nodes):\n${JSON.stringify(nodeSummary, null, 2)}`,
+      }],
+    });
+
+    const text = message.content.map(c => c.text || '').join('');
+    let result;
+    try {
+      result = JSON.parse(text.trim());
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        result = JSON.parse(match[0]);
+      } else {
+        throw new Error('Could not parse score response');
+      }
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('Refine score error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = {
+  handleRefineCritique,
+  handleRefineStrengthen,
+  handleRefineScore,
+};

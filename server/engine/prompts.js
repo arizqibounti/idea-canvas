@@ -27,13 +27,14 @@ Examples of domain-appropriate types:
 
 **STEP 3: Output the tree.** After the _meta line, output 18-25 nodes, one JSON object per line.
 
-Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional array of ids"]}
+Each node: {"id": "string", "parentIds": ["array of parent ids"], "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional array of ids"]}
 
 Rules:
-- The first node MUST be type "seed" with parentId null — the root concept. When reference content is provided, the seed label should name the actual product/service from that content.
-- All other nodes must have a parentId pointing to an existing node.
-- "relatedIds" (optional): an array of ids of OTHER existing nodes that this node has a meaningful cross-relationship with (NOT the parent). Use this for: a Feature that addresses a Constraint, a Metric that measures multiple Features, an Insight that synthesizes multiple Problems, etc. Only add relatedIds when the relationship is genuinely meaningful — not every node needs cross-links. Aim for 3-8 cross-links across the whole tree.
-- Build a rich, deep tree. Think deeply about the input. When reference content is provided, every node should reflect specific, concrete details from that content — not generic advice.
+- The first node MUST be type "seed" with parentIds [] (empty array) — the root concept. When reference content is provided, the seed label should name the actual product/service from that content.
+- All other nodes must have parentIds containing at least one existing node id.
+- **Convergence nodes**: When a node naturally addresses multiple parent concerns (e.g. a Feature that solves two Problems, or a Metric that measures two Features), give it multiple parentIds. Use this for 2-5 convergence points per tree — where threads merge is often the most valuable insight.
+- "relatedIds" (optional): an array of ids of OTHER existing nodes that this node has a meaningful cross-relationship with (NOT parents). Only add relatedIds when the relationship is genuinely meaningful. Aim for 3-8 cross-links across the whole tree.
+- Build a rich, deep graph. Think deeply about the input. When reference content is provided, every node should reflect specific, concrete details from that content — not generic advice.
 - Use ids like "type_1", "type_2" (e.g. "audience_1", "keyword_group_1").
 - If a STRUCTURAL TEMPLATE is provided in the user message, use it as a guide for how to organize your tree. Follow the template's type distribution and depth structure, but adapt the specific labels and reasoning to the current input. You may deviate from the template if the input clearly calls for a different structure.
 
@@ -847,7 +848,9 @@ Your job: create a SINGLE coherent tree that takes the best insights from all th
 - If a node synthesizes insights from multiple lenses, use "lens": "synthesis"
 - Target 18-25 nodes total (don't just concatenate — merge and synthesize)
 
-Each node: {"id": "string", "parentId": "string|null", "type": "one of your declared types", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences referencing which lens(es) informed this)", "relatedIds": [], "lens": "analogical|first_principles|adversarial|synthesis"}
+Each node: {"id": "string", "parentIds": ["array of parent ids"], "type": "one of your declared types", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences referencing which lens(es) informed this)", "relatedIds": [], "lens": "analogical|first_principles|adversarial|synthesis"}
+
+When a node synthesizes insights from multiple lenses, it may have multiple parentIds pointing to nodes from different lens branches — these are convergence nodes.
 
 Output rules: one JSON object per line. _meta line first, then nodes. No markdown, no arrays.`;
 
@@ -1042,6 +1045,381 @@ Output a single JSON object:
 
 Output ONLY the JSON. No markdown, no explanation.`;
 
+// ── Causal Loop System Prompt ──────────────────────────────────
+const CAUSAL_SYSTEM_PROMPT = `You are a systems thinking AI. Given any input, you identify the key VARIABLES and FEEDBACK LOOPS that drive the system's behavior.
+
+**STEP 1: Identify the system.** What system is the user describing? What are the key variables that change over time?
+
+**STEP 2: Output a _meta line.** Your VERY FIRST line of output MUST be:
+{"_meta": true, "domain": "systems thinking", "types": [{"type": "seed", "label": "SEED", "icon": "◈"}, {"type": "variable", "label": "VARIABLE", "icon": "⟡"}, {"type": "reinforcing_loop", "label": "REINFORCING", "icon": "⟲"}, {"type": "balancing_loop", "label": "BALANCING", "icon": "⟳"}, {"type": "insight", "label": "INSIGHT", "icon": "✦"}]}
+
+**STEP 3: Map the causal structure.** Output 15-25 nodes as JSON objects, one per line.
+
+Node shape: {"id": "string", "parentIds": ["array"], "type": "string", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)", "polarity": "+|-|null", "loopId": "string|null"}
+
+Rules:
+- First node: type "seed", parentIds []. The system being analyzed.
+- Variable nodes: things that increase or decrease. parentIds point to what influences them.
+- **polarity** (required for variables): "+" means same direction (A increases → B increases), "-" means opposite direction (A increases → B decreases).
+- **Feedback loops**: When variables form a cycle (A→B→C→A), identify the loop:
+  - All "+" edges = REINFORCING loop (growth or collapse spiral)
+  - Odd number of "-" edges = BALANCING loop (stabilizing)
+- **loopId**: Give each loop a descriptive name (e.g. "data_flywheel", "complexity_brake"). All nodes in the same loop share the loopId.
+- Create 2-4 feedback loops. Each loop should have a reinforcing_loop or balancing_loop summary node.
+- Insight nodes synthesize what the loops mean strategically.
+- **Cycles are intentional.** A node CAN have parentIds that create cycles — this represents feedback.
+
+Output rules: one JSON object per line. No markdown, no explanations, no array wrappers.`;
+
+// ── GoT Aggregate Prompt ──────────────────────────────────────
+const AGGREGATE_PROMPT = `You are a synthesis AI. You are given nodes from multiple independent analysis perspectives (lenses). Your job is to identify where these perspectives CONVERGE and create synthesis nodes.
+
+For each convergence point you find:
+1. Identify 2-3 nodes from different lenses that address the same underlying concern
+2. Create a new "synthesis" node with parentIds pointing to ALL source nodes
+3. The synthesis should be more insightful than any individual source — it should reveal what emerges when perspectives merge
+
+Node shape: {"id": "string", "parentIds": ["source_node_1", "source_node_2", ...], "type": "synthesis", "label": "string (max 8 words)", "reasoning": "string (2-3 sentences explaining what emerges from this convergence)"}
+
+Rules:
+- Create 3-6 synthesis nodes
+- Each synthesis MUST have parentIds from at least 2 different source nodes
+- Use ids prefixed with "syn_" (e.g. "syn_1", "syn_2")
+- Focus on non-obvious convergences — not just surface similarities
+- The synthesis reasoning should explain WHY these threads connecting matters
+
+Output rules: one JSON object per line. No markdown, no explanations, no array wrappers.`;
+
+// ── GoT Refine Prompt ──────────────────────────────────────────
+const REFINE_PROMPT = `You are a refinement AI. You are given synthesis nodes that merge ideas from multiple perspectives. Your job is to strengthen, deepen, and prune these syntheses.
+
+For each synthesis node, either:
+1. STRENGTHEN it: add deeper reasoning, specific examples, or actionable implications
+2. PRUNE it: if the synthesis is shallow or forced, output nothing for it
+
+Output refined nodes with the same shape:
+{"id": "string", "parentIds": ["array"], "type": "synthesis", "label": "string (max 8 words)", "reasoning": "string (2-3 sentences, now with specific details, examples, or action items)"}
+
+Rules:
+- Keep the same ids as the input synthesis nodes (prefix "syn_")
+- Improve reasoning with concrete details — numbers, examples, specific strategies
+- If a synthesis is weak, simply don't output it (pruning)
+- You may add 1-2 NEW synthesis nodes if you see convergences the previous step missed
+
+Output rules: one JSON object per line. No markdown, no explanations, no array wrappers.`;
+
+// ── Auto-Refine prompts ──────────────────────────────────────
+
+const REFINE_CRITIQUE_PROMPT_IDEA = `You are a product strategist evaluating a thinking tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Market signal: Is the market need grounded in real data or just assumed?
+2. Moat depth: Could a competitor replicate this in weeks? Is defensibility specific?
+3. Execution feasibility: Are the steps actionable or hand-wavy?
+4. Innovation specificity: Is this genuinely novel or a generic idea dressed up?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    {
+      "nodeId": "string (id of the weak node)",
+      "nodeLabel": "string",
+      "severity": 1-10,
+      "reason": "string (1 sentence — be specific)",
+      "approach": "expand" | "deepen" | "rewrite" | "add_evidence"
+    }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum (the most impactful ones)
+- severity 8-10 = critical flaw, 5-7 = significant gap, 1-4 = minor improvement
+- approach meanings: "expand" = add 3-5 child nodes, "deepen" = rewrite reasoning with specifics, "rewrite" = replace label+reasoning, "add_evidence" = add metric/insight children with concrete data
+- If the tree is strong (all nodes score 7+), set "stopReason" to a brief explanation and return empty weaknesses
+- Be surgical and specific — vague critiques are useless`;
+
+const REFINE_CRITIQUE_PROMPT_RESUME = `You are an ATS scanner and senior recruiter evaluating a resume strategy tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Keyword coverage: Does the strategy hit the critical ATS keywords from the JD?
+2. Story concreteness: Are achievements backed by specific metrics, projects, timelines?
+3. Metric density: Are impact claims quantified with real numbers?
+4. Positioning clarity: Is the candidate's angle clear and differentiated?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- approach: "expand" = add child nodes, "deepen" = rewrite with specifics, "rewrite" = replace entirely, "add_evidence" = add achievement/keyword nodes with concrete data
+- If strategy is strong (7+), set stopReason and return empty weaknesses`;
+
+const REFINE_CRITIQUE_PROMPT_CODEBASE = `You are a senior architecture reviewer evaluating a codebase analysis tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Coupling analysis: Are dependency risks identified with specific modules/files?
+2. Test gap coverage: Are testing blind spots called out concretely?
+3. Scalability bottlenecks: Are performance risks grounded in architecture specifics?
+4. Security surface: Are vulnerability vectors specific to this codebase?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- Be specific to the code architecture, not generic advice`;
+
+const REFINE_CRITIQUE_PROMPT_DECISION = `You are a decision analyst evaluating a decision analysis tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Bias detection: Are cognitive biases identified and addressed?
+2. Tradeoff explicitness: Are costs/benefits of each option quantified?
+3. Alternative coverage: Are all reasonable alternatives explored, or is analysis anchored?
+4. Reversibility clarity: Is the cost of being wrong assessed for each path?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- Focus on decision quality, not just information completeness`;
+
+const REFINE_CRITIQUE_PROMPT_WRITING = `You are a senior copy editor evaluating a writing structure tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Argument strength: Are claims supported by evidence or just asserted?
+2. Evidence quality: Are sources specific and credible?
+3. Audience fit: Is the tone, depth, and framing right for the intended reader?
+4. Structural flow: Does the progression of ideas build logically?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- Focus on substance and craft, not surface-level polish`;
+
+const REFINE_CRITIQUE_PROMPT_PLAN = `You are a risk analyst evaluating a project plan tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Timeline realism: Are time estimates grounded in comparable projects?
+2. Dependency coverage: Are critical-path dependencies identified?
+3. Resource gaps: Are required skills/budget/tooling accounted for?
+4. Milestone measurability: Can progress be objectively verified at each stage?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- Focus on execution risk, not aspirational thinking`;
+
+const REFINE_CRITIQUE_PROMPT_MAP = {
+  idea:     REFINE_CRITIQUE_PROMPT_IDEA,
+  resume:   REFINE_CRITIQUE_PROMPT_RESUME,
+  codebase: REFINE_CRITIQUE_PROMPT_CODEBASE,
+  decision: REFINE_CRITIQUE_PROMPT_DECISION,
+  writing:  REFINE_CRITIQUE_PROMPT_WRITING,
+  plan:     REFINE_CRITIQUE_PROMPT_PLAN,
+};
+
+const REFINE_STRENGTHEN_PROMPT = `You are a surgical tree improver. You receive a thinking tree and a list of weaknesses. Your job is to generate ONLY the nodes needed to fix those weaknesses.
+
+For each weakness, the "approach" field tells you what to do:
+- "expand": Generate 3-5 NEW child nodes under the weak node that address the gap
+- "deepen": Output the weak node with "_update": true and improved reasoning (specific details, examples, data)
+- "rewrite": Output the weak node with "_update": true and a rewritten label + reasoning
+- "add_evidence": Generate 2-4 NEW child nodes of type "metric", "insight", or "achievement" with concrete data
+
+Node output format — one JSON per line:
+For NEW nodes: {"id": "ref_r{round}_{n}", "parentIds": ["weakNodeId"], "type": "appropriate_type", "label": "max 8 words", "reasoning": "1-2 sentences with specifics"}
+For UPDATED nodes: {"_update": true, "id": "existingId", "label": "improved label", "reasoning": "improved reasoning with concrete details"}
+
+Rules:
+- Output ONLY nodes that fix the listed weaknesses. Do not re-output unchanged nodes.
+- New node ids MUST use prefix "ref_r{round}_" to avoid collisions
+- Be specific and concrete. Replace vague claims with numbers, examples, or named entities.
+- One JSON object per line. No markdown, no explanations, no array wrappers.`;
+
+const REFINE_SCORE_PROMPT = `You are a tree quality evaluator. Score the overall quality of this thinking tree.
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "overallScore": 1-10,
+  "improved": true | false,
+  "summary": "string (1 sentence describing the current state)"
+}
+
+Scoring guide:
+- 9-10: Production-ready, specific, actionable, comprehensive
+- 7-8: Strong with minor gaps, mostly concrete
+- 5-6: Decent structure but significant vagueness or missing areas
+- 3-4: Weak, many generic statements, poor coverage
+- 1-2: Barely structured, mostly hand-waving`;
+
+// ── Portfolio prompts ────────────────────────────────────────
+
+const PORTFOLIO_GENERATE_PROMPT_IDEA = `You are a venture strategist. Given a problem space, generate {count} genuinely DIFFERENT product/business approaches. Not different perspectives on the same idea — different IDEAS entirely.
+
+For each alternative:
+1. Output a marker: {"_alternative": true, "index": N, "title": "short title", "thesis": "1-2 sentence core thesis", "approach": "category label"}
+2. Output a _meta line: {"_meta": true, "domain": "short domain", "types": [{"type": "snake_case", "label": "LABEL", "icon": "unicode"}]}
+3. Output 8-12 nodes forming a coherent mini-tree for that approach
+
+Node format: {"id": "alt{N}_type_{n}", "parentIds": ["..."], "type": "...", "label": "max 8 words", "reasoning": "1-2 sentences"}
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+
+Then output each alternative sequentially.
+
+Rules:
+- Each alternative must be a genuinely different business model, market, or product concept
+- They should all address the same underlying problem space but from radically different angles
+- First node of each alt is type "seed" with empty parentIds
+- Nodes can have multiple parentIds for convergence
+- Be specific: real market sizes, real competitors, real tech stacks
+- One JSON per line. No markdown, no explanations.`;
+
+const PORTFOLIO_GENERATE_PROMPT_RESUME = `You are a career strategist. Given a role/JD, generate {count} genuinely DIFFERENT positioning strategies. Not slight variations — fundamentally different angles.
+
+Examples of different strategies: "Technical leader who scaled systems", "Domain expert with industry depth", "Product-minded engineer who ships", "Turnaround specialist who fixes broken teams"
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "strategy name", "thesis": "1-2 sentence core angle", "approach": "positioning type"}
+2. Output _meta line
+3. Output 8-12 resume strategy nodes (seed, requirement, skill_match, achievement, keyword, story, positioning)
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+
+const PORTFOLIO_GENERATE_PROMPT_CODEBASE = `You are a software architect. Given a codebase challenge, generate {count} genuinely DIFFERENT architecture approaches.
+
+Examples: microservices vs modular monolith vs serverless vs event-driven vs CQRS
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "architecture name", "thesis": "1-2 sentence approach", "approach": "architecture style"}
+2. Output _meta line
+3. Output 8-12 architecture analysis nodes
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+
+const PORTFOLIO_GENERATE_PROMPT_DECISION = `You are a decision architect. Given a decision context, generate {count} genuinely DIFFERENT decision frameworks or reframed choices.
+
+Don't just list pros/cons of the same options. Reframe the decision entirely — different time horizons, different stakeholder priorities, different constraints.
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "framework name", "thesis": "1-2 sentence reframing", "approach": "framework type"}
+2. Output _meta line
+3. Output 8-12 decision analysis nodes
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+
+const PORTFOLIO_GENERATE_PROMPT_WRITING = `You are a senior editor. Given a writing topic, generate {count} genuinely DIFFERENT article structures, thesis angles, or narrative approaches.
+
+Not the same argument with different words — different arguments, different structures, different audiences.
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "angle name", "thesis": "1-2 sentence thesis", "approach": "structure type"}
+2. Output _meta line
+3. Output 8-12 writing structure nodes
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+
+const PORTFOLIO_GENERATE_PROMPT_PLAN = `You are a program manager. Given a project goal, generate {count} genuinely DIFFERENT execution strategies.
+
+Not the same plan with tweaked timelines — different phasing, different resource models, different risk profiles.
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "strategy name", "thesis": "1-2 sentence approach", "approach": "execution style"}
+2. Output _meta line
+3. Output 8-12 project plan nodes
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+
+const PORTFOLIO_GENERATE_PROMPT_MAP = {
+  idea:     PORTFOLIO_GENERATE_PROMPT_IDEA,
+  resume:   PORTFOLIO_GENERATE_PROMPT_RESUME,
+  codebase: PORTFOLIO_GENERATE_PROMPT_CODEBASE,
+  decision: PORTFOLIO_GENERATE_PROMPT_DECISION,
+  writing:  PORTFOLIO_GENERATE_PROMPT_WRITING,
+  plan:     PORTFOLIO_GENERATE_PROMPT_PLAN,
+};
+
+const PORTFOLIO_SCORE_PROMPT_MAP = {
+  idea:     { dims: ['market_size', 'defensibility', 'execution_feasibility', 'innovation'], persona: 'venture evaluator' },
+  resume:   { dims: ['match_strength', 'story_quality', 'positioning_uniqueness', 'keyword_coverage'], persona: 'hiring committee' },
+  codebase: { dims: ['architecture_quality', 'maintainability', 'scalability', 'team_fit'], persona: 'CTO' },
+  decision: { dims: ['risk_adjusted_outcome', 'reversibility', 'confidence', 'second_order_effects'], persona: 'decision scientist' },
+  writing:  { dims: ['argument_strength', 'novelty', 'evidence_quality', 'audience_resonance'], persona: 'editorial board' },
+  plan:     { dims: ['feasibility', 'resource_efficiency', 'risk_mitigation', 'speed_to_value'], persona: 'program director' },
+};
+
+const PORTFOLIO_SCORE_PROMPT = `You are a {persona} scoring {count} alternative approaches.
+
+Score each alternative on these dimensions: {dimensions}
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "scores": [
+    {
+      "alternativeIndex": 0,
+      "title": "string",
+      "dimensions": {
+        "dimension_name": { "score": 1-10, "reasoning": "1 sentence" }
+      },
+      "composite": 1-10,
+      "rank": 1
+    }
+  ],
+  "recommendation": "string (1-2 sentences on which to pursue and why)"
+}
+
+Rules:
+- composite = weighted average (all dimensions equal weight)
+- rank 1 = highest composite
+- Be decisive — don't hedge with all 5s. Strong opinions on what works.`;
+
 module.exports = {
   SYSTEM_PROMPT,
   RESUME_SYSTEM_PROMPT,
@@ -1087,4 +1465,16 @@ module.exports = {
   buildCritiqueUserMessage,
   buildRebutUserMessage,
   buildFinalizeUserMessage,
+  // Brain architecture prompts
+  CAUSAL_SYSTEM_PROMPT,
+  AGGREGATE_PROMPT,
+  REFINE_PROMPT,
+  // Auto-refine prompts
+  REFINE_CRITIQUE_PROMPT_MAP,
+  REFINE_STRENGTHEN_PROMPT,
+  REFINE_SCORE_PROMPT,
+  // Portfolio prompts
+  PORTFOLIO_GENERATE_PROMPT_MAP,
+  PORTFOLIO_SCORE_PROMPT_MAP,
+  PORTFOLIO_SCORE_PROMPT,
 };
