@@ -22,7 +22,7 @@ const GEMINI_MODEL = 'gemini-3.1-pro-preview';
 // Enriched with research pipeline + multi-agent lens perspectives
 
 async function handlePortfolioGenerate(client, req, res, gemini) {
-  const { idea, mode, count = 3, fetchedUrlContent, existingTitles } = req.body;
+  const { idea, mode, count = 3, fetchedUrlContent, existingTitles, focus } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
   sseHeaders(res);
@@ -108,10 +108,46 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
     // ── Phase 3: Generate alternatives with enriched context ─
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Generating diverse alternatives...' })}\n\n`);
 
-    const promptTemplate = PORTFOLIO_GENERATE_PROMPT_MAP[mode] || PORTFOLIO_GENERATE_PROMPT_MAP.idea;
+    let promptTemplate = PORTFOLIO_GENERATE_PROMPT_MAP[mode] || PORTFOLIO_GENERATE_PROMPT_MAP.idea;
+
+    // Dynamic prompt: if focus is provided, adapt the prompt to the focus context
+    if (focus && mode === 'codebase') {
+      const focusTypes = focus.types?.join(', ') || 'all nodes';
+      const focusDesc = {
+        feature: 'product features and capabilities',
+        component: 'system components and modules',
+        api_endpoint: 'API endpoints and interfaces',
+        data_model: 'data models and schemas',
+        tech_debt: 'technical debt and improvement areas',
+        constraint: 'constraints and limitations',
+        insight: 'architectural insights and patterns',
+      };
+      const focusLabel = focus.types?.map(t => focusDesc[t] || t).join(' and ') || 'the full codebase';
+
+      promptTemplate = `You are a product and technology strategist. Given a codebase analysis focused on ${focusLabel}, generate {count} genuinely DIFFERENT strategic approaches.
+
+Think about these ${focusTypes} from multiple angles — not just technical implementation, but product positioning, user value, competitive differentiation, and build/buy/partner decisions.
+
+Examples of genuinely different approaches: feature prioritization strategies, build vs integrate tradeoffs, user-centric vs platform-centric, incremental vs greenfield, open-source vs proprietary
+
+For each alternative:
+1. Output: {"_alternative": true, "index": N, "title": "approach name", "thesis": "1-2 sentence strategic thesis", "approach": "strategy type"}
+2. Output _meta line
+3. Output 8-12 analysis nodes covering both technical and product dimensions
+
+First, output: {"_portfolio": true, "alternativeCount": {count}}
+Node ids prefixed: alt{N}_
+One JSON per line. No markdown.`;
+    }
+
     const systemPrompt = promptTemplate.replace(/\{count\}/g, String(count));
 
     let userContent = `Input: "${idea}"`;
+
+    // Include focus node summaries if available
+    if (focus?.nodeSummaries?.length) {
+      userContent += `\n\nFOCUS NODES (the user wants alternatives specifically about these):\n${focus.nodeSummaries.join('\n')}`;
+    }
 
     if (enrichedContent?.length) {
       userContent += `\n\nReference content:\n${enrichedContent.map(u => `[${u.url}]: ${u.text?.slice(0, 500)}`).join('\n\n')}`;
@@ -160,13 +196,24 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
 // Non-streaming JSON: score and rank alternatives
 
 async function handlePortfolioScore(client, req, res, gemini) {
-  const { alternatives, idea, mode } = req.body;
+  const { alternatives, idea, mode, focus } = req.body;
   if (!alternatives?.length || !idea) {
     return res.status(400).json({ error: 'alternatives and idea are required' });
   }
 
   try {
-    const scoreConfig = PORTFOLIO_SCORE_PROMPT_MAP[mode] || PORTFOLIO_SCORE_PROMPT_MAP.idea;
+    let scoreConfig = PORTFOLIO_SCORE_PROMPT_MAP[mode] || PORTFOLIO_SCORE_PROMPT_MAP.idea;
+
+    // Dynamic scoring dimensions when focused on specific node types
+    if (focus?.types?.length && mode === 'codebase') {
+      const hasFeatures = focus.types.includes('feature');
+      const hasTechDebt = focus.types.includes('tech_debt');
+      if (hasFeatures) {
+        scoreConfig = { dims: ['user_value', 'market_differentiation', 'execution_feasibility', 'scalability'], persona: 'product strategist' };
+      } else if (hasTechDebt) {
+        scoreConfig = { dims: ['risk_reduction', 'developer_velocity', 'migration_effort', 'long_term_value'], persona: 'engineering director' };
+      }
+    }
 
     const systemPrompt = PORTFOLIO_SCORE_PROMPT
       .replace('{persona}', scoreConfig.persona)

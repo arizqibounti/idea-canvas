@@ -345,6 +345,17 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     yjsSyncRef?.current?.updateNodeInYjs(nodeId, { label, reasoning });
   }, [applyLayout, yjsSyncRef]);
 
+  // ── Update node execution status ──────────────────────────
+  const updateNodeStatus = useCallback((nodeId, executionStatus, executionResult) => {
+    rawNodesRef.current = rawNodesRef.current.map((n) =>
+      n.id === nodeId
+        ? { ...n, data: { ...n.data, executionStatus, executionResult } }
+        : n
+    );
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+    yjsSyncRef?.current?.updateNodeInYjs(nodeId, { executionStatus, executionResult });
+  }, [applyLayout, yjsSyncRef]);
+
   // ── Regenerate subtree ────────────────────────────────────
   const handleRegenerate = useCallback(async (nodeId) => {
     if (isGenerating || isRegenerating) return;
@@ -757,7 +768,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     // Handlers
     applyLayout, resetCanvas, handleStop, triggerAutoSave,
     handleLoadSession, handleDeleteSession, handleManualSave,
-    handleNodeClick, handleGetAncestors, handleSaveNodeEdit, handleRegenerate,
+    handleNodeClick, handleGetAncestors, handleSaveNodeEdit, handleRegenerate, updateNodeStatus,
     handleDrill, handleExitDrill, handleJumpToBreadcrumb,
     handleNodeContextMenu, handleCloseContextMenu, handleToggleStar, setNodeScores,
     // Fractal handlers

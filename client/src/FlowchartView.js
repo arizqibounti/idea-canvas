@@ -10,39 +10,61 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import IdeaNode from './IdeaNode';
-import DrillBreadcrumb from './DrillBreadcrumb';
 import { getNodeConfig } from './nodeConfig';
 import { computeLayout, buildEdges } from './layoutUtils';
 import './FlowchartView.css';
 
 const nodeTypes = { ideaNode: IdeaNode };
 const proOptions = { hideAttribution: true };
+const fitViewOpts = { padding: 0.2, duration: 400 };
 
 /* ── AutoFitView — refits on node count change ──────────── */
 function AutoFitView({ nodeCount }) {
   const { fitView } = useReactFlow();
   const prevCount = useRef(nodeCount);
+  const mountedRef = useRef(false);
   useEffect(() => {
+    // Skip the first render (mount) to avoid double-fit with ReactFlow's fitView prop
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
     if (nodeCount !== prevCount.current) {
-      fitView({ padding: 0.15, duration: 500, maxZoom: 1.2 });
+      fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 });
       prevCount.current = nodeCount;
     }
   }, [nodeCount, fitView]);
-  // Also fit on first mount
-  useEffect(() => {
-    const t = setTimeout(() => fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 }), 200);
-    return () => clearTimeout(t);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
 /* ── Toolbar ────────────────────────────────────────────── */
-function FlowchartToolbar({ searchQuery, onSearchChange, nodeCount, onCollapseAll, onExpandAll, hasCollapsed }) {
+function FlowchartToolbar({ searchQuery, onSearchChange, nodeCount, onCollapseAll, onExpandAll, hasCollapsed, drillStack, onExitDrill, onJumpToBreadcrumb }) {
   const { fitView } = useReactFlow();
   const handleFit = useCallback(() => fitView({ padding: 0.2, duration: 400 }), [fitView]);
 
   return (
     <Panel position="top-left" style={{ margin: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Drill breadcrumb */}
+      {drillStack && drillStack.length > 0 && (
+        <div className="drill-breadcrumb-bar">
+          <button className="drill-back-btn" onClick={onExitDrill} title="Back to full tree">
+            ← ROOT
+          </button>
+          {drillStack.map((entry, i) => (
+            <React.Fragment key={entry.nodeId}>
+              <span className="drill-crumb-sep">›</span>
+              <button
+                className="drill-crumb-label"
+                onClick={() => onJumpToBreadcrumb(i)}
+                style={{ fontWeight: i === drillStack.length - 1 ? 700 : 400 }}
+                title={entry.nodeLabel}
+              >
+                {entry.nodeLabel}
+              </button>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
       <div className="flowchart-toolbar">
         <button onClick={handleFit} title="Fit entire tree in view">⊡ Fit</button>
         {hasCollapsed ? (
@@ -117,7 +139,7 @@ export default function FlowchartView({
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2, duration: 400 }}
+        fitViewOptions={fitViewOpts}
         minZoom={0.05}
         maxZoom={2}
         proOptions={proOptions}
@@ -137,6 +159,9 @@ export default function FlowchartView({
           onCollapseAll={onCollapseAll}
           onExpandAll={onExpandAll}
           hasCollapsed={hasCollapsed}
+          drillStack={drillStack}
+          onExitDrill={onExitDrill}
+          onJumpToBreadcrumb={onJumpToBreadcrumb}
         />
         <Controls
           style={{
@@ -157,11 +182,7 @@ export default function FlowchartView({
         />
       </ReactFlow>
 
-      <DrillBreadcrumb
-        drillStack={drillStack}
-        onExit={onExitDrill}
-        onJump={onJumpToBreadcrumb}
-      />
+      {/* DrillBreadcrumb now integrated into FlowchartToolbar panel above */}
     </div>
   );
 }

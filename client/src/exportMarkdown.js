@@ -124,7 +124,7 @@ export function generateREADME(idea, nodes) {
 
   md += `---\n\n`;
   md += `📋 See [SPEC.md](./SPEC.md) for the full product spec.\n`;
-  md += `⚔ See [DEBATE.md](./DEBATE.md) for VC debate history.\n`;
+  md += `⚔ See [DEBATE.md](./DEBATE.md) for critique debate history.\n`;
   md += `🤖 See [CLAUDE.md](./CLAUDE.md) for Claude Code project context.\n`;
 
   return md;
@@ -184,11 +184,11 @@ export function generateSPEC(idea, nodes) {
 
 export function generateDEBATE(rounds) {
   if (!rounds || !rounds.length) {
-    return `# VC Debate History\n\n> No debate rounds were run for this idea.\n`;
+    return `# Critique Debate History\n\n> No debate rounds were run for this idea.\n`;
   }
 
-  let md = `# VC Debate History\n\n`;
-  md += `> ${rounds.length} round(s) of autonomous VC debate\n\n`;
+  let md = `# Critique Debate History\n\n`;
+  md += `> ${rounds.length} round(s) of autonomous critique debate\n\n`;
 
   rounds.forEach(r => {
     md += `## Round ${r.round}\n\n`;
@@ -306,15 +306,15 @@ export function generateCLAUDE(idea, nodes, rounds) {
   // Debate summary
   if (rounds?.length) {
     const lastRound = rounds[rounds.length - 1];
-    md += `## VC Debate Summary\n\n`;
-    md += `The product went through ${rounds.length} round(s) of autonomous VC debate.\n`;
+    md += `## Critique Debate Summary\n\n`;
+    md += `The product went through ${rounds.length} round(s) of autonomous critique debate.\n`;
     md += `Final verdict: **${lastRound.verdict === 'YES' ? 'CONSENSUS REACHED' : 'NO CONSENSUS'}**\n\n`;
     if (lastRound.summary) md += `> ${lastRound.summary}\n\n`;
 
     // Key suggestions from all rounds
     const allSuggestions = rounds.flatMap(r => r.blockers || r.suggestions || []);
     if (allSuggestions.length) {
-      md += `### Suggestions from VC Review\n\n`;
+      md += `### Suggestions from Critique Review\n\n`;
       allSuggestions.forEach(s => { md += `- ${s}\n`; });
       md += '\n';
     }
@@ -327,7 +327,7 @@ export function generateCLAUDE(idea, nodes, rounds) {
   md += `2. Pay attention to the risks and constraints — they inform architectural choices\n`;
   md += `3. The success metrics should guide what you instrument and measure\n`;
   md += `4. Refer to SPEC.md for detailed feature breakdowns\n`;
-  if (rounds?.length) md += `5. Refer to DEBATE.md for the full VC debate history and reasoning\n`;
+  if (rounds?.length) md += `5. Refer to DEBATE.md for the full critique debate history and reasoning\n`;
   md += '\n';
 
   return md;

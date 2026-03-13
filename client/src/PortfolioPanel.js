@@ -1,5 +1,5 @@
 // ── Portfolio Panel ───────────────────────────────────────────
-// Side panel showing 3-5 alternative approaches with scoring.
+// Side panel showing alternative approaches with tab navigation and scoring.
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { buildFlowNode, readSSEStream } from './useCanvasMode';
@@ -20,6 +20,12 @@ const DIMENSION_LABELS = {
   maintainability: 'Maintain',
   scalability: 'Scale',
   team_fit: 'Team Fit',
+  user_value: 'User Value',
+  market_differentiation: 'Differentiation',
+  risk_reduction: 'Risk Reduction',
+  developer_velocity: 'Dev Velocity',
+  migration_effort: 'Migration',
+  long_term_value: 'Long-term',
   risk_adjusted_outcome: 'Risk-Adj',
   reversibility: 'Reversible',
   confidence: 'Confidence',
@@ -52,7 +58,10 @@ function DimensionBar({ name, score }) {
 export default function PortfolioPanel({
   idea,
   mode,
+  focus,
   onClose,
+  portfolioData,
+  onPortfolioDataChange,
   rawNodesRef,
   applyLayout,
   drillStackRef,
@@ -63,18 +72,27 @@ export default function PortfolioPanel({
   onAutoGenDone,
   onPipelineUpdate,
 }) {
-  const [alternatives, setAlternatives] = useState([]);
-  const [scores, setScores] = useState(null);
-  const [recommendation, setRecommendation] = useState('');
+  // Lifted state from App.js
+  const { alternatives, scores, recommendation } = portfolioData;
+
+  // Local ephemeral UI state
   const [isGenerating, setIsGenerating] = useState(false);
   const [isScoring, setIsScoring] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  const [activeTab, setActiveTab] = useState(null); // tracks by alt.index
   const [error, setError] = useState(null);
-  const [stageDetail, setStageDetail] = useState(null); // current substage label for progress display
+  const [stageDetail, setStageDetail] = useState(null);
   const abortRef = useRef(null);
-  const previousNodesRef = useRef(null); // Store canvas state before switching
-  const autoGenTriggeredRef = useRef(false); // Prevent double-trigger
-  const handleGenerateRef = useRef(null); // Stable ref for auto-gen effect
+  const previousNodesRef = useRef(null);
+  const autoGenTriggeredRef = useRef(false);
+  const handleGenerateRef = useRef(null);
+
+  // Auto-select first tab when alternatives arrive
+  useEffect(() => {
+    if (alternatives.length > 0 && activeTab === null) {
+      setActiveTab(alternatives[0].index);
+    }
+  }, [alternatives, activeTab]);
 
   const handleGenerate = useCallback(async (count = 3, existingTitles = []) => {
     setIsGenerating(true);
@@ -91,6 +109,7 @@ export default function PortfolioPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idea, mode: mode || 'idea', count, existingTitles,
+          ...(focus && { focus }),
         }),
         signal: abortController.signal,
       });
@@ -102,9 +121,8 @@ export default function PortfolioPanel({
 
       await readSSEStream(res, (data) => {
         if (data._progress) {
-          // Progress event from research/multi-agent pipeline — update loading text
           setStageDetail(data.stage || 'Processing...');
-          setError(null); // clear any prior errors
+          setError(null);
           onPipelineUpdate?.({
             status: 'active',
             detail: data.stage || 'Processing...',
@@ -117,9 +135,8 @@ export default function PortfolioPanel({
           return;
         }
         if (data._portfolio) {
-          // Portfolio marker — ignored for now
+          // Portfolio marker — ignored
         } else if (data._alternative) {
-          // New alternative starts
           if (currentAlt) newAlternatives.push(currentAlt);
           currentAlt = {
             index: data.index,
@@ -137,7 +154,12 @@ export default function PortfolioPanel({
       });
       if (currentAlt) newAlternatives.push(currentAlt);
 
-      setAlternatives(prev => [...prev, ...newAlternatives]);
+      onPortfolioDataChange(prev => ({ ...prev, alternatives: [...prev.alternatives, ...newAlternatives] }));
+
+      // Auto-select first new tab if none selected
+      if (newAlternatives.length > 0 && activeTab === null) {
+        setActiveTab(newAlternatives[0].index);
+      }
 
       // Auto-score after generation
       if (newAlternatives.length > 0) {
@@ -145,7 +167,6 @@ export default function PortfolioPanel({
         onPipelineUpdate?.({ status: 'active', detail: `Scoring ${newAlternatives.length} alternatives...`, substages: null });
         await scoreAlternatives([...alternatives, ...newAlternatives]);
       }
-      // Pipeline: portfolio done
       onPipelineUpdate?.({ status: 'done', detail: `${newAlternatives.length} alternatives generated`, substages: null });
     } catch (err) {
       if (err.name !== 'AbortError') setError(err.message);
@@ -154,26 +175,23 @@ export default function PortfolioPanel({
       setStageDetail(null);
       abortRef.current = null;
     }
-  }, [idea, mode, alternatives, onPipelineUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [idea, mode, alternatives, activeTab, onPipelineUpdate, onPortfolioDataChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep a stable ref to handleGenerate for the auto-gen effect
   handleGenerateRef.current = handleGenerate;
 
-  // Auto-generate when autoGenerate prop becomes true (post-debate automation)
+  // Auto-generate when autoGenerate prop becomes true
   useEffect(() => {
     if (!autoGenerate) return;
     if (autoGenTriggeredRef.current) return;
-    // Delay to ensure refs are populated and component is fully mounted
     const timer = setTimeout(() => {
       if (handleGenerateRef.current && !autoGenTriggeredRef.current) {
         autoGenTriggeredRef.current = true;
         handleGenerateRef.current(3);
-        // Reset the flag in parent so reopening the panel doesn't re-trigger
         onAutoGenDone?.();
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [autoGenerate]); // eslint-disable-line react-hooks/exhaustive-deps -- fire when autoGenerate becomes true
+  }, [autoGenerate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scoreAlternatives = useCallback(async (alts) => {
     setIsScoring(true);
@@ -186,29 +204,31 @@ export default function PortfolioPanel({
             index: a.index, title: a.title, thesis: a.thesis, nodes: a.nodes,
           })),
           idea, mode: mode || 'idea',
+          ...(focus && { focus }),
         }),
       });
       if (!res.ok) throw new Error(`Score error: ${res.status}`);
       const result = await res.json();
-      setScores(result.scores || []);
-      setRecommendation(result.recommendation || '');
+      onPortfolioDataChange(prev => ({
+        ...prev,
+        scores: result.scores || [],
+        recommendation: result.recommendation || '',
+      }));
     } catch (err) {
       console.error('Portfolio score error:', err);
     } finally {
       setIsScoring(false);
     }
-  }, [idea, mode]);
+  }, [idea, mode, focus, onPortfolioDataChange]);
 
   const handleExplore = useCallback((altIndex) => {
     const alt = alternatives.find(a => a.index === altIndex);
     if (!alt) return;
 
-    // Save current canvas state for switching back
     if (selectedIndex === null) {
       previousNodesRef.current = [...rawNodesRef.current];
     }
 
-    // Load alternative's nodes into canvas
     const flowNodes = alt.nodes.map(n => {
       const flowNode = buildFlowNode(n);
       if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
@@ -258,6 +278,9 @@ export default function PortfolioPanel({
     if (a.score && b.score) return a.score.rank - b.score.rank;
     return a.index - b.index;
   });
+
+  // Find active tab's alternative
+  const activeAlt = sortedAlternatives.find(a => a.index === activeTab) || sortedAlternatives[0] || null;
 
   return (
     <div className="portfolio-panel">
@@ -313,53 +336,77 @@ export default function PortfolioPanel({
         </div>
       )}
 
-      {/* Alternative Cards */}
+      {/* Tab Bar */}
       {sortedAlternatives.length > 0 && (
-        <div className="portfolio-cards">
+        <div className="portfolio-tabs">
           {sortedAlternatives.map((alt) => {
-            const isSelected = selectedIndex === alt.index;
+            const isActive = activeTab === alt.index;
             return (
-              <div key={alt.index} className={`portfolio-card ${isSelected ? 'selected' : ''}`}>
-                <div className="portfolio-card-header">
-                  <div className="portfolio-card-rank">
-                    {alt.score?.rank === 1 ? '★' : `#${alt.score?.rank || alt.index + 1}`}
-                  </div>
-                  <div className="portfolio-card-title">{alt.title}</div>
-                  {alt.score && (
-                    <div className="portfolio-card-score">
-                      {alt.score.composite?.toFixed?.(1) || alt.score.composite}
-                    </div>
-                  )}
-                </div>
-
-                <div className="portfolio-card-thesis">{alt.thesis}</div>
-
-                {alt.score?.dimensions && (
-                  <div className="portfolio-dimensions">
-                    {Object.entries(alt.score.dimensions).map(([dim, val]) => (
-                      <DimensionBar key={dim} name={dim} score={val.score} />
-                    ))}
-                  </div>
+              <button
+                key={alt.index}
+                className={`portfolio-tab${isActive ? ' portfolio-tab-active' : ''}`}
+                onClick={() => setActiveTab(alt.index)}
+                title={alt.title}
+              >
+                <span className="portfolio-tab-rank">
+                  {alt.score?.rank === 1 ? '★' : `#${alt.score?.rank || alt.index + 1}`}
+                </span>
+                <span className="portfolio-tab-label">{alt.title}</span>
+                {alt.score && (
+                  <span className="portfolio-tab-score">{alt.score.composite?.toFixed?.(1)}</span>
                 )}
-
-                <div className="portfolio-card-actions">
-                  <button
-                    className={`portfolio-btn ${isSelected ? 'active' : ''}`}
-                    onClick={() => isSelected ? handleRestoreOriginal() : handleExplore(alt.index)}
-                  >
-                    {isSelected ? '← BACK' : 'EXPLORE'}
-                  </button>
-                  <button
-                    className="portfolio-btn portfolio-btn-refine"
-                    onClick={() => handleExploreAndRefine(alt.index)}
-                  >
-                    REFINE
-                  </button>
-                  <span className="portfolio-node-count">{alt.nodes.length} nodes</span>
-                </div>
-              </div>
+              </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Active Alternative Card (expanded) */}
+      {activeAlt && (
+        <div className="portfolio-cards">
+          <div className={`portfolio-card ${selectedIndex === activeAlt.index ? 'selected' : ''}`}>
+            <div className="portfolio-card-header">
+              <div className="portfolio-card-rank">
+                {activeAlt.score?.rank === 1 ? '★' : `#${activeAlt.score?.rank || activeAlt.index + 1}`}
+              </div>
+              <div className="portfolio-card-title">{activeAlt.title}</div>
+              {activeAlt.score && (
+                <div className="portfolio-card-score">
+                  {activeAlt.score.composite?.toFixed?.(1) || activeAlt.score.composite}
+                </div>
+              )}
+            </div>
+
+            <div className="portfolio-card-thesis">{activeAlt.thesis}</div>
+
+            {activeAlt.score?.dimensions && (
+              <div className="portfolio-dimensions">
+                {Object.entries(activeAlt.score.dimensions).map(([dim, val]) => (
+                  <DimensionBar key={dim} name={dim} score={val.score} />
+                ))}
+              </div>
+            )}
+
+            {activeAlt.score?.recommendation && (
+              <div className="portfolio-card-rec">{activeAlt.score.recommendation}</div>
+            )}
+
+            <div className="portfolio-card-actions">
+              <button
+                className={`portfolio-btn ${selectedIndex === activeAlt.index ? 'active' : ''}`}
+                onClick={() => selectedIndex === activeAlt.index ? handleRestoreOriginal() : handleExplore(activeAlt.index)}
+              >
+                {selectedIndex === activeAlt.index ? '← BACK' : 'EXPLORE'}
+              </button>
+              <button
+                className="portfolio-btn portfolio-btn-refine"
+                onClick={() => handleExploreAndRefine(activeAlt.index)}
+              >
+                REFINE
+              </button>
+              <span className="portfolio-node-count">{activeAlt.nodes.length} nodes</span>
+            </div>
+          </div>
         </div>
       )}
 

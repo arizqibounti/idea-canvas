@@ -34,9 +34,7 @@ import { useAutoRefine } from './useAutoRefine';
 import RefinePanel from './RefinePanel';
 import PortfolioPanel from './PortfolioPanel';
 import PipelineOverlay from './PipelineOverlay';
-import OutlineView from './OutlineView';
 import FlowchartView from './FlowchartView';
-import MindmapView from './MindmapView';
 import InviteAccept from './InviteAccept';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
@@ -50,7 +48,7 @@ const WS_URL = API_URL
 
 // Mode-specific toolbar button labels & tooltips
 const DEBATE_LABELS = {
-  idea:     { icon: '⚔', label: 'CRITIQUE',  tooltip: 'VC critique of your idea' },
+  idea:     { icon: '⚔', label: 'CRITIQUE',  tooltip: 'Auto-critique of your idea' },
   resume:   { icon: '◎', label: 'REVIEW',    tooltip: 'Hiring manager review of resume strategy' },
   codebase: { icon: '⟨/⟩', label: 'AUDIT',  tooltip: 'Security audit of codebase architecture' },
   decision: { icon: '⚖', label: 'ADVOCATE',  tooltip: "Devil's advocate analysis of your decision" },
@@ -435,6 +433,11 @@ function AppRouter() {
 
 export { AppRouter };
 export default function App({ initialSession, onBackToDashboard, onSessionSaved }) {
+  // ── Toolbar scroll ──────────────────────────────────────────
+  const toolbarScrollRef = useRef(null);
+  const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
+  const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
+
   // ── Mode ──────────────────────────────────────────────────
   const [manualMode, setManualMode]   = useState(null); // null = follow auto-detect
   const [detectedMode, setDetectedMode] = useState(null);
@@ -450,6 +453,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Codebase mode specific state ──────────────────────────
   const [cbFolderName, setCbFolderName] = useState('');
+  const [cbProjectPath, setCbProjectPath] = useState('');
+  const executionAbortRef = useRef(null);
 
   // ── Resume mode specific state ────────────────────────────
   const [resumeJobLabel, setResumeJobLabel] = useState('');
@@ -482,14 +487,22 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea', yjsSyncRef });
   const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName' });
 
-  // ── Auto-Refine hook ───────────────────────────────────────
-  const refine$ = useAutoRefine({
+  // ── Auto-Refine hooks (one per canvas) ─────────────────────
+  const refineIdea$ = useAutoRefine({
     rawNodesRef: idea$.rawNodesRef,
     applyLayout: idea$.applyLayout,
     drillStackRef: idea$.drillStackRef,
     dynamicTypesRef: idea$.dynamicTypesRef,
     yjsSyncRef,
     setNodeCount: idea$.setNodeCount,
+  });
+  const refineCb$ = useAutoRefine({
+    rawNodesRef: cb$.rawNodesRef,
+    applyLayout: cb$.applyLayout,
+    drillStackRef: cb$.drillStackRef,
+    dynamicTypesRef: cb$.dynamicTypesRef,
+    yjsSyncRef: { current: null },
+    setNodeCount: cb$.setNodeCount,
   });
 
   // ── Load initial session from dashboard ───────────────────
@@ -562,6 +575,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const displayMode = manualMode ?? detectedMode ?? 'idea';
   const activeMode  = displayMode === 'codebase' ? 'codebase' : 'idea';
   const active = activeMode === 'idea' ? idea$ : cb$;
+  const refine$ = activeMode === 'idea' ? refineIdea$ : refineCb$;
+  const ideaText = useMemo(() => {
+    if (activeMode === 'codebase') return cbFolderName;
+    if (displayMode === 'resume') return resumeJobLabel;
+    return idea;
+  }, [activeMode, cbFolderName, displayMode, resumeJobLabel, idea]);
 
   // ── Memory Layer ──────────────────────────────────────────
   const [showMemory, setShowMemory] = useState(false);
@@ -578,6 +597,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Chat Companion ────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
+  const [chatFilter, setChatFilter] = useState(null);
+  // shape: { types?: string[], nodeIds?: string[] } | null
+  const [pendingChatCards, setPendingChatCards] = useState([]);
+  const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
 
   // ── Share ────────────────────────────────────────────────────
   const [showShareModal, setShowShareModal] = useState(false);
@@ -611,15 +634,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Portfolio (◈ PORTFOLIO) ────────────────────────────
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const [portfolioData, setPortfolioData] = useState({ alternatives: [], scores: null, recommendation: '' });
 
   // ── Post-generation automation options ───────────────────
   const [autoRefineOnGen, setAutoRefineOnGen] = useState(false);
   const [autoPortfolioOnGen, setAutoPortfolioOnGen] = useState(false);
   const [portfolioAutoGen, setPortfolioAutoGen] = useState(false); // triggers auto-generate in PortfolioPanel
+  const [portfolioFocus, setPortfolioFocus] = useState(null); // dynamic focus context from chat (types/nodeIds/userIntent)
   const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
 
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('tree'); // 'tree' | '3d' | 'studio'
+  const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d' | 'studio'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -665,9 +690,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Sync cross-links toggle to canvas mode ref ───────────
   useEffect(() => {
-    idea$.showCrossLinksRef.current = showCrossLinks;
-    if (idea$.rawNodesRef.current.length > 0) {
-      idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
+    active.showCrossLinksRef.current = showCrossLinks;
+    if (active.rawNodesRef.current.length > 0) {
+      active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCrossLinks]);
@@ -690,7 +715,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       });
       if (!res.ok) throw new Error(`Score error: ${res.status}`);
       const { scores } = await res.json();
-      idea$.setNodeScores(scores);
+      active.setNodeScores(scores);
     } catch (err) {
       console.error('Scoring failed:', err);
     } finally {
@@ -1370,35 +1395,32 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const handleStartAutoFractal = useCallback(async () => {
     setAutoFractalRunning(true);
     setAutoFractalProgress(null);
-    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
-    await idea$.handleAutoFractal(ideaText, autoFractalRounds, (progress) => {
+    await active.handleAutoFractal(ideaText, autoFractalRounds, (progress) => {
       setAutoFractalProgress(progress);
       if (progress.status === 'done') {
         setAutoFractalRunning(false);
       }
     });
     setAutoFractalRunning(false);
-  }, [idea$, autoFractalRounds, idea, displayMode, resumeJobLabel]);
+  }, [active, autoFractalRounds, ideaText]);
 
   const handleStopAutoFractal = useCallback(() => {
-    idea$.handleStopAutoFractal();
+    active.handleStopAutoFractal();
     setAutoFractalRunning(false);
-  }, [idea$]);
+  }, [active]);
 
   // ── Auto-Refine handlers ──────────────────────────────────
   const handleStartRefine = useCallback(async (rounds = 3) => {
-    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
     await refine$.handleStartRefine(ideaText, displayMode, rounds);
-  }, [refine$, idea, displayMode, resumeJobLabel]);
+  }, [refine$, ideaText, displayMode]);
 
   const handleStopRefine = useCallback(() => {
     refine$.handleStopRefine();
   }, [refine$]);
 
   const handleGoDeeper = useCallback(async (additionalRounds = 2) => {
-    const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
     await refine$.handleGoDeeper(ideaText, displayMode, additionalRounds);
-  }, [refine$, idea, displayMode, resumeJobLabel]);
+  }, [refine$, ideaText, displayMode]);
 
   // Opens the refine panel + starts auto-refine (used by Portfolio panel)
   const handleOpenAndStartRefine = useCallback(() => {
@@ -1437,32 +1459,32 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Debate: add nodes to canvas from debate loop ─────────
   const handleDebateNodesAdded = useCallback((newNodes) => {
     newNodes.forEach((flowNode) => {
-      idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
+      active.rawNodesRef.current = [...active.rawNodesRef.current, flowNode];
     });
-    idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
-    idea$.setNodeCount(idea$.rawNodesRef.current.length);
-  }, [idea$]);
+    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+    active.setNodeCount(active.rawNodesRef.current.length);
+  }, [active]);
 
   // ── Debate: update existing nodes in-place after consensus ─
   const handleDebateNodeUpdate = useCallback((updatedNode) => {
-    idea$.rawNodesRef.current = idea$.rawNodesRef.current.map((n) =>
+    active.rawNodesRef.current = active.rawNodesRef.current.map((n) =>
       n.id === updatedNode.id
         ? { ...n, data: { ...n.data, label: updatedNode.label, reasoning: updatedNode.reasoning } }
         : n
     );
-    idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
-  }, [idea$]);
+    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+  }, [active]);
 
   // ── Template extraction: after debate consensus ──────────
   const handleConsensusReached = useCallback(async () => {
     try {
-      const rawNodes = idea$.rawNodesRef.current;
+      const rawNodes = active.rawNodesRef.current;
       if (!rawNodes?.length) return;
       const res = await authFetch(`${API_URL}/api/extract-template`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          idea: idea.trim(),
+          idea: ideaText.trim(),
           nodes: rawNodes.map(n => ({
             id: n.id, type: n.data?.type, label: n.data?.label,
             reasoning: n.data?.reasoning, parentId: n.data?.parentId,
@@ -1489,7 +1511,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       setShowRefine(true);
       // Small delay so panel mounts before starting
       setTimeout(() => {
-        const ideaText = displayMode === 'resume' ? resumeJobLabel : idea;
         refine$.handleStartRefine(ideaText, displayMode, 3, (progress) => {
           // Update pipeline overlay with refine progress
           if (progress.status === 'critiquing' || progress.status === 'strengthening' || progress.status === 'scoring') {
@@ -1534,7 +1555,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Suggestion expand: add suggestion node + children to tree ─
   const handleSuggestionExpand = useCallback(async (suggestionText) => {
-    const rawNodes = idea$.rawNodesRef.current;
+    const rawNodes = active.rawNodesRef.current;
     if (!rawNodes?.length) return;
 
     const res = await authFetch(`${API_URL}/api/expand-suggestion`, {
@@ -1542,13 +1563,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         suggestion: suggestionText,
-        idea: displayMode === 'resume' ? resumeJobLabel : idea,
+        idea: ideaText,
         nodes: rawNodes.map(n => ({
           id: n.id, type: n.data?.type, label: n.data?.label,
           reasoning: n.data?.reasoning, parentId: n.data?.parentId,
         })),
         mode: displayMode,
-        dynamicTypes: idea$.dynamicTypesRef?.current || undefined,
+        dynamicTypes: active.dynamicTypesRef?.current || undefined,
       }),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -1557,11 +1578,299 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     await readSSEStream(res, (nodeData) => {
       const flowNode = buildFlowNode(nodeData);
       if (existingDynConfig) flowNode.data.dynamicConfig = existingDynConfig;
-      idea$.rawNodesRef.current = [...idea$.rawNodesRef.current, flowNode];
-      idea$.applyLayout(idea$.rawNodesRef.current, idea$.drillStackRef.current);
-      idea$.setNodeCount(idea$.rawNodesRef.current.length);
+      active.rawNodesRef.current = [...active.rawNodesRef.current, flowNode];
+      active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+      active.setNodeCount(active.rawNodesRef.current.length);
     });
-  }, [idea, idea$, displayMode, resumeJobLabel]);
+  }, [ideaText, active, displayMode]);
+
+  // ── Chat → Graph actions ───────────────────────────────────
+  const handleChatAction = useCallback((actions) => {
+    if (!actions) return;
+    const cards = [];
+    const pushCard = (action, label, detail, buttons) => {
+      cards.push({ type: 'action_card', action, label, detail, buttons, timestamp: Date.now() });
+    };
+    // Filter: highlight specific types or node IDs
+    if (actions.filter) {
+      const { types, nodeIds } = actions.filter;
+      setChatFilter({
+        types: types?.length ? types : undefined,
+        nodeIds: nodeIds?.length ? nodeIds : undefined,
+      });
+    }
+    // Clear: remove all filters
+    if (actions.clear) {
+      setChatFilter(null);
+    }
+    // Add nodes: brainstorm new nodes onto the canvas
+    if (actions.addNodes?.length) {
+      const existingDynConfig = active.rawNodesRef.current[0]?.data?.dynamicConfig || null;
+      for (const nd of actions.addNodes) {
+        const flowNode = buildFlowNode({
+          id: nd.id || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type: nd.type || 'feature',
+          label: nd.label,
+          reasoning: nd.reasoning || '',
+          parentId: nd.parentId || 'seed',
+        });
+        if (existingDynConfig) flowNode.data.dynamicConfig = existingDynConfig;
+        active.rawNodesRef.current = [...active.rawNodesRef.current, flowNode];
+      }
+      active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+      active.setNodeCount(active.rawNodesRef.current.length);
+      pushCard('addNodes', `Added ${actions.addNodes.length} Nodes`, 'New nodes brainstormed onto canvas', []);
+    }
+    // Helper: apply scope filter if action has types/nodeIds
+    const applyScope = (actionVal) => {
+      if (actionVal && typeof actionVal === 'object' && !Array.isArray(actionVal)) {
+        const { types, nodeIds } = actionVal;
+        if (types?.length || nodeIds?.length) {
+          setChatFilter({
+            types: types?.length ? types : undefined,
+            nodeIds: nodeIds?.length ? nodeIds : undefined,
+          });
+        }
+      }
+    };
+    // Helper: get scoped nodes (or all if no scope)
+    const getScopedNodes = (actionVal) => {
+      const allNodes = active.rawNodesRef.current;
+      if (!actionVal || typeof actionVal !== 'object' || actionVal === true) return allNodes;
+      const { types, nodeIds } = actionVal;
+      if (!types?.length && !nodeIds?.length) return allNodes;
+      return allNodes.filter(n => {
+        const t = n.data?.type || n.type;
+        const matchType = types?.length ? types.includes(t) : true;
+        const matchId = nodeIds?.length ? nodeIds.includes(n.id) : true;
+        return (types?.length && nodeIds?.length) ? (matchType || matchId) : (matchType && matchId);
+      });
+    };
+    // Debate: open debate panel and auto-start critique
+    if (actions.debate) {
+      applyScope(actions.debate);
+      setShowDebate(true);
+      setDebateAutoStart(true);
+      pushCard('debate', 'Debate Started', 'Auto-critique is analyzing your tree...', [
+        { label: 'Open Panel', actionType: 'openPanel', panel: 'debate' },
+      ]);
+    }
+    // Refine: open refine panel and start auto-refine
+    if (actions.refine) {
+      applyScope(actions.refine);
+      setShowRefine(true);
+      setTimeout(() => handleStartRefine(3), 100);
+      pushCard('refine', 'Refine Started', 'Auto-refine loop is strengthening your tree...', [
+        { label: 'Open Panel', actionType: 'openPanel', panel: 'refine' },
+      ]);
+    }
+    // Portfolio: open portfolio panel and auto-generate with dynamic focus
+    if (actions.portfolio) {
+      applyScope(actions.portfolio);
+      const actionVal = actions.portfolio;
+      if (actionVal && typeof actionVal === 'object' && actionVal !== true) {
+        const scopedNodes = getScopedNodes(actionVal);
+        const nodeSummaries = scopedNodes.slice(0, 20).map(n => {
+          const d = n.data || n;
+          return `[${d.type}] ${d.label}: ${(d.reasoning || '').slice(0, 100)}`;
+        });
+        setPortfolioFocus({
+          types: actionVal.types || null,
+          nodeIds: actionVal.nodeIds || null,
+          nodeSummaries,
+        });
+      } else {
+        setPortfolioFocus(null);
+      }
+      setShowPortfolio(true);
+      setPortfolioAutoGen(true);
+      pushCard('portfolio', 'Generating Portfolio', 'Creating alternative approaches...', [
+        { label: 'Open Portfolio', actionType: 'openPanel', panel: 'portfolio' },
+      ]);
+    }
+    // Fractal expand: open panel and start
+    if (actions.fractalExpand) {
+      const rounds = actions.fractalExpand.rounds || 3;
+      setAutoFractalRounds(rounds);
+      setShowAutoFractal(true);
+      setTimeout(() => handleStartAutoFractal(), 100);
+      pushCard('fractalExpand', 'Fractal Expanding', `Recursively exploring ${rounds} rounds...`, [
+        { label: 'Open Panel', actionType: 'openPanel', panel: 'fractalExpand' },
+      ]);
+    }
+    // Score nodes (supports scoping)
+    if (actions.scoreNodes) {
+      const scopedNodes = getScopedNodes(actions.scoreNodes);
+      triggerScoring(scopedNodes, ideaText);
+      pushCard('scoreNodes', 'Scoring Nodes', `Evaluating ${scopedNodes.length} nodes...`, []);
+    }
+    // Drill into a specific node
+    if (actions.drill?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.drill.nodeId);
+      if (targetNode) {
+        active.handleDrill?.({ id: targetNode.id, data: targetNode.data || targetNode });
+      }
+    }
+    // Feed to Idea: bridge CODE tree into IDEA mode as seed context
+    if (actions.feedToIdea) {
+      const scopedNodes = getScopedNodes(actions.feedToIdea);
+      const grouped = {};
+      for (const n of scopedNodes) {
+        const d = n.data || n;
+        const type = d.type || 'node';
+        if (!grouped[type]) grouped[type] = [];
+        grouped[type].push(`- ${d.label || n.id}${d.reasoning ? ': ' + d.reasoning : ''}`);
+      }
+      const summary = Object.entries(grouped)
+        .map(([type, items]) => `## ${type.replace(/_/g, ' ').toUpperCase()} (${items.length})\n${items.join('\n')}`)
+        .join('\n\n');
+      const seedText = `[Codebase Analysis Summary — ${scopedNodes.length} nodes]\n\n${summary}\n\nBuild on this analysis: generate new ideas, features, and refinements grounded in what actually exists in the code.`;
+      setManualMode('idea');
+      setIdea(seedText);
+      pushCard('feedToIdea', 'Bridged to Idea Mode', `${scopedNodes.length} nodes fed into idea mode`, []);
+    }
+    // Inject action cards into chat
+    if (cards.length > 0) {
+      setPendingChatCards(prev => [...prev, ...cards]);
+    }
+  }, [active, handleStartRefine, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
+
+  const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
+
+  const handleCardButtonClick = useCallback((btn) => {
+    if (btn.actionType === 'openPanel') {
+      if (btn.panel === 'debate') setShowDebate(true);
+      else if (btn.panel === 'refine') setShowRefine(true);
+      else if (btn.panel === 'portfolio') setShowPortfolio(true);
+      else if (btn.panel === 'fractalExpand') setShowAutoFractal(true);
+    } else if (btn.actionType === 'stopExecution') {
+      // Abort in-flight execution
+      if (executionAbortRef.current) {
+        executionAbortRef.current.abort();
+        executionAbortRef.current = null;
+      }
+      // Also call server stop endpoint
+      authFetch(`${API_URL}/api/stop-execution`, { method: 'POST' }).catch(() => {});
+    }
+  }, []);
+
+  // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
+  const handleExecuteAction = useCallback(async (nodeId) => {
+    const targetNode = active.rawNodesRef.current.find(n => n.id === nodeId);
+    if (!targetNode) return;
+    if (!cbProjectPath) {
+      setPendingChatCards(prev => [...prev, {
+        label: '⚠ No project path set',
+        detail: 'Enter your local project path in the CODE mode header to enable "Fix this".',
+        buttons: [],
+      }]);
+      setShowChat(true);
+      return;
+    }
+
+    // Set node to in_progress
+    active.updateNodeStatus(nodeId, 'in_progress', null);
+
+    // Initialize live execution stream in chat
+    const nodeLabel = targetNode.data.label;
+    setExecutionStream({ nodeLabel, text: '', done: false, error: null, nodeId });
+    setShowChat(true);
+
+    // Create abort controller
+    const abortController = new AbortController();
+    executionAbortRef.current = abortController;
+
+    let streamAccum = '';
+
+    try {
+      const res = await authFetch(`${API_URL}/api/execute-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeId,
+          nodeData: targetNode.data,
+          mode: 'codebase',
+          projectPath: cbProjectPath,
+        }),
+        signal: abortController.signal,
+      });
+
+      // Read SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+
+          try {
+            const evt = JSON.parse(payload);
+            if (evt._text) {
+              // Append Claude Code text output
+              streamAccum += evt.text;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
+            } else if (evt._progress) {
+              // Append progress marker
+              streamAccum += `\n── ${evt.stage} ──\n`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
+            } else if (evt._result) {
+              // Mark node as completed
+              active.updateNodeStatus(nodeId, 'completed', evt);
+              streamAccum += `\n✓ ${evt.summary || 'Fix completed successfully.'}`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true } : prev);
+            } else if (evt._error) {
+              active.updateNodeStatus(nodeId, 'failed', { error: evt.error });
+              streamAccum += `\n✗ Error: ${evt.error || 'An error occurred.'}`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true, error: evt.error } : prev);
+            }
+          } catch {
+            // skip unparseable lines
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        active.updateNodeStatus(nodeId, 'failed', { error: 'Aborted by user' });
+        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + '\n⏹ Execution stopped by user.', done: true, error: 'Aborted' } : prev);
+      } else {
+        active.updateNodeStatus(nodeId, 'failed', { error: err.message });
+        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + `\n✗ ${err.message || 'Network error.'}`, done: true, error: err.message } : prev);
+      }
+    } finally {
+      executionAbortRef.current = null;
+    }
+  }, [active, cbProjectPath]);
+
+  // ── Toolbar scroll arrows ────────────────────────────────
+  const updateToolbarScroll = useCallback(() => {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    setToolbarCanScrollLeft(el.scrollLeft > 2);
+    setToolbarCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+  }, []);
+  useEffect(() => {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    updateToolbarScroll();
+    el.addEventListener('scroll', updateToolbarScroll, { passive: true });
+    const ro = new ResizeObserver(updateToolbarScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', updateToolbarScroll); ro.disconnect(); };
+  }, [updateToolbarScroll]);
+  const scrollToolbar = useCallback((dir) => {
+    const el = toolbarScrollRef.current;
+    if (el) el.scrollBy({ left: dir * 150, behavior: 'smooth' });
+  }, []);
 
   // ── 2D Temporal: maxRound ─────────────────────────────────
   const maxRound = useMemo(() => {
@@ -1579,6 +1888,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setRoundRange([0, 12]);
     setIsolatedRound(null);
     setIsPlayingRounds(false);
+    setChatFilter(null);
   }, [activeMode]);
 
   // ── 2D Playback engine ──────────────────────────────────
@@ -1600,7 +1910,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // Use raw nodes (not filtered/visible) so collapsed parents still show correct counts
   const childCountMap = useMemo(() => {
     const map = {};
-    const raw = activeMode === 'idea' ? idea$.rawNodesRef.current : cb$.rawNodesRef.current;
+    const raw = active.rawNodesRef.current;
     (raw || []).forEach((n) => {
       const pid = n.data?.parentId;
       if (pid) map[pid] = (map[pid] || 0) + 1;
@@ -1611,7 +1921,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Tree search: match label or reasoning (case-insensitive) ──
   const treeSearchTrim = (treeSearchQuery || '').trim();
-  const displayNodes = active.nodes.map((n) => {
+  const chatFilterActive = chatFilter !== null;
+  const selectedNodeId = active.selectedNode?.id;
+  const displayNodes = useMemo(() => active.nodes.map((n) => {
     const roundIdx = getRoundIndex(n);
     const inRange = is3D ? true : (isolatedRound !== null
       ? roundIdx === isolatedRound
@@ -1622,25 +1934,38 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       const reasoning = (n.data?.reasoning || n.reasoning || '').toLowerCase();
       return label.includes(treeSearchTrim.toLowerCase()) || reasoning.includes(treeSearchTrim.toLowerCase());
     })();
+    // Chat filter: match by type and/or specific node IDs
+    let chatFilterMatch = true;
+    if (chatFilterActive) {
+      const matchesType = chatFilter.types?.length ? chatFilter.types.includes(n.data?.type) : true;
+      const matchesId = chatFilter.nodeIds?.length ? chatFilter.nodeIds.includes(n.id) : true;
+      // If both type and ID filters are set, match either
+      chatFilterMatch = chatFilter.types?.length && chatFilter.nodeIds?.length
+        ? matchesType || matchesId
+        : matchesType && matchesId;
+    }
     return {
       ...n,
       data: {
         ...n.data,
-        isSelected: n.id === active.selectedNode?.id,
+        isSelected: n.id === selectedNodeId,
         roundIndex: roundIdx,
         isInRange: inRange,
         searchActive,
         searchMatch,
+        chatFilterActive,
+        chatFilterMatch,
         childCount: childCountMap[n.id] || 0,
         // Fractal callbacks
-        onFractalExpand: idea$.handleFractalExpand,
-        onToggleCollapse: idea$.handleToggleCollapse,
+        onFractalExpand: active.handleFractalExpand,
+        onToggleCollapse: active.handleToggleCollapse,
       },
     };
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [active.nodes, selectedNodeId, is3D, isolatedRound, roundRange, treeSearchTrim, chatFilterActive, chatFilter, childCountMap]);
 
-  const activeEdges = activeMode === 'idea' ? idea$.edges : cb$.edges;
-  const displayEdges = is3D ? activeEdges : activeEdges.map(e => {
+  const activeEdges = active.edges;
+  const displayEdges = useMemo(() => is3D ? activeEdges : activeEdges.map(e => {
     const srcNode = displayNodes.find(n => n.id === e.source);
     const tgtNode = displayNodes.find(n => n.id === e.target);
     const srcIn = srcNode?.data.isInRange !== false;
@@ -1657,7 +1982,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       },
       animated: false,
     };
-  });
+  }), [activeEdges, displayNodes, is3D]);
 
   const isBusy = active.isGenerating || active.isRegenerating || isCritiquing;
   const panelOpen = !!active.selectedNode;
@@ -1790,6 +2115,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               <span className="input-prefix">⟨/⟩</span>
               <span className="idea-input" style={{ padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}>{cbFolderName}</span>
             </div>
+            <div className="project-path-wrapper">
+              <input
+                type="text"
+                className="project-path-input"
+                value={cbProjectPath}
+                onChange={(e) => setCbProjectPath(e.target.value)}
+                placeholder={`local path, e.g. /Users/you/${cbFolderName || 'project'}`}
+                title="Local filesystem path for Claude Code to fix issues"
+              />
+            </div>
             {cb$.isGenerating ? (
               <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
             ) : (
@@ -1799,7 +2134,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         )}
 
         {/* Right section */}
-        <div className="top-bar-right">
+        <div className="top-bar-right-wrapper">
+          <button className={`top-bar-scroll-btn scroll-left${toolbarCanScrollLeft ? ' visible' : ''}`} onClick={() => scrollToolbar(-1)} aria-label="Scroll toolbar left">‹</button>
+          <button className={`top-bar-scroll-btn scroll-right${toolbarCanScrollRight ? ' visible' : ''}`} onClick={() => scrollToolbar(1)} aria-label="Scroll toolbar right">›</button>
+        <div className="top-bar-right" ref={toolbarScrollRef}>
           {active.nodeCount > 0 && <span className="node-counter">{active.nodeCount} nodes</span>}
           {memorySessionCount >= 2 && activeMode === 'idea' && (
             <button className="btn btn-icon" onClick={() => setShowMemory((v) => !v)} title="Your thinking patterns">
@@ -1812,7 +2150,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
             </button>
           )}
           {/* Panels group — debate, chat */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
+          {active.nodeCount > 0 && (
             <>
               <div className="toolbar-sep" />
               <button
@@ -1868,48 +2206,34 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               roomId={initialSession?.roomId}
             />
           )}
-          {/* View mode toggles — shown when canvas has nodes in idea mode */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && (
+          {/* View mode toggles — shown when canvas has nodes */}
+          {active.rawNodesRef.current.length > 0 && (
             <>
               <button
+                className={`btn btn-icon ${viewMode === 'tree' ? 'active-icon' : ''}`}
+                onClick={() => setViewMode(v => v === 'tree' ? 'flowchart' : 'tree')}
+                title="Radial tree view"
+              >
+                ◎ RADIAL
+              </button>
+              <button
                 className={`btn btn-icon ${viewMode === '3d' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === '3d' ? 'tree' : '3d')}
+                onClick={() => setViewMode(v => v === '3d' ? 'flowchart' : '3d')}
                 title="Toggle 3D view"
               >
                 ◈ 3D
               </button>
               <button
                 className={`btn btn-icon ${viewMode === 'studio' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'studio' ? 'tree' : 'studio')}
+                onClick={() => setViewMode(v => v === 'studio' ? 'flowchart' : 'studio')}
                 title="Scene studio editor"
               >
                 ◈ STUDIO
               </button>
-              <button
-                className={`btn btn-icon ${viewMode === 'outline' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'outline' ? 'tree' : 'outline')}
-                title="Outline / list view"
-              >
-                ≡ OUTLINE
-              </button>
-              <button
-                className={`btn btn-icon ${viewMode === 'flowchart' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'flowchart' ? 'tree' : 'flowchart')}
-                title="Flowchart / DAG view"
-              >
-                ▦ FLOW
-              </button>
-              <button
-                className={`btn btn-icon ${viewMode === 'mindmap' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'mindmap' ? 'tree' : 'mindmap')}
-                title="Mindmap / radial view"
-              >
-                ◎ MINDMAP
-              </button>
             </>
           )}
-          {/* Cross-links toggle — only in tree view */}
-          {activeMode === 'idea' && idea$.rawNodesRef.current.length > 0 && viewMode === 'tree' && (
+          {/* Cross-links toggle — in tree or flowchart view */}
+          {active.rawNodesRef.current.length > 0 && (viewMode === 'tree' || viewMode === 'flowchart') && (
             <button
               className={`btn btn-icon ${showCrossLinks ? 'active-icon' : ''}`}
               onClick={() => setShowCrossLinks((v) => !v)}
@@ -1938,6 +2262,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               )}
             </div>
           )}
+        </div>
         </div>
       </header>
 
@@ -2037,7 +2362,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 maxRound={maxRound}
                 setRoundRange={setRoundRange}
                 setIsolatedRound={setIsolatedRound}
-                onExit={() => { setRoundRange([0, maxRound]); setViewMode('tree'); }}
+                onExit={() => { setRoundRange([0, maxRound]); setViewMode('flowchart'); }}
                 getRoundIndex={getRoundIndex}
                 sessionName={idea}
                 modeId={displayMode}
@@ -2051,38 +2376,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
               />
             </ReactFlowProvider>
-          ) : viewMode === 'outline' ? (
-            <OutlineView
-              rawNodes={idea$.rawNodesRef.current}
-              displayNodes={displayNodes}
-              onNodeClick={idea$.handleNodeClick}
-              onNodeDoubleClick={idea$.handleDrill}
-              searchQuery={treeSearchQuery}
-              onSearchChange={setTreeSearchQuery}
-              selectedNodeId={active.selectedNode?.id}
-            />
           ) : viewMode === 'flowchart' ? (
             <ReactFlowProvider>
               <FlowchartView
-                displayNodes={displayNodes}
-                onNodeClick={idea$.handleNodeClick}
-                onNodeDoubleClick={idea$.handleDrill}
-                onNodeContextMenu={idea$.handleNodeContextMenu}
-                onCloseContextMenu={idea$.handleCloseContextMenu}
-                drillStack={idea$.drillStack}
-                onExitDrill={idea$.handleExitDrill}
-                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
-                searchQuery={treeSearchQuery}
-                onSearchChange={setTreeSearchQuery}
-                onCollapseAll={idea$.handleCollapseAll}
-                onExpandAll={idea$.handleExpandAll}
-                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
-                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
-              />
-            </ReactFlowProvider>
-          ) : viewMode === 'mindmap' ? (
-            <ReactFlowProvider>
-              <MindmapView
                 displayNodes={displayNodes}
                 onNodeClick={idea$.handleNodeClick}
                 onNodeDoubleClick={idea$.handleDrill}
@@ -2144,6 +2440,56 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               )}
               <CodebaseUpload onAnalysisReady={handleAnalysisReady} isAnalyzing={cb$.isGenerating} />
             </>
+          ) : viewMode === '3d' ? (
+            <Graph3D
+              nodes={cb$.rawNodesRef.current}
+              onNodeClick={(node3d) => {
+                const raw = cb$.rawNodesRef.current.find(n => n.id === node3d.id);
+                if (raw) cb$.handleNodeClick({ id: raw.id, data: raw.data || raw });
+              }}
+            />
+          ) : viewMode === 'studio' ? (
+            <ReactFlowProvider>
+              <TreeStudio
+                nodes={cb$.rawNodesRef.current}
+                displayNodes={displayNodes}
+                displayEdges={displayEdges}
+                maxRound={maxRound}
+                setRoundRange={setRoundRange}
+                setIsolatedRound={setIsolatedRound}
+                onExit={() => { setRoundRange([0, maxRound]); setViewMode('flowchart'); }}
+                getRoundIndex={getRoundIndex}
+                sessionName={cbFolderName}
+                modeId={displayMode}
+                onNodeClick={cb$.handleNodeClick}
+                onNodeDoubleClick={cb$.handleDrill}
+                onNodeContextMenu={cb$.handleNodeContextMenu}
+                onCloseContextMenu={cb$.handleCloseContextMenu}
+                drillStack={cb$.drillStack}
+                onExitDrill={cb$.handleExitDrill}
+                onJumpToBreadcrumb={cb$.handleJumpToBreadcrumb}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+              />
+            </ReactFlowProvider>
+          ) : viewMode === 'flowchart' ? (
+            <ReactFlowProvider>
+              <FlowchartView
+                displayNodes={displayNodes}
+                onNodeClick={cb$.handleNodeClick}
+                onNodeDoubleClick={cb$.handleDrill}
+                onNodeContextMenu={cb$.handleNodeContextMenu}
+                onCloseContextMenu={cb$.handleCloseContextMenu}
+                drillStack={cb$.drillStack}
+                onExitDrill={cb$.handleExitDrill}
+                onJumpToBreadcrumb={cb$.handleJumpToBreadcrumb}
+                searchQuery={treeSearchQuery}
+                onSearchChange={setTreeSearchQuery}
+                onCollapseAll={cb$.handleCollapseAll}
+                onExpandAll={cb$.handleExpandAll}
+                hasCollapsed={displayNodes.some(n => n.data?.isCollapsed)}
+                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
+              />
+            </ReactFlowProvider>
           ) : (
             <ReactFlowProvider>
               <IdeaCanvas
@@ -2166,20 +2512,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           )
         )}
 
-        {/* ── 2D Timeline Bar ── */}
-        {!is3D && viewMode !== 'studio' && viewMode !== 'outline' && viewMode !== 'flowchart' && viewMode !== 'mindmap' && active.nodes.length > 0 && maxRound > 0 && (
-          <TimelineBar2D
-            roundRange={roundRange}
-            onRoundRangeChange={setRoundRange}
-            isPlaying={isPlayingRounds}
-            onPlayToggle={handlePlayToggle}
-            playbackSpeed={playbackSpeed}
-            onSpeedChange={setPlaybackSpeed}
-            isolatedRound={isolatedRound}
-            onIsolatedRoundChange={setIsolatedRound}
-            maxRound={maxRound}
-          />
-        )}
+        {/* TimelineBar2D removed — not useful for users */}
       </main>
 
       <NodeEditPanel
@@ -2189,7 +2522,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         onRegenerate={active.handleRegenerate}
         isDisabled={isBusy}
         onGetAncestors={active.handleGetAncestors}
-        allowRegenerate={activeMode === 'idea'}
+        allowRegenerate={true}
       />
 
       {active.contextMenu && (
@@ -2202,6 +2535,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           onToggleStar={active.handleToggleStar}
           onClose={active.handleCloseContextMenu}
           sprintPhase={null}
+          onExecuteAction={handleExecuteAction}
+          mode={activeMode}
+          hasProjectPath={!!cbProjectPath}
         />
       )}
 
@@ -2216,10 +2552,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
       {/* ── Debate Panel ── */}
       <DebatePanel
-        isOpen={showDebate && activeMode === 'idea'}
+        isOpen={showDebate}
         onClose={() => { setShowDebate(false); setDebateAutoStart(false); }}
-        nodes={idea$.rawNodesRef.current}
-        idea={displayMode === 'resume' ? resumeJobLabel : idea}
+        nodes={active.rawNodesRef.current}
+        idea={ideaText}
         mode={displayMode}
         onNodesAdded={handleDebateNodesAdded}
         onNodeUpdate={handleDebateNodeUpdate}
@@ -2233,14 +2569,28 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       {/* ── Chat Companion Panel ── */}
       <ChatPanel
         isOpen={showChat}
-        onClose={() => setShowChat(false)}
-        nodes={idea$.rawNodesRef.current}
-        idea={displayMode === 'resume' ? resumeJobLabel : idea}
+        onClose={() => { setShowChat(false); setChatFilter(null); }}
+        nodes={active.rawNodesRef.current}
+        idea={ideaText}
         mode={displayMode}
+        onChatAction={handleChatAction}
+        chatFilterActive={chatFilterActive}
+        onClearFilter={handleClearChatFilter}
+        pendingChatCards={pendingChatCards}
+        onClearPendingCards={() => setPendingChatCards([])}
+        onCardButtonClick={handleCardButtonClick}
+        executionStream={executionStream}
+        onStopExecution={() => {
+          if (executionAbortRef.current) {
+            executionAbortRef.current.abort();
+            authFetch(`${API_URL}/api/stop-execution`, { method: 'POST' }).catch(() => {});
+          }
+        }}
+        onDismissStream={() => setExecutionStream(null)}
       />
 
       {/* ── Auto-Fractal Panel ── */}
-      {showAutoFractal && activeMode === 'idea' && (
+      {showAutoFractal && (
         <div className="auto-fractal-panel">
           <div className="auto-fractal-header">
             <span>∞ FRACTAL EXPLORE</span>
@@ -2265,7 +2615,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               <button
                 className="btn btn-generate"
                 onClick={handleStartAutoFractal}
-                disabled={idea$.rawNodesRef.current.length === 0}
+                disabled={active.rawNodesRef.current.length === 0}
                 style={{ width: '100%', marginTop: 8 }}
               >
                 ▶ START EXPLORATION
@@ -2281,7 +2631,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   <div className="auto-fractal-status">
                     {autoFractalProgress.status === 'selecting'
                       ? '🔍 Selecting most promising node...'
-                      : `⊕ Expanding: "${idea$.rawNodesRef.current.find(n => n.id === autoFractalProgress.selectedNodeId)?.data?.label || autoFractalProgress.selectedNodeId}"`
+                      : `⊕ Expanding: "${active.rawNodesRef.current.find(n => n.id === autoFractalProgress.selectedNodeId)?.data?.label || autoFractalProgress.selectedNodeId}"`
                     }
                   </div>
                   {autoFractalProgress.reasoning && (
@@ -2319,20 +2669,23 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           onStop={handleStopRefine}
           onGoDeeper={handleGoDeeper}
           onClose={() => setShowRefine(false)}
-          nodeCount={idea$.rawNodesRef.current.length}
+          nodeCount={active.rawNodesRef.current.length}
         />
       )}
 
       {/* ── Portfolio Panel ── */}
       {showPortfolio && (
         <PortfolioPanel
-          idea={displayMode === 'resume' ? resumeJobLabel : idea}
+          idea={ideaText}
           mode={displayMode}
-          onClose={() => setShowPortfolio(false)}
-          rawNodesRef={idea$.rawNodesRef}
-          applyLayout={idea$.applyLayout}
-          drillStackRef={idea$.drillStackRef}
-          setNodeCount={idea$.setNodeCount}
+          focus={portfolioFocus}
+          onClose={() => { setShowPortfolio(false); setPortfolioFocus(null); }}
+          portfolioData={portfolioData}
+          onPortfolioDataChange={setPortfolioData}
+          rawNodesRef={active.rawNodesRef}
+          applyLayout={active.applyLayout}
+          drillStackRef={active.drillStackRef}
+          setNodeCount={active.setNodeCount}
           yjsSyncRef={yjsSyncRef}
           onStartRefine={handleOpenAndStartRefine}
           autoGenerate={portfolioAutoGen}
@@ -2367,12 +2720,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       <ShareModal
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
-        nodes={idea$.rawNodesRef.current}
-        idea={idea}
+        nodes={active.rawNodesRef.current}
+        idea={ideaText}
       />
-
-      {/* Toast notification */}
-      {toastMsg && <div className="export-toast">{toastMsg}</div>}
 
       <footer className="legend">
         {dynamicDomain && dynamicLegendTypes.length > 0 ? (

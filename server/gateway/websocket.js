@@ -194,6 +194,9 @@ async function handleMessage(ws, client, raw) {
       case 'portfolio:score':
         await engine.handlePortfolioScore(client, fakeReq, fakeRes, geminiClient);
         break;
+      case 'execute-action':
+        await engine.handleExecuteAction(client, fakeReq, fakeRes);
+        break;
       case 'canvas:generate':
         if (engine.handleCanvasGenerate) {
           await engine.handleCanvasGenerate(client, fakeReq, fakeRes);

@@ -25,6 +25,7 @@ const CLIENT_TYPES = {
   REFINE_SCORE:       'refine:score',
   PORTFOLIO_GENERATE: 'portfolio:generate',
   PORTFOLIO_SCORE:    'portfolio:score',
+  EXECUTE_ACTION:     'execute-action',
 };
 
 // Server → Client message types
@@ -42,6 +43,7 @@ const SERVER_TYPES = {
   SESSION_SAVED:    'session:saved',
   SESSION_LIST:     'session:list',
   SESSION_CREATED:  'session:created',
+  EXECUTION_PROGRESS: 'execution:progress',
 };
 
 // Helper: create server message

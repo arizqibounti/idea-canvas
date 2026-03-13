@@ -3,7 +3,7 @@ import { buildFlowNode, readSSEStream } from './useCanvasMode';
 import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAX_ROUNDS = 2; // Reduced from 5 for faster testing
+const MAX_ROUNDS = 5;
 
 const CATEGORY_COLORS = {
   // Idea / product mode
@@ -95,18 +95,18 @@ const CATEGORY_LABELS = {
 
 const MODE_CONFIG = {
   idea: {
-    panelTitle:       'VC CRITIQUE',
+    panelTitle:       'AUTO-CRITIQUE',
     panelIcon:        '⚔',
-    emptyTitle:       'VC CRITIQUE',
+    emptyTitle:       'AUTO-CRITIQUE',
     startLabel:       'START CRITIQUE',
     stopLabel:        'STOP CRITIQUE',
     statusIdle:       'Ready to tear apart your idea.',
-    statusCritiquing: 'VC researching and analyzing...',
+    statusCritiquing: 'Critic researching and analyzing...',
     statusRebutting:  'Architect researching and responding...',
     responderLabel:   'ARCHITECT',
-    emptyDesc:        (maxRounds) => `The VC critic will challenge every assumption in your tree. The architect will respond with concrete solutions. This loops until consensus or ${maxRounds} rounds.`,
+    emptyDesc:        (maxRounds) => `The critic will challenge every assumption in your tree. The architect will respond with concrete solutions. This loops until consensus or ${maxRounds} rounds.`,
     consensusTitle:   'CONSENSUS REACHED',
-    consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the VC critic is satisfied.${fc > 0 ? ` ${fc} nodes in the tree have been updated to reflect the debate insights.` : ''}`,
+    consensusDesc:    (rounds, fc) => `After ${rounds} round${rounds !== 1 ? 's' : ''}, the critic is satisfied.${fc > 0 ? ` ${fc} nodes in the tree have been updated to reflect the debate insights.` : ''}`,
   },
   resume: {
     panelTitle:       'HIRING REVIEW',

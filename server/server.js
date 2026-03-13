@@ -62,6 +62,9 @@ const { handleMockup, handleResumeChanges, handleExportGithub, handleFetchUrl, h
 const { handleRefineCritique, handleRefineStrengthen, handleRefineScore } = require('./engine/refine');
 const { handlePortfolioGenerate, handlePortfolioScore } = require('./engine/portfolio');
 
+// ── Node action execution engine ─────────────────────────────
+const { handleExecuteAction, stopExecution } = require('./engine/execute');
+
 // ── Canvas engine ───────────────────────────────────────────
 const { handleCanvasGenerate } = require('./canvas/engine');
 
@@ -91,7 +94,8 @@ app.get('/api/shares/:id', requireAuth, async (req, res) => {
 
 // ── All routes below require authentication ─────────────────────
 app.use('/api', requireAuth);
-app.use('/api', generalLimit);
+// generalLimit disabled during dev — re-enable for production
+// app.use('/api', generalLimit);
 
 // ── Usage endpoint ──────────────────────────────────────────────
 app.get('/api/usage', async (req, res) => {
@@ -154,6 +158,8 @@ app.post('/api/crawl-site',        (req, res) => handleCrawlSite(client, req, re
 
 // Chat
 app.post('/api/chat',              (req, res) => handleChat(client, req, res));
+app.post('/api/execute-action',    (req, res) => handleExecuteAction(client, req, res));
+app.post('/api/stop-execution',    (req, res) => { const stopped = stopExecution(); res.json({ stopped }); });
 
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));
@@ -461,6 +467,7 @@ const engineHandlers = {
   handleRefineScore,
   handlePortfolioGenerate,
   handlePortfolioScore,
+  handleExecuteAction,
 };
 
 initWebSocket(server, client, engineHandlers, gemini);

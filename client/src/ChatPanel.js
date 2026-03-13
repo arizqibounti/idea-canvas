@@ -93,8 +93,54 @@ function serializeTree(nodes) {
   if (!nodes || !nodes.length) return '';
   return nodes.map(n => {
     const d = n.data || n;
-    return `- [${d.type || 'node'}] ${d.label || n.id}${d.reasoning ? ': ' + d.reasoning : ''}`;
+    return `- [${d.type || 'node'}] (id: ${n.id}) ${d.label || n.id}${d.reasoning ? ': ' + d.reasoning : ''}`;
   }).join('\n');
+}
+
+const ACTION_DELIMITER = '<<<ACTIONS>>>';
+
+const ACTION_LABELS = {
+  filter: 'Filtered Graph',
+  clear: 'Cleared Filters',
+  addNodes: 'Added Nodes',
+  debate: 'Started Debate',
+  refine: 'Started Refine',
+  portfolio: 'Generating Portfolio',
+  fractalExpand: 'Fractal Expanding',
+  scoreNodes: 'Scoring Nodes',
+  drill: 'Drilling Into Node',
+  feedToIdea: 'Bridging to Idea Mode',
+  executeAction: 'Executing Fix',
+};
+
+function parseActions(fullText) {
+  // Find <<<ACTIONS>>> — may be preceded by ``` code fence
+  const idx = fullText.indexOf(ACTION_DELIMITER);
+  if (idx === -1) return { displayText: fullText, actions: null };
+
+  // Strip display text: remove any trailing ``` or ```json before the delimiter
+  let displayText = fullText.slice(0, idx);
+  displayText = displayText.replace(/```(?:json)?\s*$/, '').trimEnd();
+
+  // Extract JSON after delimiter, strip any trailing ``` code fence
+  let actionJson = fullText.slice(idx + ACTION_DELIMITER.length).trim();
+  actionJson = actionJson.replace(/```\s*$/, '').trim();
+
+  try {
+    const actions = JSON.parse(actionJson);
+    return { displayText, actions };
+  } catch (e) {
+    // Try to extract JSON object from the string (AI may add extra text)
+    const jsonMatch = actionJson.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const actions = JSON.parse(jsonMatch[0]);
+        return { displayText, actions };
+      } catch (_) { /* fall through */ }
+    }
+    console.warn('Failed to parse chat actions:', e, actionJson);
+    return { displayText, actions: null };
+  }
 }
 
 const CHAT_MODE_CONFIG = {
@@ -106,7 +152,7 @@ const CHAT_MODE_CONFIG = {
   plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -114,13 +160,21 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const execStreamRef = useRef(null);
 
   // Auto-scroll on new content
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamingText]);
+  }, [messages, streamingText, executionStream]);
+
+  // Auto-scroll execution stream output to bottom
+  useEffect(() => {
+    if (execStreamRef.current) {
+      execStreamRef.current.scrollTop = execStreamRef.current.scrollHeight;
+    }
+  }, [executionStream]);
 
   // Focus input when panel opens
   useEffect(() => {
@@ -135,6 +189,18 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
     setStreamingText('');
     setInput('');
   }, [idea]);
+
+  // Consume pending action cards from parent
+  useEffect(() => {
+    if (pendingChatCards?.length > 0) {
+      setMessages(prev => [...prev, ...pendingChatCards.map(card => ({
+        role: 'system',
+        type: 'action_card',
+        ...card,
+      }))]);
+      onClearPendingCards?.();
+    }
+  }, [pendingChatCards, onClearPendingCards]);
 
   const sendMessage = useCallback(async (content) => {
     if (!content.trim() || isStreaming) return;
@@ -155,7 +221,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: newMessages,
+          messages: newMessages.filter(m => m.role === 'user' || m.role === 'assistant'),
           treeContext,
           idea,
           mode,
@@ -195,8 +261,19 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
         }
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: fullText }]);
+      const { displayText, actions } = parseActions(fullText);
+      // Build list of executed action names for visual indicator
+      const executedActions = actions ? Object.keys(actions).filter(k =>
+        ['filter', 'clear', 'addNodes', 'debate', 'refine', 'portfolio',
+         'fractalExpand', 'scoreNodes', 'drill', 'feedToIdea'].includes(k) && actions[k]
+      ) : [];
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: displayText,
+        executedActions: executedActions.length ? executedActions : undefined,
+      }]);
       setStreamingText('');
+      if (actions && onChatAction) onChatAction(actions);
     } catch (err) {
       if (err.name === 'AbortError') return;
       console.error('Chat error:', err);
@@ -205,12 +282,13 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
     } finally {
       setIsStreaming(false);
     }
-  }, [messages, nodes, idea, mode, isStreaming]);
+  }, [messages, nodes, idea, mode, isStreaming, onChatAction]);
 
   const handleStop = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
     if (streamingText) {
-      setMessages(prev => [...prev, { role: 'assistant', content: streamingText }]);
+      const { displayText } = parseActions(streamingText);
+      setMessages(prev => [...prev, { role: 'assistant', content: displayText }]);
       setStreamingText('');
     }
     setIsStreaming(false);
@@ -260,6 +338,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
           {hasTree && (
             <span className="chat-node-count">{nodes.length} nodes</span>
           )}
+          {chatFilterActive && (
+            <button className="chat-filter-badge" onClick={onClearFilter}>
+              FILTERED ✕
+            </button>
+          )}
         </div>
         <button className="modal-close" onClick={onClose}>✕</button>
       </div>
@@ -292,41 +375,112 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea' 
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
-            <div className="chat-msg-label">
-              {msg.role === 'user' ? 'YOU' : 'AI'}
+          msg.type === 'action_card' ? (
+            <div key={i} className="chat-action-card">
+              <div className="chat-action-card-header">
+                <span className="chat-action-card-icon">⚡</span>
+                <span className="chat-action-card-label">{msg.label}</span>
+              </div>
+              {msg.detail && <div className="chat-action-card-detail">{msg.detail}</div>}
+              {msg.buttons?.length > 0 && (
+                <div className="chat-action-card-buttons">
+                  {msg.buttons.map((btn, j) => (
+                    <button
+                      key={j}
+                      className="chat-action-card-btn"
+                      onClick={() => onCardButtonClick?.(btn)}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="chat-msg-content">
-              {msg.role === 'assistant'
-                ? <ChatMarkdown content={msg.content} />
-                : msg.content}
+          ) : (
+            <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
+              <div className="chat-msg-label">
+                {msg.role === 'user' ? 'YOU' : 'AI'}
+              </div>
+              <div className="chat-msg-content">
+                {msg.role === 'assistant'
+                  ? <ChatMarkdown content={msg.content} />
+                  : msg.content}
+              </div>
+              {msg.executedActions?.length > 0 && (
+                <div className="chat-tool-badges">
+                  {msg.executedActions.map(action => (
+                    <span key={action} className="chat-tool-badge">
+                      ⚡ {ACTION_LABELS[action] || action}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {msg.role === 'assistant' && (
+                <button
+                  className="chat-copy-btn"
+                  onClick={() => handleCopy(msg.content)}
+                  title="Copy to clipboard"
+                >
+                  ⧉ Copy
+                </button>
+              )}
             </div>
-            {msg.role === 'assistant' && (
-              <button
-                className="chat-copy-btn"
-                onClick={() => handleCopy(msg.content)}
-                title="Copy to clipboard"
-              >
-                ⧉ Copy
-              </button>
-            )}
-          </div>
+          )
         ))}
 
-        {streamingText && (
-          <div className="chat-msg chat-msg-assistant">
-            <div className="chat-msg-label">AI</div>
-            <div className="chat-msg-content chat-msg-streaming">
-              <ChatMarkdown content={streamingText} />
-              <span className="chat-cursor">▊</span>
+        {/* ── Live Execution Stream ── */}
+        {executionStream && (
+          <div className={`exec-stream-card ${executionStream.done ? (executionStream.error ? 'exec-stream-error' : 'exec-stream-done') : 'exec-stream-live'}`}>
+            <div className="exec-stream-header">
+              <span className="exec-stream-icon">{executionStream.done ? (executionStream.error ? '✗' : '✓') : '⟳'}</span>
+              <span className="exec-stream-title">
+                {executionStream.done
+                  ? (executionStream.error ? 'Fix failed' : 'Fix completed')
+                  : `Fixing: ${executionStream.nodeLabel}`}
+              </span>
+              {!executionStream.done && (
+                <button className="exec-stream-stop" onClick={onStopExecution} title="Stop execution">⏹ Stop</button>
+              )}
+              {executionStream.done && (
+                <button className="exec-stream-dismiss" onClick={onDismissStream} title="Dismiss">✕</button>
+              )}
+            </div>
+            <div className="exec-stream-body" ref={execStreamRef}>
+              <pre className="exec-stream-output">{executionStream.text || 'Starting Claude Code…'}{!executionStream.done && <span className="chat-cursor">▊</span>}</pre>
             </div>
           </div>
         )}
+
+        {streamingText && (() => {
+          let visibleStream = streamingText.indexOf(ACTION_DELIMITER) > -1
+            ? streamingText.slice(0, streamingText.indexOf(ACTION_DELIMITER))
+            : streamingText;
+          // Strip any trailing code fence before the delimiter
+          visibleStream = visibleStream.replace(/```(?:json)?\s*$/, '').trimEnd();
+          return visibleStream ? (
+            <div className="chat-msg chat-msg-assistant">
+              <div className="chat-msg-label">AI</div>
+              <div className="chat-msg-content chat-msg-streaming">
+                <ChatMarkdown content={visibleStream} />
+                <span className="chat-cursor">▊</span>
+              </div>
+            </div>
+          ) : null;
+        })()}
       </div>
 
       {/* Quick actions — shown after first exchange too */}
       {messages.length > 0 && hasTree && (
         <div className="chat-quick-bar">
+          {chatFilterActive && (
+            <button
+              className="chat-quick-chip chat-clear-chip"
+              onClick={onClearFilter}
+              disabled={isStreaming}
+            >
+              ✕ Clear Filters
+            </button>
+          )}
           {actions.map((a) => (
             <button
               key={a.label}

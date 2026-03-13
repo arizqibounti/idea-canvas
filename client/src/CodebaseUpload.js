@@ -96,6 +96,23 @@ function readFileAsText(fileEntry) {
   });
 }
 
+// ── File System Access API directory reader ──────────────────
+async function collectFilesFromHandle(dirHandle, path = '') {
+  const files = [];
+  for await (const entry of dirHandle.values()) {
+    const fullPath = path ? `${path}/${entry.name}` : entry.name;
+    if (entry.kind === 'directory') {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const children = await collectFilesFromHandle(entry, fullPath);
+      files.push(...children);
+    } else if (entry.kind === 'file') {
+      if (shouldSkipFile(fullPath)) continue;
+      files.push({ handle: entry, path: fullPath });
+    }
+  }
+  return files;
+}
+
 // ── Main component ────────────────────────────────────────────
 const GOALS = [
   { key: 'features', label: 'Product Features', desc: 'What the app does — routes, components, handlers' },
@@ -169,6 +186,68 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
       setPhase('ready');
     } catch (err) {
       setErrorMsg(err.message || 'Failed to read files');
+      setPhase('error');
+    }
+  }, [goals]);
+
+  // Handle modern File System Access API (no browser popup)
+  const handleDirectoryPicker = useCallback(async () => {
+    try {
+      const dirHandle = await window.showDirectoryPicker();
+      const folderName = dirHandle.name || 'project';
+
+      setPhase('reading');
+      setErrorMsg('');
+
+      // Recursively collect files (skips excluded dirs/extensions during traversal)
+      const allCandidates = await collectFilesFromHandle(dirHandle);
+
+      // Score and sort by priority
+      const scored = allCandidates.map((c) => ({
+        ...c,
+        score: getFilePriority(c.path.split('/').pop()),
+      })).sort((a, b) => b.score - a.score);
+
+      const selected = scored.slice(0, MAX_FILES);
+      const filesOmitted = Math.max(0, scored.length - MAX_FILES);
+
+      setProgress({ done: 0, total: selected.length });
+
+      // Read files with budget enforcement
+      const files = [];
+      let totalChars = 0;
+
+      for (let i = 0; i < selected.length; i++) {
+        const { handle, path } = selected[i];
+        setProgress({ done: i + 1, total: selected.length });
+
+        try {
+          const file = await handle.getFile();
+          let content = await file.text();
+
+          if (content.length > MAX_FILE_CHARS) {
+            const omitted = content.length - MAX_FILE_CHARS;
+            content = content.slice(0, MAX_FILE_CHARS) + `\n// [truncated — ${omitted} chars omitted]`;
+          }
+
+          if (totalChars + content.length > MAX_TOTAL_CHARS) break;
+          totalChars += content.length;
+          files.push({ path, content });
+        } catch {
+          // skip unreadable files silently
+        }
+      }
+
+      const activeGoals = Object.entries(goals)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+
+      payloadRef.current = { files, analysisGoals: activeGoals, folderName, filesOmitted };
+      setSummary({ fileCount: files.length, folderName, filesOmitted });
+      setPhase('ready');
+    } catch (err) {
+      if (err.name === 'AbortError') return; // user cancelled picker
+      setErrorMsg(err.message || 'Failed to read directory');
       setPhase('error');
     }
   }, [goals]);
@@ -323,7 +402,21 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={async () => {
+            // File System Access API is blocked in iframes (e.g. preview);
+            // detect iframe or missing API and fall back to <input webkitdirectory>
+            const inIframe = window.self !== window.top;
+            if (!inIframe && window.showDirectoryPicker) {
+              try {
+                await handleDirectoryPicker();
+              } catch {
+                // Fallback if blocked by permissions policy
+                fileInputRef.current?.click();
+              }
+            } else {
+              fileInputRef.current?.click();
+            }
+          }}
         >
           <div className="upload-drop-icon">⬇</div>
           <div className="upload-drop-label">Drop a project folder here</div>

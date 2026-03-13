@@ -10,7 +10,6 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import IdeaNode from './IdeaNode';
-import DrillBreadcrumb from './DrillBreadcrumb';
 import { getNodeConfig } from './nodeConfig';
 
 const nodeTypes = { ideaNode: IdeaNode };
@@ -42,7 +41,7 @@ function AutoFitView({ isGenerating, nodeCount }) {
 }
 
 // Toolbar inside ReactFlow so useReactFlow() is available
-function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount, onCollapseAll, onExpandAll, hasCollapsed }) {
+function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount, onCollapseAll, onExpandAll, hasCollapsed, drillStack, onExitDrill, onJumpToBreadcrumb }) {
   const { fitView } = useReactFlow();
   const handleFit = useCallback(() => {
     fitView({ padding: 0.2, duration: 400 });
@@ -50,6 +49,27 @@ function CanvasToolbar({ searchQuery = '', onSearchChange, nodeCount, onCollapse
 
   return (
     <Panel position="top-left" style={{ margin: 12, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch' }}>
+      {/* Drill breadcrumb — inside the Panel so it's always visible */}
+      {drillStack && drillStack.length > 0 && (
+        <div className="drill-breadcrumb-bar">
+          <button className="drill-back-btn" onClick={onExitDrill} title="Back to full tree">
+            ← ROOT
+          </button>
+          {drillStack.map((entry, i) => (
+            <React.Fragment key={entry.nodeId}>
+              <span className="drill-crumb-sep">›</span>
+              <button
+                className="drill-crumb-label"
+                onClick={() => onJumpToBreadcrumb(i)}
+                style={{ fontWeight: i === drillStack.length - 1 ? 700 : 400 }}
+                title={entry.nodeLabel}
+              >
+                {entry.nodeLabel}
+              </button>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
       <div className="canvas-toolbar">
         <button
           type="button"
@@ -186,6 +206,9 @@ export default function IdeaCanvas({
             onCollapseAll={onCollapseAll}
             onExpandAll={onExpandAll}
             hasCollapsed={hasCollapsed}
+            drillStack={drillStack}
+            onExitDrill={onExitDrill}
+            onJumpToBreadcrumb={onJumpToBreadcrumb}
           />
         )}
         {!isCinematic && (
@@ -211,11 +234,7 @@ export default function IdeaCanvas({
         )}
       </ReactFlow>
 
-      <DrillBreadcrumb
-        drillStack={drillStack}
-        onExit={onExitDrill}
-        onJump={onJumpToBreadcrumb}
-      />
+      {/* DrillBreadcrumb now integrated into CanvasToolbar panel above */}
 
       {isGenerating && (
         <div

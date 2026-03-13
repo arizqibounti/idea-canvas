@@ -1,7 +1,88 @@
+const { Resolver } = require('dns').promises ? require('dns') : {};
+const dnsResolve = require('dns').promises?.resolve4;
+
 const FETCH_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (compatible; IdeaGraphBot/1.0)',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 };
+
+// Private/reserved IPv4 CIDR ranges that must never be reached via SSRF
+const BLOCKED_IPV4_RANGES = [
+  // Loopback
+  [0x7f000000, 0xff000000], // 127.0.0.0/8
+  // Link-local (AWS/GCP/Azure metadata)
+  [0xa9fe0000, 0xffff0000], // 169.254.0.0/16
+  // Private
+  [0x0a000000, 0xff000000], // 10.0.0.0/8
+  [0xac100000, 0xfff00000], // 172.16.0.0/12
+  [0xc0a80000, 0xffff0000], // 192.168.0.0/16
+  // Unspecified / broadcast
+  [0x00000000, 0xff000000], // 0.0.0.0/8
+  [0xe0000000, 0xe0000000], // 224.0.0.0+ (multicast)
+  [0xffffffff, 0xffffffff], // 255.255.255.255
+];
+
+function ipv4ToInt(ip) {
+  return ip.split('.').reduce((acc, oct) => (acc << 8) | parseInt(oct, 10), 0) >>> 0;
+}
+
+function isBlockedIPv4(ip) {
+  const n = ipv4ToInt(ip);
+  return BLOCKED_IPV4_RANGES.some(([net, mask]) => (n & mask) === (net & mask));
+}
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'metadata.google.internal',
+]);
+
+/**
+ * Returns true if the URL is safe to fetch (public internet only).
+ * Blocks: non-http(s) schemes, private/loopback IPv4, cloud metadata hosts,
+ * and common internal hostnames.
+ */
+async function isSafeUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  // Only allow http and https
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block known internal hostnames
+  if (BLOCKED_HOSTNAMES.has(hostname)) return false;
+
+  // Block IPv6 loopback / link-local literals
+  if (hostname === '::1' || hostname === '[::1]') return false;
+  if (/^fe80:/i.test(hostname) || /^\[fe80:/i.test(hostname)) return false;
+
+  // If hostname is a bare IPv4 address, check directly
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    if (isBlockedIPv4(hostname)) return false;
+    return true;
+  }
+
+  // Resolve hostname to IP(s) and check each (guards against DNS rebinding)
+  if (dnsResolve) {
+    try {
+      const addresses = await dnsResolve(hostname);
+      if (!addresses || addresses.length === 0) return false;
+      for (const addr of addresses) {
+        if (isBlockedIPv4(addr)) return false;
+      }
+    } catch {
+      // DNS resolution failed — treat as unsafe to be conservative
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function stripHtml(html) {
   return html
@@ -43,6 +124,7 @@ function extractInternalLinks(html, baseUrl) {
 
 async function fetchPage(url, maxChars = 12000) {
   try {
+    if (!(await isSafeUrl(url))) return null;
     const response = await fetch(url, { headers: FETCH_HEADERS });
     if (!response.ok) return null;
     const html = await response.text();
@@ -127,4 +209,5 @@ module.exports = {
   PRIORITY_PATTERNS,
   HUB_PATTERNS,
   enrichEntities,
+  isSafeUrl,
 };

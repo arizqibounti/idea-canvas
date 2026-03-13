@@ -10,6 +10,10 @@ const IdeaNode = memo(({ data }) => {
   const searchActive = data.searchActive === true;
   const searchMatch = data.searchMatch !== false;
   const dimmedBySearch = searchActive && !searchMatch;
+  const chatFilterActive = data.chatFilterActive === true;
+  const chatFilterMatch = data.chatFilterMatch !== false;
+  const dimmedByChatFilter = chatFilterActive && !chatFilterMatch;
+  const isDimmed = dimmedBySearch || dimmedByChatFilter;
   const isUnexplored = (data.childCount === 0) && !data.expanded && !data.isExpanding;
   const isLeaf = data.childCount === 0;
   const isConvergence = (data.parentIds?.length || 0) > 1;
@@ -42,10 +46,9 @@ const IdeaNode = memo(({ data }) => {
         cursor: isInRange ? 'pointer' : 'default',
         boxShadow,
         transition: 'opacity 0.3s ease, filter 0.3s ease, box-shadow 0.2s ease',
-        animation: 'nodeAppear 0.3s ease forwards',
-        opacity: dimmedBySearch ? 0.35 : (isInRange ? 1 : 0.08),
-        filter: dimmedBySearch ? 'saturate(0.4) brightness(0.7)' : (isInRange ? 'none' : 'saturate(0.2)'),
-        pointerEvents: dimmedBySearch ? 'none' : (isInRange ? 'auto' : 'none'),
+        opacity: isDimmed ? 0.35 : (isInRange ? 1 : 0.08),
+        filter: isDimmed ? 'saturate(0.4) brightness(0.7)' : (isInRange ? 'none' : 'saturate(0.2)'),
+        pointerEvents: isDimmed ? 'none' : (isInRange ? 'auto' : 'none'),
       }}
     >
       {/* Star badge */}
@@ -81,6 +84,32 @@ const IdeaNode = memo(({ data }) => {
         }}>
           L{data.depth}
         </span>
+      )}
+
+      {/* Execution status badge */}
+      {data.executionStatus === 'in_progress' && (
+        <div className="node-exec-badge node-exec-pulse" style={{
+          position: 'absolute', top: 7,
+          right: data.score != null ? (isStarred ? 100 : 50) : (isStarred ? 65 : 10),
+        }}>
+          ⟳ FIXING…
+        </div>
+      )}
+      {data.executionStatus === 'completed' && (
+        <div className="node-exec-badge node-exec-fixed" style={{
+          position: 'absolute', top: 7,
+          right: data.score != null ? (isStarred ? 100 : 50) : (isStarred ? 65 : 10),
+        }}>
+          ✓ FIXED
+        </div>
+      )}
+      {data.executionStatus === 'failed' && (
+        <div className="node-exec-badge node-exec-failed" style={{
+          position: 'absolute', top: 7,
+          right: data.score != null ? (isStarred ? 100 : 50) : (isStarred ? 65 : 10),
+        }}>
+          ✗ FAILED
+        </div>
       )}
 
       {/* Auto-explored badge */}
@@ -186,15 +215,17 @@ const IdeaNode = memo(({ data }) => {
         </div>
       )}
 
-      {/* Left accent bar — colored by loop membership if applicable */}
+      {/* Left accent bar — colored by execution status, loop, or type */}
       <div style={{
         position: 'absolute', left: 0, top: '10px', bottom: '10px',
-        width: hasLoop ? '4px' : '3px',
-        background: hasLoop
-          ? (data.loopType === 'balancing' ? '#f59e0b' : '#22c55e')
+        width: data.executionStatus ? '4px' : (hasLoop ? '4px' : '3px'),
+        background: data.executionStatus === 'in_progress' ? '#f59e0b'
+          : data.executionStatus === 'completed' ? '#22c55e'
+          : data.executionStatus === 'failed' ? '#f87171'
+          : hasLoop ? (data.loopType === 'balancing' ? '#f59e0b' : '#22c55e')
           : config.color,
         borderRadius: '0 2px 2px 0',
-        opacity: hasLoop ? 1 : 0.85,
+        opacity: data.executionStatus || hasLoop ? 1 : 0.85,
       }} />
 
       <Handle type="target" position={Position.Top} style={{
@@ -215,7 +246,7 @@ const IdeaNode = memo(({ data }) => {
         }}>
           <span className="fractal-pulse" />
         </div>
-      ) : isLeaf && isInRange && !dimmedBySearch ? (
+      ) : isLeaf && isInRange && !isDimmed ? (
         /* Fractal expand button — shown on leaf nodes */
         <button
           className="fractal-expand-btn"
@@ -259,7 +290,7 @@ const IdeaNode = memo(({ data }) => {
       ) : null}
 
       {/* Unexplored glow effect */}
-      {isUnexplored && isInRange && !dimmedBySearch && (
+      {isUnexplored && isInRange && !isDimmed && (
         <div className="fractal-glow" style={{
           position: 'absolute', bottom: -2, left: '10%', right: '10%',
           height: 4, borderRadius: 2,
