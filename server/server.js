@@ -161,6 +161,13 @@ app.post('/api/chat',              (req, res) => handleChat(client, req, res));
 app.post('/api/execute-action',    (req, res) => handleExecuteAction(client, req, res));
 app.post('/api/stop-execution',    (req, res) => { const stopped = stopExecution(); res.json({ stopped }); });
 
+// ── Integration System (pattern: openclaw plugin registry) ───
+// Register integrations, init on start, mount routes.
+require('./integrations/gmail'); // Self-registers with registry
+const integrationRegistry = require('./integrations/registry');
+const { mountIntegrationRoutes } = require('./integrations/routes');
+mountIntegrationRoutes(app);
+
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));
 
@@ -443,8 +450,10 @@ if (require('fs').existsSync(clientBuildPath)) {
 
 // ── Start server ─────────────────────────────────────────────
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`Gateway running on port ${PORT}`);
+  // Initialize all registered integrations (restore sessions, validate config)
+  await integrationRegistry.initAll().catch(err => console.error('Integration init error:', err));
 });
 
 // ── Attach WebSocket Gateway ────────────────────────────────

@@ -15,7 +15,7 @@ import ResumeChangesModal from './ResumeChangesModal';
 
 import Graph3D from './Graph3D';
 
-import TreeStudio from './TreeStudio';
+
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
 import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
@@ -35,6 +35,8 @@ import RefinePanel from './RefinePanel';
 import PortfolioPanel from './PortfolioPanel';
 import PipelineOverlay from './PipelineOverlay';
 import FlowchartView from './FlowchartView';
+import GmailPicker from './GmailConnect';
+import useGmail from './useGmail';
 import InviteAccept from './InviteAccept';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
@@ -601,6 +603,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // shape: { types?: string[], nodeIds?: string[] } | null
   const [pendingChatCards, setPendingChatCards] = useState([]);
   const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
+  const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
+  const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
 
   // ── Share ────────────────────────────────────────────────────
   const [showShareModal, setShowShareModal] = useState(false);
@@ -642,9 +646,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [portfolioAutoGen, setPortfolioAutoGen] = useState(false); // triggers auto-generate in PortfolioPanel
   const [portfolioFocus, setPortfolioFocus] = useState(null); // dynamic focus context from chat (types/nodeIds/userIntent)
   const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
+  const [emailContext, setEmailContext] = useState(null); // { id, subject, messageCount, formatted }
+  const [showPlusMenu, setShowPlusMenu] = useState(false); // + attachments popover
+  const plusMenuBtnRef = useRef(null);
+
+  const gmail = useGmail({
+    onThreadSelected: (ctx) => setEmailContext(ctx),
+    onClearEmail: () => setEmailContext(null),
+    mode: displayMode,
+  });
 
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d' | 'studio'
+  const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -821,7 +834,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -880,7 +893,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -938,7 +951,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1000,7 +1013,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -1068,7 +1081,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1135,7 +1148,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ));
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1231,7 +1244,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       const res = await authFetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea: idea.trim(), steeringInstruction: steeringText.trim(), existingNodes }),
+        body: JSON.stringify({ idea: idea.trim(), steeringInstruction: steeringText.trim(), existingNodes, emailThread: emailContext?.formatted || null }),
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -1250,7 +1263,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       idea$.setIsGenerating(false);
       setRedirectState('idle');
     }
-  }, [idea, steeringText, idea$, saveVersionAndMemory]);
+  }, [idea, steeringText, idea$, saveVersionAndMemory, emailContext]);
 
   const handleSteeringKeyDown = useCallback((e) => {
     if (e.key === 'Enter') handleSteeringSubmit();
@@ -1410,16 +1423,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   }, [active]);
 
   // ── Auto-Refine handlers ──────────────────────────────────
-  const handleStartRefine = useCallback(async (rounds = 3) => {
-    await refine$.handleStartRefine(ideaText, displayMode, rounds);
+  const handleStartRefine = useCallback(async (rounds = 3, onProgress) => {
+    await refine$.handleStartRefine(ideaText, displayMode, rounds, onProgress);
   }, [refine$, ideaText, displayMode]);
 
   const handleStopRefine = useCallback(() => {
     refine$.handleStopRefine();
+    setRefineStream(null);
   }, [refine$]);
 
-  const handleGoDeeper = useCallback(async (additionalRounds = 2) => {
-    await refine$.handleGoDeeper(ideaText, displayMode, additionalRounds);
+  const handleGoDeeper = useCallback(async (additionalRounds = 2, onProgress) => {
+    await refine$.handleGoDeeper(ideaText, displayMode, additionalRounds, onProgress);
   }, [refine$, ideaText, displayMode]);
 
   // Opens the refine panel + starts auto-refine (used by Portfolio panel)
@@ -1655,38 +1669,75 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         { label: 'Open Panel', actionType: 'openPanel', panel: 'debate' },
       ]);
     }
-    // Refine: open refine panel and start auto-refine
+    // Refine: run inline in chat
     if (actions.refine) {
       applyScope(actions.refine);
-      setShowRefine(true);
-      setTimeout(() => handleStartRefine(3), 100);
-      pushCard('refine', 'Refine Started', 'Auto-refine loop is strengthening your tree...', [
-        { label: 'Open Panel', actionType: 'openPanel', panel: 'refine' },
-      ]);
+      setRefineStream({ status: 'critiquing', round: 1, maxRounds: 3 });
+      setShowChat(true);
+      const refineHistory = [];
+      handleStartRefine(3, (progress) => {
+        if (progress.status === 'round_complete') {
+          refineHistory.push({
+            round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
+            newNodeCount: progress.newNodeCount, summary: progress.summary,
+          });
+        }
+        if (progress.status === 'done') {
+          setRefineStream(null);
+          setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
+        } else {
+          setRefineStream({ ...progress, history: refineHistory });
+        }
+      });
     }
-    // Portfolio: open portfolio panel and auto-generate with dynamic focus
+    // Refine more: continue refining
+    if (actions.refineMore) {
+      setRefineStream({ status: 'critiquing', round: 1, maxRounds: 2 });
+      setShowChat(true);
+      const refineHistory = [];
+      handleGoDeeper(2, (progress) => {
+        if (progress.status === 'round_complete') {
+          refineHistory.push({
+            round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
+            newNodeCount: progress.newNodeCount, summary: progress.summary,
+          });
+        }
+        if (progress.status === 'done') {
+          setRefineStream(null);
+          setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
+        } else {
+          setRefineStream({ ...progress, history: refineHistory });
+        }
+      });
+    }
+    // Portfolio: run inline in chat
     if (actions.portfolio) {
       applyScope(actions.portfolio);
       const actionVal = actions.portfolio;
+      let focus = null;
       if (actionVal && typeof actionVal === 'object' && actionVal !== true) {
         const scopedNodes = getScopedNodes(actionVal);
         const nodeSummaries = scopedNodes.slice(0, 20).map(n => {
           const d = n.data || n;
           return `[${d.type}] ${d.label}: ${(d.reasoning || '').slice(0, 100)}`;
         });
-        setPortfolioFocus({
-          types: actionVal.types || null,
-          nodeIds: actionVal.nodeIds || null,
-          nodeSummaries,
-        });
+        focus = { types: actionVal.types || null, nodeIds: actionVal.nodeIds || null, nodeSummaries };
+        setPortfolioFocus(focus);
       } else {
         setPortfolioFocus(null);
       }
+      setPortfolioStream({ status: 'generating', stageDetail: 'Starting...', alternatives: [], scores: [] });
+      setShowChat(true);
+      // Use the portfolio panel's generate flow via auto-gen
       setShowPortfolio(true);
       setPortfolioAutoGen(true);
-      pushCard('portfolio', 'Generating Portfolio', 'Creating alternative approaches...', [
-        { label: 'Open Portfolio', actionType: 'openPanel', panel: 'portfolio' },
-      ]);
+    }
+    // Portfolio more: generate more alternatives
+    if (actions.portfolioMore) {
+      setPortfolioStream({ status: 'generating', stageDetail: 'Generating more alternatives...', alternatives: [], scores: [] });
+      setShowChat(true);
+      setShowPortfolio(true);
+      setPortfolioAutoGen(true);
     }
     // Fractal expand: open panel and start
     if (actions.fractalExpand) {
@@ -1733,7 +1784,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (cards.length > 0) {
       setPendingChatCards(prev => [...prev, ...cards]);
     }
-  }, [active, handleStartRefine, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
+  }, [active, handleStartRefine, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
 
   const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
 
@@ -1744,15 +1795,79 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       else if (btn.panel === 'portfolio') setShowPortfolio(true);
       else if (btn.panel === 'fractalExpand') setShowAutoFractal(true);
     } else if (btn.actionType === 'stopExecution') {
-      // Abort in-flight execution
       if (executionAbortRef.current) {
         executionAbortRef.current.abort();
         executionAbortRef.current = null;
       }
-      // Also call server stop endpoint
       authFetch(`${API_URL}/api/stop-execution`, { method: 'POST' }).catch(() => {});
+    } else if (btn.actionType === 'stopRefine') {
+      handleStopRefine();
+    } else if (btn.actionType === 'goDeeper') {
+      // Trigger another refine round inline
+      setRefineStream({ status: 'critiquing', round: 1, maxRounds: 2 });
+      const refineHistory = [];
+      handleGoDeeper(2, (progress) => {
+        if (progress.status === 'round_complete') {
+          refineHistory.push({
+            round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
+            newNodeCount: progress.newNodeCount, summary: progress.summary,
+          });
+        }
+        if (progress.status === 'done') {
+          setRefineStream(null);
+          setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
+        } else {
+          setRefineStream({ ...progress, history: refineHistory });
+        }
+      });
+    } else if (btn.actionType === 'exploreAlternative') {
+      // Explore a portfolio alternative on the canvas
+      const alt = portfolioData.alternatives?.find(a => a.index === btn.altIndex);
+      if (alt) {
+        const flowNodes = alt.nodes.map(n => {
+          const flowNode = buildFlowNode(n);
+          if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
+          return flowNode;
+        });
+        active.rawNodesRef.current = flowNodes;
+        active.applyLayout(active.rawNodesRef.current, active.drillStackRef?.current);
+        active.setNodeCount?.(active.rawNodesRef.current.length);
+      }
+    } else if (btn.actionType === 'exploreAndRefine') {
+      // Explore then start refine
+      const alt = portfolioData.alternatives?.find(a => a.index === btn.altIndex);
+      if (alt) {
+        const flowNodes = alt.nodes.map(n => {
+          const flowNode = buildFlowNode(n);
+          if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
+          return flowNode;
+        });
+        active.rawNodesRef.current = flowNodes;
+        active.applyLayout(active.rawNodesRef.current, active.drillStackRef?.current);
+        active.setNodeCount?.(active.rawNodesRef.current.length);
+        // Auto-start refine
+        setRefineStream({ status: 'critiquing', round: 1, maxRounds: 3 });
+        const refineHistory = [];
+        handleStartRefine(3, (progress) => {
+          if (progress.status === 'round_complete') {
+            refineHistory.push({
+              round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
+              newNodeCount: progress.newNodeCount, summary: progress.summary,
+            });
+          }
+          if (progress.status === 'done') {
+            setRefineStream(null);
+            setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
+          } else {
+            setRefineStream({ ...progress, history: refineHistory });
+          }
+        });
+      }
+    } else if (btn.actionType === 'generateMore') {
+      setShowPortfolio(true);
+      setPortfolioAutoGen(true);
     }
-  }, []);
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolioData]);
 
   // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
   const handleExecuteAction = useCallback(async (nodeId) => {
@@ -2011,128 +2126,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           <span className="app-title">THOUGHTCLAW</span>
         </div>
 
-        {/* Idea mode input row — hidden when resume mode is showing its own full-panel input */}
-        {activeMode === 'idea' && !(displayMode === 'resume' && idea$.nodes.length === 0 && !idea$.isGenerating) && (
-          <div className="input-row">
-            {displayMode === 'resume' ? (
-              /* Resume mode: readonly label + NEW ANALYSIS / STOP */
-              <>
-                <div className="input-wrapper" style={{ opacity: 0.65, pointerEvents: 'none', flex: 1 }}>
-                  <span className="input-prefix" style={{ color: '#74c0fc' }}>◎</span>
-                  <span className="idea-input" style={{ padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}>
-                    {resumeJobLabel || 'Resume Analysis'}
-                  </span>
-                </div>
-                {idea$.isGenerating || isCritiquing ? (
-                  <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
-                ) : (
-                  <button className="btn btn-generate" onClick={handleNewResumeAnalysis}>↺ NEW ANALYSIS</button>
-                )}
-              </>
-            ) : redirectState === 'prompting' ? (
-              <>
-                <div className="input-wrapper steering-active">
-                  <span className="input-prefix" style={{ color: '#ffa94d' }}>⟳</span>
-                  <input
-                    className="idea-input" type="text"
-                    placeholder="steer the agent: what should it focus on next?"
-                    value={steeringText}
-                    onChange={(e) => setSteeringText(e.target.value)}
-                    onKeyDown={handleSteeringKeyDown}
-                    autoFocus
-                  />
-                </div>
-                <button className="btn btn-redirect-submit" onClick={handleSteeringSubmit} disabled={!steeringText.trim()}>↵ RESUME</button>
-                <button className="btn btn-stop" onClick={handleCancelRedirect}>✕ CANCEL</button>
-              </>
-            ) : (
-              <>
-                <div className="input-wrapper input-wrapper--multi">
-                  <span className="input-prefix" style={{ color: MODES.find(m => m.id === displayMode)?.color ?? '#6c63ff' }}>›</span>
-                  <textarea
-                    ref={ideaRef}
-                    className="idea-input"
-                    rows={1}
-                    placeholder={MODES.find(m => m.id === displayMode)?.placeholder ?? 'describe your idea, paste a doc, or upload a file...'}
-                    value={idea}
-                    onChange={handleIdeaChange}
-                    onKeyDown={handleKeyDown}
-                    disabled={isBusy}
-                  />
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".txt,.md,.text,.csv,.json,.html,.rtf"
-                    style={{ display: 'none' }}
-                    onChange={handleFileUpload}
-                  />
-                  <button
-                    className="btn-upload"
-                    title="Upload a text file"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isBusy}
-                  >
-                    📎
-                  </button>
-                  {attachedFile && (
-                    <span className="file-badge" title={attachedFile.name}>
-                      {attachedFile.name.length > 18 ? attachedFile.name.slice(0, 15) + '...' : attachedFile.name}
-                      <button className="file-badge-x" onClick={() => { setAttachedFile(null); setIdea(''); setTimeout(autoResize, 0); }}>×</button>
-                    </span>
-                  )}
-                </div>
-                {(idea$.isGenerating || isCritiquing) ? (
-                  <>
-                    <button className="btn btn-redirect" onClick={handleRedirect} disabled={isCritiquing}>⟳ REDIRECT</button>
-                    <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
-                  </>
-                ) : (
-                  <>
-                    <button className="btn btn-generate" onClick={handleGenerateResearch} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
-                      {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
-                    </button>
-                    <div className="gen-auto-options">
-                      <label className="gen-auto-check" title="Auto-run refinement loop after generation">
-                        <input type="checkbox" checked={autoRefineOnGen} onChange={e => setAutoRefineOnGen(e.target.checked)} />
-                        <span>⟲ Refine</span>
-                      </label>
-                      <label className="gen-auto-check" title="Auto-generate alternative approaches after generation">
-                        <input type="checkbox" checked={autoPortfolioOnGen} onChange={e => setAutoPortfolioOnGen(e.target.checked)} />
-                        <span>◈ Portfolio</span>
-                      </label>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Codebase mode input row */}
-        {activeMode === 'codebase' && !cbShowUpload && (
-          <div className="input-row">
-            <div className="input-wrapper" style={{ opacity: 0.65, pointerEvents: 'none', flex: 1 }}>
-              <span className="input-prefix">⟨/⟩</span>
-              <span className="idea-input" style={{ padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}>{cbFolderName}</span>
-            </div>
-            <div className="project-path-wrapper">
-              <input
-                type="text"
-                className="project-path-input"
-                value={cbProjectPath}
-                onChange={(e) => setCbProjectPath(e.target.value)}
-                placeholder={`local path, e.g. /Users/you/${cbFolderName || 'project'}`}
-                title="Local filesystem path for Claude Code to fix issues"
-              />
-            </div>
-            {cb$.isGenerating ? (
-              <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
-            ) : (
-              <button className="btn btn-generate" onClick={handleNewCbAnalysis}>↺ NEW ANALYSIS</button>
-            )}
-          </div>
-        )}
-
         {/* Right section */}
         <div className="top-bar-right-wrapper">
           <button className={`top-bar-scroll-btn scroll-left${toolbarCanScrollLeft ? ' visible' : ''}`} onClick={() => scrollToolbar(-1)} aria-label="Scroll toolbar left">‹</button>
@@ -2222,13 +2215,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 title="Toggle 3D view"
               >
                 ◈ 3D
-              </button>
-              <button
-                className={`btn btn-icon ${viewMode === 'studio' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'studio' ? 'flowchart' : 'studio')}
-                title="Scene studio editor"
-              >
-                ◈ STUDIO
               </button>
             </>
           )}
@@ -2329,15 +2315,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
             <ResumeInput onAnalyzeReady={handleResumeAnalyze} />
           ) : idea$.nodes.length === 0 && !idea$.isGenerating ? (
             <>
-              {idea$.showResumeBanner && (
-                <div className="resume-banner">
-                  <span>◈ Resume: <strong>{(() => { const s = idea$.savedSessions[0]?.idea || ''; return s.length > 55 ? s.slice(0, 55) + '…' : s; })()}</strong> &nbsp;({idea$.savedSessions[0]?.nodeCount} nodes)</span>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-generate" style={{ padding: '6px 12px', fontSize: '10px' }} onClick={() => handleLoadIdeaSession(idea$.savedSessions[0])}>↩ RESUME</button>
-                    <button className="btn btn-stop" style={{ padding: '6px 12px', fontSize: '10px' }} onClick={() => idea$.setShowResumeBanner(false)}>DISMISS</button>
-                  </div>
-                </div>
-              )}
               {showMemory && (
                 <div style={{ position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 25 }}>
                   <MemoryInsights onDismiss={() => setShowMemory(false)} />
@@ -2353,29 +2330,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 if (raw) idea$.handleNodeClick({ id: raw.id, data: raw.data || raw });
               }}
             />
-          ) : viewMode === 'studio' ? (
-            <ReactFlowProvider>
-              <TreeStudio
-                nodes={idea$.rawNodesRef.current}
-                displayNodes={displayNodes}
-                displayEdges={displayEdges}
-                maxRound={maxRound}
-                setRoundRange={setRoundRange}
-                setIsolatedRound={setIsolatedRound}
-                onExit={() => { setRoundRange([0, maxRound]); setViewMode('flowchart'); }}
-                getRoundIndex={getRoundIndex}
-                sessionName={idea}
-                modeId={displayMode}
-                onNodeClick={idea$.handleNodeClick}
-                onNodeDoubleClick={idea$.handleDrill}
-                onNodeContextMenu={idea$.handleNodeContextMenu}
-                onCloseContextMenu={idea$.handleCloseContextMenu}
-                drillStack={idea$.drillStack}
-                onExitDrill={idea$.handleExitDrill}
-                onJumpToBreadcrumb={idea$.handleJumpToBreadcrumb}
-                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
-              />
-            </ReactFlowProvider>
           ) : viewMode === 'flowchart' ? (
             <ReactFlowProvider>
               <FlowchartView
@@ -2429,15 +2383,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         {activeMode === 'codebase' && (
           cbShowUpload ? (
             <>
-              {cb$.showResumeBanner && (
-                <div className="resume-banner">
-                  <span>⟨/⟩ Resume: <strong>{cb$.savedSessions[0]?.folderName || cb$.savedSessions[0]?.label}</strong> &nbsp;({cb$.savedSessions[0]?.nodeCount} nodes)</span>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-generate" style={{ padding: '6px 12px', fontSize: '10px' }} onClick={() => handleLoadCbSession(cb$.savedSessions[0])}>↩ RESUME</button>
-                    <button className="btn btn-stop" style={{ padding: '6px 12px', fontSize: '10px' }} onClick={() => cb$.setShowResumeBanner(false)}>DISMISS</button>
-                  </div>
-                </div>
-              )}
               <CodebaseUpload onAnalysisReady={handleAnalysisReady} isAnalyzing={cb$.isGenerating} />
             </>
           ) : viewMode === '3d' ? (
@@ -2448,29 +2393,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 if (raw) cb$.handleNodeClick({ id: raw.id, data: raw.data || raw });
               }}
             />
-          ) : viewMode === 'studio' ? (
-            <ReactFlowProvider>
-              <TreeStudio
-                nodes={cb$.rawNodesRef.current}
-                displayNodes={displayNodes}
-                displayEdges={displayEdges}
-                maxRound={maxRound}
-                setRoundRange={setRoundRange}
-                setIsolatedRound={setIsolatedRound}
-                onExit={() => { setRoundRange([0, maxRound]); setViewMode('flowchart'); }}
-                getRoundIndex={getRoundIndex}
-                sessionName={cbFolderName}
-                modeId={displayMode}
-                onNodeClick={cb$.handleNodeClick}
-                onNodeDoubleClick={cb$.handleDrill}
-                onNodeContextMenu={cb$.handleNodeContextMenu}
-                onCloseContextMenu={cb$.handleCloseContextMenu}
-                drillStack={cb$.drillStack}
-                onExitDrill={cb$.handleExitDrill}
-                onJumpToBreadcrumb={cb$.handleJumpToBreadcrumb}
-                onReactFlowReady={(instance) => { reactFlowRef.current = instance; }}
-              />
-            </ReactFlowProvider>
           ) : viewMode === 'flowchart' ? (
             <ReactFlowProvider>
               <FlowchartView
@@ -2514,6 +2436,169 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
         {/* TimelineBar2D removed — not useful for users */}
       </main>
+
+      {/* ── Bottom input bar ── */}
+      <footer className="bottom-bar" style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
+        {/* Idea mode input row */}
+        {activeMode === 'idea' && !(displayMode === 'resume' && idea$.nodes.length === 0 && !idea$.isGenerating) && (
+          <div className="input-row">
+            {displayMode === 'resume' ? (
+              <>
+                <div className="input-wrapper" style={{ opacity: 0.65, pointerEvents: 'none', flex: 1 }}>
+                  <span className="input-prefix" style={{ color: '#74c0fc' }}>◎</span>
+                  <span className="idea-input" style={{ padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}>
+                    {resumeJobLabel || 'Resume Analysis'}
+                  </span>
+                </div>
+                {idea$.isGenerating || isCritiquing ? (
+                  <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
+                ) : (
+                  <button className="btn btn-generate" onClick={handleNewResumeAnalysis}>↺ NEW ANALYSIS</button>
+                )}
+              </>
+            ) : redirectState === 'prompting' ? (
+              <>
+                <div className="input-wrapper steering-active">
+                  <span className="input-prefix" style={{ color: '#ffa94d' }}>⟳</span>
+                  <input
+                    className="idea-input" type="text"
+                    placeholder="steer the agent: what should it focus on next?"
+                    value={steeringText}
+                    onChange={(e) => setSteeringText(e.target.value)}
+                    onKeyDown={handleSteeringKeyDown}
+                    autoFocus
+                  />
+                </div>
+                <button className="btn btn-redirect-submit" onClick={handleSteeringSubmit} disabled={!steeringText.trim()}>↵ RESUME</button>
+                <button className="btn btn-stop" onClick={handleCancelRedirect}>✕ CANCEL</button>
+              </>
+            ) : (
+              <>
+                <div className="input-wrapper input-wrapper--multi">
+                  <span className="input-prefix" style={{ color: MODES.find(m => m.id === displayMode)?.color ?? '#6c63ff' }}>›</span>
+                  <textarea
+                    ref={ideaRef}
+                    className="idea-input"
+                    rows={1}
+                    placeholder={MODES.find(m => m.id === displayMode)?.placeholder ?? 'describe your idea, paste a doc, or upload a file...'}
+                    value={idea}
+                    onChange={handleIdeaChange}
+                    onKeyDown={handleKeyDown}
+                    disabled={isBusy}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,.md,.text,.csv,.json,.html,.rtf"
+                    style={{ display: 'none' }}
+                    onChange={handleFileUpload}
+                  />
+                  {/* + Attachments menu */}
+                  <div className="plus-menu-anchor">
+                    <button
+                      ref={plusMenuBtnRef}
+                      className="plus-menu-btn"
+                      title="Attach file or connect integrations"
+                      onClick={() => setShowPlusMenu(v => !v)}
+                      disabled={isBusy}
+                    >
+                      +
+                    </button>
+                    {showPlusMenu && (
+                      <>
+                        <div className="plus-menu-backdrop" onClick={() => setShowPlusMenu(false)} />
+                        <div className="plus-menu-popover" style={(() => {
+                          const r = plusMenuBtnRef.current?.getBoundingClientRect();
+                          return r ? { bottom: window.innerHeight - r.top + 8, left: r.left } : {};
+                        })()}>
+                          <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); fileInputRef.current?.click(); }}>
+                            <span className="plus-menu-item-icon">📎</span> Upload File
+                          </button>
+                          {gmail.configured && (
+                            gmail.connected ? (
+                              <>
+                                <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); gmail.openPicker(); }}>
+                                  <span className="plus-menu-item-icon">✉</span> Import Email
+                                </button>
+                                <button className="plus-menu-item plus-menu-item--danger" onClick={() => { setShowPlusMenu(false); gmail.disconnect(); }}>
+                                  <span className="plus-menu-item-icon">✕</span> Disconnect Gmail
+                                </button>
+                              </>
+                            ) : (
+                              <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); gmail.connect(); }}>
+                                <span className="plus-menu-item-icon">✉</span> Connect Gmail
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {attachedFile && (
+                    <span className="file-badge" title={attachedFile.name}>
+                      {attachedFile.name.length > 18 ? attachedFile.name.slice(0, 15) + '...' : attachedFile.name}
+                      <button className="file-badge-x" onClick={() => { setAttachedFile(null); setIdea(''); setTimeout(autoResize, 0); }}>×</button>
+                    </span>
+                  )}
+                  {emailContext && (
+                    <span className="file-badge email-badge" title={emailContext.subject}>
+                      ✉ {emailContext.subject?.length > 20 ? emailContext.subject.slice(0, 18) + '...' : emailContext.subject} ({emailContext.messageCount})
+                      <button className="file-badge-x" onClick={() => setEmailContext(null)}>×</button>
+                    </span>
+                  )}
+                </div>
+                {(idea$.isGenerating || isCritiquing) ? (
+                  <>
+                    <button className="btn btn-redirect" onClick={handleRedirect} disabled={isCritiquing}>⟳ REDIRECT</button>
+                    <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn btn-generate" onClick={handleGenerateResearch} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
+                      {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
+                    </button>
+                    <div className="gen-auto-options">
+                      <label className="gen-auto-check" title="Auto-run refinement loop after generation">
+                        <input type="checkbox" checked={autoRefineOnGen} onChange={e => setAutoRefineOnGen(e.target.checked)} />
+                        <span>⟲ Refine</span>
+                      </label>
+                      <label className="gen-auto-check" title="Auto-generate alternative approaches after generation">
+                        <input type="checkbox" checked={autoPortfolioOnGen} onChange={e => setAutoPortfolioOnGen(e.target.checked)} />
+                        <span>◈ Portfolio</span>
+                      </label>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Codebase mode input row */}
+        {activeMode === 'codebase' && !cbShowUpload && (
+          <div className="input-row">
+            <div className="input-wrapper" style={{ opacity: 0.65, pointerEvents: 'none', flex: 1 }}>
+              <span className="input-prefix">⟨/⟩</span>
+              <span className="idea-input" style={{ padding: '0 0 0 4px', display: 'flex', alignItems: 'center' }}>{cbFolderName}</span>
+            </div>
+            <div className="project-path-wrapper">
+              <input
+                type="text"
+                className="project-path-input"
+                value={cbProjectPath}
+                onChange={(e) => setCbProjectPath(e.target.value)}
+                placeholder={`local path, e.g. /Users/you/${cbFolderName || 'project'}`}
+                title="Local filesystem path for Claude Code to fix issues"
+              />
+            </div>
+            {cb$.isGenerating ? (
+              <button className="btn btn-stop" onClick={handleStop}>■ STOP</button>
+            ) : (
+              <button className="btn btn-generate" onClick={handleNewCbAnalysis}>↺ NEW ANALYSIS</button>
+            )}
+          </div>
+        )}
+      </footer>
 
       <NodeEditPanel
         node={active.selectedNode}
@@ -2587,7 +2672,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           }
         }}
         onDismissStream={() => setExecutionStream(null)}
+        refineStream={refineStream}
+        portfolioStream={portfolioStream}
+        emailContext={emailContext}
       />
+
+      {/* ── Gmail Thread Picker Modal ── */}
+      <GmailPicker {...gmail} />
 
       {/* ── Auto-Fractal Panel ── */}
       {showAutoFractal && (
@@ -2689,11 +2780,37 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           yjsSyncRef={yjsSyncRef}
           onStartRefine={handleOpenAndStartRefine}
           autoGenerate={portfolioAutoGen}
-          onAutoGenDone={() => setPortfolioAutoGen(false)}
+          onAutoGenDone={() => {
+            setPortfolioAutoGen(false);
+            // Freeze portfolio data into chat card and clear stream
+            if (portfolioStream) {
+              setPendingChatCards(prev => [...prev, {
+                type: 'portfolio_card',
+                state: {
+                  status: 'done',
+                  alternatives: portfolioData.alternatives,
+                  scores: portfolioData.scores || [],
+                  recommendation: portfolioData.recommendation || '',
+                },
+              }]);
+              setPortfolioStream(null);
+            }
+          }}
           onPipelineUpdate={(stage) => {
             setPipelineStages(prev => prev?.map(s =>
               s.id === 'portfolio' ? { ...s, ...stage } : s
             ));
+            // Also update live portfolio stream if active
+            if (portfolioStream || stage.status === 'active') {
+              setPortfolioStream(prev => ({
+                ...(prev || {}),
+                status: stage.status === 'done' ? 'done' : 'generating',
+                stageDetail: stage.detail || '',
+                alternatives: portfolioData.alternatives || [],
+                scores: portfolioData.scores || [],
+                recommendation: portfolioData.recommendation || '',
+              }));
+            }
           }}
         />
       )}

@@ -1,7 +1,17 @@
 async function streamToSSE(res, stream) {
   let buffer = '';
+  let ended = false;
+
+  // Abort the Anthropic stream when client disconnects (e.g. user clicks Stop)
+  res.on('close', () => {
+    if (!ended) {
+      ended = true;
+      try { stream.abort(); } catch (e) { /* already done */ }
+    }
+  });
 
   stream.on('text', (text) => {
+    if (ended) return;
     buffer += text;
     const lines = buffer.split('\n');
     buffer = lines.pop();
@@ -19,6 +29,8 @@ async function streamToSSE(res, stream) {
   });
 
   stream.on('finalMessage', () => {
+    if (ended) return;
+    ended = true;
     if (buffer.trim()) {
       try {
         const node = JSON.parse(buffer.trim());
@@ -30,6 +42,8 @@ async function streamToSSE(res, stream) {
   });
 
   stream.on('error', (err) => {
+    if (ended) return;
+    ended = true;
     console.error('Stream error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     res.end();
@@ -44,9 +58,20 @@ async function streamToSSE(res, stream) {
 async function streamToSSECollect(res, stream) {
   return new Promise((resolve, reject) => {
     let buffer = '';
+    let ended = false;
     const collected = [];
 
+    // Abort the Anthropic stream when client disconnects
+    res.on('close', () => {
+      if (!ended) {
+        ended = true;
+        try { stream.abort(); } catch (e) { /* already done */ }
+        resolve(collected); // resolve with whatever we collected so far
+      }
+    });
+
     stream.on('text', (text) => {
+      if (ended) return;
       buffer += text;
       const lines = buffer.split('\n');
       buffer = lines.pop();
@@ -65,6 +90,8 @@ async function streamToSSECollect(res, stream) {
     });
 
     stream.on('finalMessage', () => {
+      if (ended) return;
+      ended = true;
       if (buffer.trim()) {
         try {
           const node = JSON.parse(buffer.trim());
@@ -76,6 +103,8 @@ async function streamToSSECollect(res, stream) {
     });
 
     stream.on('error', (err) => {
+      if (ended) return;
+      ended = true;
       console.error('Stream error:', err);
       reject(err);
     });

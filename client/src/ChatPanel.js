@@ -2,6 +2,8 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { authFetch } from './api';
+import RefineCard from './chat/RefineCard';
+import PortfolioCard from './chat/PortfolioCard';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -111,6 +113,8 @@ const ACTION_LABELS = {
   drill: 'Drilling Into Node',
   feedToIdea: 'Bridging to Idea Mode',
   executeAction: 'Executing Fix',
+  refineMore: 'Continuing Refine',
+  portfolioMore: 'More Alternatives',
 };
 
 function parseActions(fullText) {
@@ -152,7 +156,7 @@ const CHAT_MODE_CONFIG = {
   plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, emailContext }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -167,7 +171,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamingText, executionStream]);
+  }, [messages, streamingText, executionStream, refineStream, portfolioStream]);
 
   // Auto-scroll execution stream output to bottom
   useEffect(() => {
@@ -225,6 +229,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           treeContext,
           idea,
           mode,
+          emailThread: emailContext?.formatted || null,
         }),
         signal: controller.signal,
       });
@@ -265,7 +270,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
       // Build list of executed action names for visual indicator
       const executedActions = actions ? Object.keys(actions).filter(k =>
         ['filter', 'clear', 'addNodes', 'debate', 'refine', 'portfolio',
-         'fractalExpand', 'scoreNodes', 'drill', 'feedToIdea'].includes(k) && actions[k]
+         'fractalExpand', 'scoreNodes', 'drill', 'feedToIdea', 'refineMore', 'portfolioMore'].includes(k) && actions[k]
       ) : [];
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -375,7 +380,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         )}
 
         {messages.map((msg, i) => (
-          msg.type === 'action_card' ? (
+          msg.type === 'refine_card' ? (
+            <RefineCard key={i} state={msg.state} onAction={onCardButtonClick} />
+          ) : msg.type === 'portfolio_card' ? (
+            <PortfolioCard key={i} state={msg.state} onAction={onCardButtonClick} />
+          ) : msg.type === 'action_card' ? (
             <div key={i} className="chat-action-card">
               <div className="chat-action-card-header">
                 <span className="chat-action-card-icon">⚡</span>
@@ -449,6 +458,16 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
               <pre className="exec-stream-output">{executionStream.text || 'Starting Claude Code…'}{!executionStream.done && <span className="chat-cursor">▊</span>}</pre>
             </div>
           </div>
+        )}
+
+        {/* ── Live Refine Stream ── */}
+        {refineStream && (
+          <RefineCard state={refineStream} onAction={onCardButtonClick} />
+        )}
+
+        {/* ── Live Portfolio Stream ── */}
+        {portfolioStream && (
+          <PortfolioCard state={portfolioStream} onAction={onCardButtonClick} />
         )}
 
         {streamingText && (() => {

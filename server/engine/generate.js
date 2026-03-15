@@ -20,11 +20,12 @@ const { sseHeaders, streamToSSE, streamToSSECollect, parseMessageToNodes } = req
 const { fetchPage, enrichEntities } = require('../utils/web');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
 const { saveNodes, getKnowledgeContext } = require('../gateway/knowledge');
+const integrationRegistry = require('../integrations/registry');
 
 // ── POST /api/generate ────────────────────────────────────────
 
 async function handleGenerate(client, req, res) {
-  let { idea, mode, steeringInstruction, existingNodes, jdText, resumePdf, fetchedUrlContent } = req.body;
+  let { idea, mode, steeringInstruction, existingNodes, jdText, resumePdf, fetchedUrlContent, emailThread } = req.body;
   if (!idea && !jdText) return res.status(400).json({ error: 'idea or jdText is required' });
 
   sseHeaders(res);
@@ -125,6 +126,17 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
     userContent += `\n\nSTRUCTURAL TEMPLATES (from successful past sessions — use as structural guidance if the domain matches):\n${JSON.stringify(templateGuidance, null, 2)}`;
   }
 
+  // Inject email thread context using hook mapping template
+  if (emailThread && typeof userContent === 'string') {
+    const gmailHooks = integrationRegistry.getHookMappings('gmail');
+    const mode = req.body.mode || 'idea';
+    if (gmailHooks?.modeTemplates?.[mode]) {
+      userContent += `\n\n${gmailHooks.modeTemplates[mode](null, emailThread)}`;
+    } else {
+      userContent += `\n\nEMAIL THREAD CONTEXT (the user connected this email for reference — incorporate relevant details into your analysis):\n\n${emailThread}`;
+    }
+  }
+
   try {
     const streamParams = {
       model: 'claude-opus-4-5',
@@ -149,7 +161,7 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
 // ── POST /api/generate-multi (Multi-Agent: 3 Lenses + Merge) ─
 
 async function handleGenerateMulti(client, req, res) {
-  let { idea, mode, fetchedUrlContent, templateGuidance } = req.body;
+  let { idea, mode, fetchedUrlContent, templateGuidance, emailThread } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
   sseHeaders(res);
@@ -175,6 +187,10 @@ async function handleGenerateMulti(client, req, res) {
 
   if (templateGuidance?.length) {
     baseUserContent += `\n\nSTRUCTURAL TEMPLATES:\n${JSON.stringify(templateGuidance, null, 2)}`;
+  }
+
+  if (emailThread) {
+    baseUserContent += `\n\nEMAIL THREAD CONTEXT (the user connected this email for reference — incorporate relevant details into your analysis):\n\n${emailThread}`;
   }
 
   try {
@@ -228,7 +244,7 @@ async function handleGenerateMulti(client, req, res) {
 // Deep research: 3 parallel agents investigate market/tech/audience, then generate tree
 
 async function handleGenerateResearch(client, req, res) {
-  let { idea, mode, fetchedUrlContent, templateGuidance } = req.body;
+  let { idea, mode, fetchedUrlContent, templateGuidance, emailThread } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
   sseHeaders(res);
@@ -301,6 +317,10 @@ async function handleGenerateResearch(client, req, res) {
 
     if (templateGuidance?.length) {
       userContent += `\n\nSTRUCTURAL TEMPLATES:\n${JSON.stringify(templateGuidance, null, 2)}`;
+    }
+
+    if (emailThread) {
+      userContent += `\n\nEMAIL THREAD CONTEXT (the user connected this email for reference — incorporate relevant details into your analysis):\n\n${emailThread}`;
     }
 
     // Zettelkasten: inject knowledge context from past sessions

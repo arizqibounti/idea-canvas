@@ -2,11 +2,12 @@
 
 const { CHAT_PERSONAS } = require('./prompts');
 const { sseHeaders } = require('../utils/sse');
+const integrationRegistry = require('../integrations/registry');
 
 // ── POST /api/chat ────────────────────────────────────────────
 
 function handleChat(client, req, res) {
-  const { messages, treeContext, idea, mode } = req.body;
+  const { messages, treeContext, idea, mode, emailThread } = req.body;
 
   if (!messages || !messages.length) {
     return res.status(400).json({ error: 'messages required' });
@@ -34,10 +35,12 @@ AVAILABLE ACTIONS (can combine multiple in one JSON object):
 5. DEBATE:          {"debate":true}  — or scoped: {"debate":{"types":["feature"]}} or {"debate":{"nodeIds":["id1","id2"]}}
 6. REFINE:          {"refine":true}  — or scoped: {"refine":{"types":["tech_debt"]}}
 7. PORTFOLIO:       {"portfolio":true} — or scoped: {"portfolio":{"types":["feature"]}} or {"portfolio":{"nodeIds":["id1"]}}
-8. FRACTAL EXPAND:  {"fractalExpand":{"rounds":3}}
-9. SCORE NODES:     {"scoreNodes":true} — or scoped: {"scoreNodes":{"types":["feature"]}}
-10. DRILL:          {"drill":{"nodeId":"node_abc"}}
-11. FEED TO IDEA:   {"feedToIdea":true} — or scoped: {"feedToIdea":{"types":["feature"]}}
+8. REFINE MORE:     {"refineMore":true}  — continue refining (another 2 rounds)
+9. PORTFOLIO MORE:  {"portfolioMore":true} — generate more portfolio alternatives
+10. FRACTAL EXPAND:  {"fractalExpand":{"rounds":3}}
+11. SCORE NODES:     {"scoreNodes":true} — or scoped: {"scoreNodes":{"types":["feature"]}}
+12. DRILL:          {"drill":{"nodeId":"node_abc"}}
+13. FEED TO IDEA:   {"feedToIdea":true} — or scoped: {"feedToIdea":{"types":["feature"]}}
 
 Rules for addNodes: id MUST start with "chat_", parentId must reference an existing node, type must be one of: seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight, component, api_endpoint, data_model, tech_debt, requirement, skill_match, skill_gap, achievement, keyword, story, positioning, critique, variable, synthesis, aggregation
 
@@ -50,7 +53,9 @@ WHEN TO USE ACTIONS (you MUST use them — these are TOOLS, not documents):
 - "clear filters" / "show all" / "reset" → clear
 - "run a debate" / "critique this" / "stress test" → debate
 - "refine this" / "auto-refine" / "strengthen" → refine
-- "generate portfolio" / "portfolio" / "show alternatives" / "compare strategies" → portfolio (this is a TOOL that opens a panel, NOT a text document — NEVER write a portfolio as text, ALWAYS use the action)
+- "do another round of refine" / "refine again" / "keep refining" / "more refining" → refineMore
+- "generate portfolio" / "portfolio" / "show alternatives" / "compare strategies" → portfolio (this is a TOOL, NOT a text document — NEVER write a portfolio as text, ALWAYS use the action)
+- "do another round of portfolio" / "more alternatives" / "generate more" / "more portfolio" → portfolioMore
 - "expand more" / "go deeper" / "fractal expand" → fractalExpand
 - "score the nodes" / "rank these" / "prioritize" → scoreNodes
 - "drill into X" / "expand X" / "zoom into X" → drill
@@ -68,6 +73,16 @@ IMPORTANT DISTINCTION: "portfolio", "debate", "refine", "score" are TOOL names, 
 CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief 1-2 sentence summary of what you're doing, then append the action block. Do NOT write long text responses for tool actions.`;
   }
 
+  if (emailThread) {
+    // Use hook mapping template from Gmail integration if available
+    const gmailHooks = integrationRegistry.getHookMappings('gmail');
+    if (gmailHooks?.chatTemplate) {
+      systemPrompt += gmailHooks.chatTemplate(emailThread);
+    } else {
+      systemPrompt += `\n\nEMAIL CONTEXT — The user has connected an email thread for reference:\n\n${emailThread}\n\nUse this email thread as additional context. Reference specific messages, senders, or details when relevant.`;
+    }
+  }
+
   const stream = client.messages.stream({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
@@ -77,17 +92,32 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
 
   // Stream raw text chunks (not JSON nodes) for chat
   let started = false;
+  let ended = false;
+
+  // Abort the Anthropic stream when client disconnects (e.g. user clicks Stop)
+  res.on('close', () => {
+    if (!ended) {
+      ended = true;
+      try { stream.abort(); } catch (e) { /* already done */ }
+    }
+  });
+
   stream.on('text', (text) => {
+    if (ended) return;
     started = true;
     res.write(`data: ${JSON.stringify({ text })}\n\n`);
   });
 
   stream.on('finalMessage', () => {
+    if (ended) return;
+    ended = true;
     res.write('data: [DONE]\n\n');
     res.end();
   });
 
   stream.on('error', (err) => {
+    if (ended) return;
+    ended = true;
     console.error('Chat stream error:', err);
     if (!started) {
       res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
