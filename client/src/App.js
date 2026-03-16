@@ -40,6 +40,11 @@ import InviteAccept from './InviteAccept';
 import { useTimelineNav } from './useTimelineNav';
 import { useNodeTools } from './useNodeTools';
 import TimelineFilmstrip from './TimelineFilmstrip';
+import { useUndoStack } from './useUndoStack';
+import { useGhostNodes } from './useGhostNodes';
+import { useHoverPreview } from './useHoverPreview';
+import PreviewOverlay from './PreviewOverlay';
+import InspectorPanel from './InspectorPanel';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
@@ -624,6 +629,33 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     mode: displayMode,
   });
 
+  // ── F4: Undo Stack ──────────────────────────────────────────
+  const undoStack = useUndoStack({
+    rawNodesRef: active.rawNodesRef,
+    applyLayout: active.applyLayout,
+    drillStackRef: active.drillStackRef,
+    setNodeCount: active.setNodeCount,
+    yjsSyncRef,
+  });
+
+  // ── F4: Ghost Nodes ───────────────────────────────────────
+  const ghostNodes = useGhostNodes({
+    rawNodesRef: active.rawNodesRef,
+    applyLayout: active.applyLayout,
+    drillStackRef: active.drillStackRef,
+    setNodeCount: active.setNodeCount,
+  });
+
+  // ── F4: Preview Overlay ───────────────────────────────────
+  const [previewState, setPreviewState] = useState(null);
+  // shape: { nodes, removedIds, label, onAccept, onReject } | null
+
+  // ── F5: Hover Preview ─────────────────────────────────────
+  const hoverPreview = useHoverPreview({ rawNodesRef: active.rawNodesRef });
+
+  // ── F5: Inspector Panel ───────────────────────────────────
+  const [inspectorNode, setInspectorNode] = useState(null);
+
   // ── Memory Layer ──────────────────────────────────────────
   const [showMemory, setShowMemory] = useState(false);
   const memorySessionCount = readMemory().length;
@@ -796,6 +828,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Idea mode: generate ───────────────────────────────────
   const handleGenerate = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
+    undoStack.pushSnapshot('before-generate');
     idea$.resetCanvas();
     idea$.setIsGenerating(true);
     setShowChat(true);
@@ -2234,6 +2267,23 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               roomId={initialSession?.roomId}
             />
           )}
+          {/* Undo / Redo */}
+          {active.rawNodesRef.current.length > 0 && (
+            <div className="undo-redo-bar">
+              <button
+                className="undo-btn"
+                onClick={undoStack.undo}
+                disabled={!undoStack.canUndo}
+                title="Undo (Ctrl+Z)"
+              >↩</button>
+              <button
+                className="redo-btn"
+                onClick={undoStack.redo}
+                disabled={!undoStack.canRedo}
+                title="Redo (Ctrl+Shift+Z)"
+              >↪</button>
+            </div>
+          )}
           {/* View mode toggles — shown when canvas has nodes */}
           {active.rawNodesRef.current.length > 0 && (
             <>
@@ -2681,6 +2731,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           mode={activeMode}
           hasProjectPath={!!cbProjectPath}
           onSplit={() => {
+            undoStack.pushSnapshot('before-split');
             const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
             if (node) nodeTools.handleRazor(node);
           }}
@@ -2689,16 +2740,101 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
             if (node) nodeTools.handleStartMerge(node);
           }}
           onRippleDelete={() => {
+            undoStack.pushSnapshot('before-ripple-delete');
             const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
             if (node) nodeTools.handleRippleDelete(node);
           }}
           onDeleteBranch={() => {
+            undoStack.pushSnapshot('before-delete-branch');
             const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
             if (node) nodeTools.handleDeleteBranch(node);
           }}
           isSplitting={nodeTools.isSplitting}
           isMerging={nodeTools.isMerging}
+          onInspect={(nid) => {
+            const node = active.rawNodesRef.current.find(n => n.id === nid);
+            if (node) setInspectorNode(node);
+          }}
         />
+      )}
+
+      {/* ── F4: Preview Overlay ── */}
+      {previewState && (
+        <PreviewOverlay
+          previewNodes={previewState.nodes}
+          removedNodeIds={previewState.removedIds}
+          actionLabel={previewState.label}
+          onAccept={() => {
+            previewState.onAccept?.();
+            setPreviewState(null);
+          }}
+          onReject={() => {
+            previewState.onReject?.();
+            setPreviewState(null);
+          }}
+        />
+      )}
+
+      {/* ── F5: Inspector Panel ── */}
+      {inspectorNode && (
+        <InspectorPanel
+          node={inspectorNode}
+          rawNodesRef={active.rawNodesRef}
+          onSave={(nodeId, updates) => {
+            active.handleSaveNodeEdit(nodeId, updates);
+            // Refresh inspector with updated node
+            const updated = active.rawNodesRef.current.find(n => n.id === nodeId);
+            if (updated) setInspectorNode(updated);
+          }}
+          onClose={() => setInspectorNode(null)}
+          onNodeClick={(n) => {
+            active.handleNodeClick(n);
+            setInspectorNode(n);
+          }}
+        />
+      )}
+
+      {/* ── F5: Hover Preview Tooltip ── */}
+      {hoverPreview.hoverPreview && (
+        <div
+          className="hover-preview-card"
+          style={{
+            left: Math.min(hoverPreview.hoverPreview.x + 20, window.innerWidth - 320),
+            top: Math.min(hoverPreview.hoverPreview.y - 10, window.innerHeight - 200),
+          }}
+        >
+          <div className="hover-preview-header">
+            <span className="hover-preview-type" style={{
+              color: hoverPreview.hoverPreview.nodeData?.type === 'thesis' ? '#a78bfa' :
+                     hoverPreview.hoverPreview.nodeData?.type === 'antithesis' ? '#f472b6' :
+                     hoverPreview.hoverPreview.nodeData?.type === 'synthesis' ? '#34d399' : '#888'
+            }}>
+              {(hoverPreview.hoverPreview.nodeData?.type || 'node').toUpperCase()}
+            </span>
+            {hoverPreview.hoverPreview.nodeData?.score != null && (
+              <span className="hover-preview-score">
+                {hoverPreview.hoverPreview.nodeData.score}/10
+              </span>
+            )}
+          </div>
+          <div className="hover-preview-label">
+            {hoverPreview.hoverPreview.nodeData?.label}
+          </div>
+          {hoverPreview.hoverPreview.nodeData?.reasoning && (
+            <div className="hover-preview-reasoning">
+              {hoverPreview.hoverPreview.nodeData.reasoning.slice(0, 120)}
+              {hoverPreview.hoverPreview.nodeData.reasoning.length > 120 ? '…' : ''}
+            </div>
+          )}
+          <div className="hover-preview-meta">
+            {hoverPreview.hoverPreview.parents.length > 0 && (
+              <span>↑ {hoverPreview.hoverPreview.parents.length} parent{hoverPreview.hoverPreview.parents.length > 1 ? 's' : ''}</span>
+            )}
+            {hoverPreview.hoverPreview.childCount > 0 && (
+              <span>↓ {hoverPreview.hoverPreview.childCount} children</span>
+            )}
+          </div>
+        </div>
       )}
 
       {showHistory && (

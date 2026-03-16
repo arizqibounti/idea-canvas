@@ -8616,3 +8616,297 @@
   border-color: rgba(66, 133, 244, 0.25) !important;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   F4: Ghost Nodes — shimmer animation for AI-streaming placeholders
+   ══════════════════════════════════════════════════════════════ */
+
+.idea-node-ghost {
+  animation: ghostPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ghostPulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.7; }
+}
+
+.ghost-shimmer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.ghost-pulse-bar {
+  width: 70%;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(139,92,246,0.4), transparent);
+  animation: ghostBarSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes ghostBarSlide {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   F4: Preview Overlay — atomic accept/reject for AI results
+   ══════════════════════════════════════════════════════════════ */
+
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.preview-overlay-card {
+  position: relative;
+  background: #16161f;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: previewSlideUp 0.2s ease;
+}
+
+@keyframes previewSlideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.preview-action-badge {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.preview-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  font-family: monospace;
+}
+
+.preview-stat-add {
+  color: #34d399;
+}
+.preview-stat-remove {
+  color: #f87171;
+}
+
+.preview-nodes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.preview-node-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #888;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.preview-node-type {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  margin-bottom: 4px;
+}
+
+.preview-node-label {
+  color: #e0e0f0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.preview-node-reasoning {
+  color: #8888b8;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-btn {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.preview-btn-reject {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.preview-btn-reject:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.preview-btn-accept {
+  background: rgba(52, 211, 153, 0.1);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.2);
+}
+.preview-btn-accept:hover {
+  background: rgba(52, 211, 153, 0.2);
+}
+
+.preview-hint {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 9px;
+  color: #444;
+}
+.preview-hint kbd {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 9px;
+  color: #666;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   F5: Hover Preview — floating tooltip on node hover
+   ══════════════════════════════════════════════════════════════ */
+
+.hover-preview-card {
+  position: fixed;
+  z-index: 300;
+  background: #1a1a28;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 12px 14px;
+  width: 280px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: hoverFadeIn 0.15s ease;
+}
+
+@keyframes hoverFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.hover-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.hover-preview-type {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.hover-preview-score {
+  font-size: 10px;
+  font-weight: 700;
+  color: #facc15;
+  font-family: monospace;
+}
+
+.hover-preview-label {
+  color: #e0e0f0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.hover-preview-reasoning {
+  color: #8888b8;
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding-top: 6px;
+}
+
+.hover-preview-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 9px;
+  color: #555;
+  font-family: monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   F4: Undo/Redo indicator badges
+   ══════════════════════════════════════════════════════════════ */
+
+.undo-redo-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.undo-btn, .redo-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: #555;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.undo-btn:hover:not(:disabled), .redo-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ccc;
+}
+.undo-btn:disabled, .redo-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+

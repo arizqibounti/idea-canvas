@@ -18,10 +18,14 @@ const IdeaNode = memo(({ data }) => {
   const isLeaf = data.childCount === 0;
   const isConvergence = (data.parentIds?.length || 0) > 1;
   const hasLoop = !!data.loopId;
+  const isGhost = data.isGhost === true;
+  const isMergeTarget = data.isMergeTarget === true;
 
   // Build box shadow — add subtle bottom glow for unexplored leaves
   let boxShadow;
-  if (isStarred) {
+  if (isMergeTarget) {
+    boxShadow = '0 0 0 2px #818cf8, 0 0 20px rgba(129,140,248,0.4)';
+  } else if (isStarred) {
     boxShadow = '0 0 0 2px #ffd43b, 0 0 28px rgba(255,212,59,0.3)';
   } else if (isSelected) {
     boxShadow = `0 0 0 2px ${config.color}, 0 0 24px ${config.glow}`;
@@ -34,23 +38,50 @@ const IdeaNode = memo(({ data }) => {
 
   return (
     <div
+      className={isGhost ? 'idea-node-ghost' : undefined}
+      onMouseEnter={() => data.onHoverPreview?.(data.nodeId, true)}
+      onMouseLeave={() => data.onHoverPreview?.(data.nodeId, false)}
       style={{
-        background: config.bg,
-        border: `1px solid ${isStarred ? '#ffd43b' : isSelected ? config.color : config.border}`,
+        background: isGhost ? 'rgba(139,92,246,0.05)' : config.bg,
+        border: `1px solid ${isMergeTarget ? '#818cf8' : isGhost ? 'rgba(139,92,246,0.2)' : isStarred ? '#ffd43b' : isSelected ? config.color : config.border}`,
         borderRadius: '8px',
         padding: '12px 14px',
         width: '260px',
-        minHeight: '100px',
+        minHeight: isGhost ? '60px' : '100px',
         position: 'relative',
         fontFamily: 'var(--font-mono)',
         cursor: isInRange ? 'pointer' : 'default',
         boxShadow,
         transition: 'opacity 0.3s ease, filter 0.3s ease, box-shadow 0.2s ease',
-        opacity: isDimmed ? 0.35 : (isInRange ? 1 : 0.08),
+        opacity: isGhost ? 0.6 : isDimmed ? 0.35 : (isInRange ? 1 : 0.08),
         filter: isDimmed ? 'saturate(0.4) brightness(0.7)' : (isInRange ? 'none' : 'saturate(0.2)'),
-        pointerEvents: isDimmed ? 'none' : (isInRange ? 'auto' : 'none'),
+        pointerEvents: isGhost ? 'none' : isDimmed ? 'none' : (isInRange ? 'auto' : 'none'),
       }}
     >
+      {/* Ghost shimmer overlay */}
+      {isGhost && (
+        <div className="ghost-shimmer">
+          <div style={{ color: '#a78bfa', fontSize: 11, fontWeight: 600 }}>
+            Generating…
+          </div>
+          <div className="ghost-pulse-bar" />
+        </div>
+      )}
+
+      {/* Merge target indicator */}
+      {isMergeTarget && (
+        <div style={{
+          position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+          background: '#1e1e2e', border: '1px solid #818cf8',
+          borderRadius: 8, padding: '1px 8px',
+          fontSize: 8, fontWeight: 700, color: '#818cf8',
+          fontFamily: 'var(--font-mono)', zIndex: 3,
+          letterSpacing: '0.06em',
+        }}>
+          MERGE TARGET
+        </div>
+      )}
+
       {/* Star badge */}
       {isStarred && (
         <div style={{

@@ -6,6 +6,7 @@ export default function NodeContextMenu({
   onExecuteAction, mode, hasProjectPath,
   onSplit, onMerge, onRippleDelete, onDeleteBranch,
   isSplitting, isMerging,
+  onInspect,
 }) {
   const isStarred = nodeData?.starred;
   const showStar = sprintPhase === 'converge';
@@ -68,6 +69,15 @@ export default function NodeContextMenu({
             </button>
           </>
         )}
+
+        <div className="ctx-divider" />
+        <button
+          className="ctx-item"
+          onClick={() => { onInspect?.(nodeId); onClose(); }}
+          title="Open inspector panel (I)"
+        >
+          ⊞ INSPECT (I)
+        </button>
 
         {isCodeMode && (
           <>
