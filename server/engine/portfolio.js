@@ -17,6 +17,14 @@ const { getKnowledgeContext } = require('../gateway/knowledge');
 
 const GEMINI_MODEL = 'gemini-3.1-pro-preview';
 
+// Timeout wrapper — rejects if promise doesn't resolve within ms
+function withTimeout(promise, ms, label = 'operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)),
+  ]);
+}
+
 // ── POST /api/portfolio/generate ─────────────────────────────
 // Streaming SSE: generate 3-5 alternative approaches with mini-trees
 // Enriched with research pipeline + multi-agent lens perspectives
@@ -28,79 +36,88 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
   sseHeaders(res);
 
   try {
-    // ── Phase 0: Entity enrichment ─────────────────────────
+    // ── Phase 0: Entity enrichment (10s timeout) ──────────
     let enrichedContent = fetchedUrlContent || [];
     try {
-      const existingUrls = enrichedContent.map(u => u.url);
-      const entities = await enrichEntities(gemini, idea, existingUrls);
-      if (entities.length) {
-        res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching entities...' })}\n\n`);
-        const entityResults = await Promise.all(entities.map(async (e) => {
-          const result = await fetchPage(e.url, 6000);
-          return result ? { url: result.url, text: result.text, entityName: e.name } : null;
-        }));
-        const enriched = entityResults.filter(Boolean);
-        if (enriched.length) enrichedContent = [...enrichedContent, ...enriched];
-      }
+      const entityWork = async () => {
+        const existingUrls = enrichedContent.map(u => u.url);
+        const entities = await enrichEntities(gemini, idea, existingUrls);
+        if (entities.length) {
+          res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching entities...' })}\n\n`);
+          const entityResults = await Promise.all(entities.map(async (e) => {
+            const result = await fetchPage(e.url, 6000);
+            return result ? { url: result.url, text: result.text, entityName: e.name } : null;
+          }));
+          const enriched = entityResults.filter(Boolean);
+          if (enriched.length) enrichedContent = [...enrichedContent, ...enriched];
+        }
+      };
+      await withTimeout(entityWork(), 10000, 'Entity enrichment');
     } catch (err) {
       console.error('Portfolio entity enrichment error:', err.message);
     }
 
-    // ── Phase 1: Research pipeline ─────────────────────────
+    // ── Phase 1: Research pipeline (20s timeout) ──────────
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Planning research for portfolio alternatives...' })}\n\n`);
 
     let researchBrief = '';
     try {
-      const existingStr = enrichedContent
-        .map(u => `${u.url}: ${u.text?.slice(0, 500)}`)
-        .join('\n');
-      const researchPlan = await planResearch(gemini, idea, existingStr);
+      const researchWork = async () => {
+        const existingStr = enrichedContent
+          .map(u => `${u.url}: ${u.text?.slice(0, 500)}`)
+          .join('\n');
+        const researchPlan = await planResearch(gemini, idea, existingStr);
 
-      res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching market, technology & audience...' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching market, technology & audience...' })}\n\n`);
 
-      const agentTypes = ['market', 'technology', 'audience'];
-      const agentResults = await Promise.all(
-        agentTypes.map(agentType =>
-          runResearchAgent(gemini, agentType, researchPlan, existingStr)
-        )
-      );
-      researchBrief = buildResearchBrief(agentResults);
+        const agentTypes = ['market', 'technology', 'audience'];
+        const agentResults = await Promise.all(
+          agentTypes.map(agentType =>
+            runResearchAgent(gemini, agentType, researchPlan, existingStr)
+          )
+        );
+        return buildResearchBrief(agentResults);
+      };
+      researchBrief = await withTimeout(researchWork(), 20000, 'Research pipeline');
     } catch (err) {
       console.error('Portfolio research pipeline error:', err.message);
     }
 
-    // ── Phase 2: Multi-agent lens analysis ─────────────────
+    // ── Phase 2: Multi-agent lens analysis (15s timeout) ───
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Analyzing from multiple perspectives...' })}\n\n`);
 
     let lensContext = '';
     try {
-      const lensInput = `Analyze this idea for generating alternative approaches:\n\n"${idea}"${researchBrief ? `\n\n${researchBrief}` : ''}`;
+      const lensWork = async () => {
+        const lensInput = `Analyze this idea for generating alternative approaches:\n\n"${idea}"${researchBrief ? `\n\n${researchBrief}` : ''}`;
 
-      const lensPrompts = [
-        { prompt: LENS_ANALOGICAL_PROMPT, name: 'analogical' },
-        { prompt: LENS_FIRST_PRINCIPLES_PROMPT, name: 'first_principles' },
-        { prompt: LENS_ADVERSARIAL_PROMPT, name: 'adversarial' },
-      ];
+        const lensPrompts = [
+          { prompt: LENS_ANALOGICAL_PROMPT, name: 'analogical' },
+          { prompt: LENS_FIRST_PRINCIPLES_PROMPT, name: 'first_principles' },
+          { prompt: LENS_ADVERSARIAL_PROMPT, name: 'adversarial' },
+        ];
 
-      const lensResults = await Promise.all(lensPrompts.map(async (lens, i) => {
-        try {
-          const response = await gemini.models.generateContent({
-            model: GEMINI_MODEL,
-            contents: lensInput,
-            config: {
-              systemInstruction: lens.prompt,
-              maxOutputTokens: 1500,
-            },
-          });
-          const stageMsgs = ['Analogical analysis complete', 'First-principles analysis complete', 'Adversarial analysis complete'];
-          res.write(`data: ${JSON.stringify({ _progress: true, stage: `${stageMsgs[i]} (${i + 1}/3)...` })}\n\n`);
-          return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${response.text || ''}`;
-        } catch {
-          return '';
-        }
-      }));
+        const lensResults = await Promise.all(lensPrompts.map(async (lens, i) => {
+          try {
+            const response = await gemini.models.generateContent({
+              model: GEMINI_MODEL,
+              contents: lensInput,
+              config: {
+                systemInstruction: lens.prompt,
+                maxOutputTokens: 1500,
+              },
+            });
+            const stageMsgs = ['Analogical analysis complete', 'First-principles analysis complete', 'Adversarial analysis complete'];
+            res.write(`data: ${JSON.stringify({ _progress: true, stage: `${stageMsgs[i]} (${i + 1}/3)...` })}\n\n`);
+            return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${response.text || ''}`;
+          } catch {
+            return '';
+          }
+        }));
 
-      lensContext = lensResults.filter(Boolean).join('\n\n');
+        return lensResults.filter(Boolean).join('\n\n');
+      };
+      lensContext = await withTimeout(lensWork(), 15000, 'Lens analysis');
     } catch (err) {
       console.error('Portfolio multi-agent lens error:', err.message);
     }
@@ -174,21 +191,28 @@ One JSON per line. No markdown.`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
-    const stream = await gemini.models.generateContentStream({
-      model: GEMINI_MODEL,
-      contents: userContent,
-      config: {
-        systemInstruction: systemPrompt,
-        maxOutputTokens: 8192,
-        thinkingConfig: { thinkingLevel: 'MEDIUM' },
-      },
-    });
+    const stream = await withTimeout(
+      gemini.models.generateContentStream({
+        model: GEMINI_MODEL,
+        contents: userContent,
+        config: {
+          systemInstruction: systemPrompt,
+          maxOutputTokens: 8192,
+          thinkingConfig: { thinkingLevel: 'MEDIUM' },
+        },
+      }),
+      30000,
+      'Gemini stream init',
+    );
 
-    await geminiStreamToSSE(res, stream);
+    await withTimeout(geminiStreamToSSE(res, stream), 90000, 'Portfolio generation stream');
   } catch (err) {
     console.error('Portfolio generate error:', err);
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-    res.end();
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 }
 
@@ -251,18 +275,33 @@ async function handlePortfolioScore(client, req, res, gemini) {
       const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
       result = JSON.parse(cleaned);
     } catch {
+      // Try extracting the outermost JSON object and repairing common issues
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
-        result = JSON.parse(match[0]);
+        try {
+          result = JSON.parse(match[0]);
+        } catch {
+          // Attempt repair: fix trailing commas, unterminated strings
+          let repaired = match[0]
+            .replace(/,\s*([}\]])/g, '$1')           // trailing commas
+            .replace(/([^\\])"\s*\n/g, '$1",\n')     // missing commas after strings
+            .replace(/:\s*"([^"]*?)(?:\n|$)/gm, ': "$1"'); // unterminated strings
+          try {
+            result = JSON.parse(repaired);
+          } catch {
+            console.warn('Portfolio score: JSON repair failed, returning empty scores');
+            result = { scores: [], recommendation: 'Scoring failed — try again.' };
+          }
+        }
       } else {
-        throw new Error('Could not parse score response');
+        result = { scores: [], recommendation: 'Scoring failed — could not parse response.' };
       }
     }
 
     res.json(result);
   } catch (err) {
     console.error('Portfolio score error:', err);
-    res.status(500).json({ error: err.message });
+    res.json({ scores: [], recommendation: 'Scoring temporarily unavailable.' });
   }
 }
 

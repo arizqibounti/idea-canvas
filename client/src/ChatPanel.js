@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { authFetch } from './api';
 import RefineCard from './chat/RefineCard';
 import PortfolioCard from './chat/PortfolioCard';
+import NodeFocusCard from './chat/NodeFocusCard';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -156,7 +157,7 @@ const CHAT_MODE_CONFIG = {
   plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, emailContext, pipelineStages, onClosePipeline }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -531,6 +532,19 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         {/* ── Live Portfolio Stream ── */}
         {portfolioStream && (
           <PortfolioCard state={portfolioStream} onAction={onCardButtonClick} />
+        )}
+
+        {/* ── Node Focus Card (sticky) ── */}
+        {focusedNode && (
+          <NodeFocusCard
+            node={focusedNode.node}
+            surgicalExpanded={focusedNode.surgicalExpanded}
+            isSplitting={focusedNode.isSplitting}
+            isMerging={focusedNode.isMerging}
+            mergeTarget={focusedNode.mergeTarget}
+            onAction={onCardButtonClick}
+            onDismiss={onDismissFocus}
+          />
         )}
 
         {streamingText && (() => {

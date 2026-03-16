@@ -55,14 +55,17 @@ export function readVersions(ideaKey) {
 export function buildFlowNode(raw) {
   // Normalize: support both parentId (legacy) and parentIds (brain architecture)
   const parentIds = raw.parentIds || (raw.parentId ? [raw.parentId] : []);
+  // Gemini sometimes uses alternate field names — normalize gracefully
+  const label = raw.label || raw.title || raw.name || '';
+  const reasoning = raw.reasoning || raw.description || raw.content || raw.explanation || '';
   return {
     id: raw.id,
     type: 'ideaNode',
     position: { x: 0, y: 0 },
     data: {
       type: raw.type,
-      label: raw.label,
-      reasoning: raw.reasoning,
+      label,
+      reasoning,
       parentIds,
       parentId: parentIds[0] || null, // backward compat
       relatedIds: raw.relatedIds || [],
@@ -107,7 +110,7 @@ export async function readSSEStream(response, onNode) {
  * @param {string} storageKey     - localStorage key for session persistence
  * @param {string} sessionLabel   - label field name used when saving ('idea' | 'folderName')
  */
-export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }) {
+export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, onNodeFocus }) {
   // yjsSyncRef: optional ref to Yjs sync object (from useYjsSync)
   // When set, mutations write-through to Yjs in addition to rawNodesRef
   // ── Canvas state ──────────────────────────────────────────
@@ -275,9 +278,13 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
 
   // ── Node click ────────────────────────────────────────────
   const handleNodeClick = useCallback((node) => {
-    setSelectedNode((prev) => (prev?.id === node.id ? null : node));
+    const isToggleOff = selectedNode?.id === node.id;
+    setSelectedNode(isToggleOff ? null : node);
     setContextMenu(null);
-  }, []);
+    if (onNodeFocus) {
+      onNodeFocus(isToggleOff ? null : node, { surgicalExpanded: false });
+    }
+  }, [selectedNode, onNodeFocus]);
 
   // ── Toggle star (converge phase) ──────────────────────────
   const handleToggleStar = useCallback((nodeId) => {
@@ -506,11 +513,21 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
 
   const handleNodeContextMenu = useCallback((nodeId, x, y) => {
     setContextMenu({ nodeId, x, y });
-  }, []);
+    // Also open chat-first focus card with surgical tools expanded
+    if (onNodeFocus) {
+      const node = rawNodesRef.current.find(n => n.id === nodeId);
+      if (node) {
+        setSelectedNode(node);
+        onNodeFocus(node, { surgicalExpanded: true });
+      }
+    }
+  }, [onNodeFocus]);
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
-  }, []);
+    if (onNodeFocus) onNodeFocus(null);
+    setSelectedNode(null);
+  }, [onNodeFocus]);
 
   // ── Toggle collapse/expand branch ──────────────────────────
   const handleToggleCollapse = useCallback((nodeId) => {

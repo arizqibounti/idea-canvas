@@ -1,9 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import IdeaCanvas from './IdeaCanvas';
-import NodeEditPanel from './NodeEditPanel';
-
-import NodeContextMenu from './NodeContextMenu';
 import CodebaseUpload from './CodebaseUpload';
 import ResumeInput from './ResumeInput';
 import HistoryModal from './HistoryModal';
@@ -92,12 +89,6 @@ function streamViaGateway(gateway, type, params, onNode) {
   });
 }
 
-const LEGEND_GROUPS = {
-  Product: ['seed', 'problem', 'user_segment', 'job_to_be_done', 'feature', 'constraint', 'metric', 'insight'],
-  Code: ['component', 'api_endpoint', 'data_model', 'tech_debt'],
-  Resume: ['requirement', 'skill_match', 'skill_gap', 'achievement', 'keyword', 'story', 'positioning'],
-  Critique: ['critique'],
-};
 
 // ── Round / temporal helpers (mirrors Graph3D) ────────────────────────────────
 function getRoundIndex(node) {
@@ -492,9 +483,19 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const yjsSyncRef = useRef(null);
   yjsSyncRef.current = yjs;
 
+  // ── Node focus for chat-first interactions ─────────────────
+  const handleNodeFocus = useCallback((node, opts = {}) => {
+    if (!node) {
+      setFocusedNode(null);
+      return;
+    }
+    setFocusedNode({ node, surgicalExpanded: opts.surgicalExpanded || false });
+    setShowChat(true);
+  }, []);
+
   // ── Canvas hooks ──────────────────────────────────────────
-  const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea', yjsSyncRef });
-  const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName' });
+  const idea$ = useCanvasMode({ storageKey: 'IDEA_CANVAS_SESSIONS', sessionLabel: 'idea', yjsSyncRef, onNodeFocus: handleNodeFocus });
+  const cb$ = useCanvasMode({ storageKey: 'CODEBASE_CANVAS_SESSIONS', sessionLabel: 'folderName', onNodeFocus: handleNodeFocus });
 
   // ── Auto-Refine hooks (one per canvas) ─────────────────────
   const refineIdea$ = useAutoRefine({
@@ -677,6 +678,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
   const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
+  const [focusedNode, setFocusedNode] = useState(null); // { node, surgicalExpanded } for chat-first node interactions
 
   // ── Share ────────────────────────────────────────────────────
   const [showShareModal, setShowShareModal] = useState(false);
@@ -1933,7 +1935,57 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     } else if (btn.actionType === 'generateMore') {
       startPortfolioInChat();
     }
-  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat]);
+    // ── Node Focus Card actions ──────────────────────────────
+    else if (btn.actionType === 'drillDown') {
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      active.handleDrill(btn.nodeId);
+      setFocusedNode(null);
+      setPendingChatCards(prev => [...prev, { label: `Drilled into "${node?.data?.label || btn.nodeId}"`, detail: null, buttons: [] }]);
+    } else if (btn.actionType === 'toggleStar') {
+      active.handleToggleStar(btn.nodeId);
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      const nowStarred = node?.data?.starred;
+      // Refresh focusedNode to show updated star state
+      if (node) setFocusedNode(prev => prev ? { ...prev, node: { ...node } } : null);
+    } else if (btn.actionType === 'expandNode') {
+      active.handleFractalExpand(btn.nodeId);
+      setPendingChatCards(prev => [...prev, { label: `Expanding "${active.rawNodesRef.current.find(n => n.id === btn.nodeId)?.data?.label || ''}"`, detail: 'Generating child nodes...', buttons: [] }]);
+    } else if (btn.actionType === 'regenerateNode') {
+      active.handleRegenerate(btn.nodeId);
+      setPendingChatCards(prev => [...prev, { label: 'Regenerating subtree', detail: 'AI is regenerating this branch...', buttons: [] }]);
+    } else if (btn.actionType === 'editNodeSave') {
+      active.handleSaveNodeEdit(btn.nodeId, btn.updates);
+      const updated = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      if (updated) setFocusedNode(prev => prev ? { ...prev, node: { ...updated } } : null);
+    } else if (btn.actionType === 'splitNode') {
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      if (node) nodeTools.handleRazor(node);
+    } else if (btn.actionType === 'mergeNode') {
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      if (node) nodeTools.handleStartMerge(node);
+    } else if (btn.actionType === 'cancelMerge') {
+      nodeTools.cancelMerge();
+    } else if (btn.actionType === 'rippleDelete') {
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      if (node) {
+        nodeTools.handleRippleDelete(node);
+        setFocusedNode(null);
+        setPendingChatCards(prev => [...prev, { label: `Deleted "${node.data?.label || ''}"`, detail: 'Children re-parented', buttons: [] }]);
+      }
+    } else if (btn.actionType === 'deleteBranch') {
+      const node = active.rawNodesRef.current.find(n => n.id === btn.nodeId);
+      if (node) {
+        nodeTools.handleDeleteBranch(node);
+        setFocusedNode(null);
+        setPendingChatCards(prev => [...prev, { label: `Deleted branch "${node.data?.label || ''}"`, detail: 'Node and all descendants removed', buttons: [] }]);
+      }
+    } else if (btn.actionType === 'fixThis') {
+      handleExecuteAction(btn.nodeId);
+    } else if (btn.actionType === 'dismissNodeFocus') {
+      setFocusedNode(null);
+      active.setSelectedNode(null);
+    }
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction]);
 
   // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
   const handleExecuteAction = useCallback(async (nodeId) => {
@@ -2707,56 +2759,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         )}
       </footer>
 
-      <NodeEditPanel
-        node={active.selectedNode}
-        onClose={() => active.setSelectedNode(null)}
-        onSave={active.handleSaveNodeEdit}
-        onRegenerate={active.handleRegenerate}
-        isDisabled={isBusy}
-        onGetAncestors={active.handleGetAncestors}
-        allowRegenerate={true}
-      />
+      {/* NodeEditPanel removed — replaced by NodeFocusCard in ChatPanel */}
 
-      {active.contextMenu && (
-        <NodeContextMenu
-          x={active.contextMenu.x}
-          y={active.contextMenu.y}
-          nodeId={active.contextMenu.nodeId}
-          nodeData={active.nodes.find((n) => n.id === active.contextMenu.nodeId)?.data}
-          onDrill={active.handleDrill}
-          onToggleStar={active.handleToggleStar}
-          onClose={active.handleCloseContextMenu}
-          sprintPhase={null}
-          onExecuteAction={handleExecuteAction}
-          mode={activeMode}
-          hasProjectPath={!!cbProjectPath}
-          onSplit={() => {
-            undoStack.pushSnapshot('before-split');
-            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
-            if (node) nodeTools.handleRazor(node);
-          }}
-          onMerge={() => {
-            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
-            if (node) nodeTools.handleStartMerge(node);
-          }}
-          onRippleDelete={() => {
-            undoStack.pushSnapshot('before-ripple-delete');
-            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
-            if (node) nodeTools.handleRippleDelete(node);
-          }}
-          onDeleteBranch={() => {
-            undoStack.pushSnapshot('before-delete-branch');
-            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
-            if (node) nodeTools.handleDeleteBranch(node);
-          }}
-          isSplitting={nodeTools.isSplitting}
-          isMerging={nodeTools.isMerging}
-          onInspect={(nid) => {
-            const node = active.rawNodesRef.current.find(n => n.id === nid);
-            if (node) setInspectorNode(node);
-          }}
-        />
-      )}
+      {/* NodeContextMenu removed — replaced by NodeFocusCard in ChatPanel */}
 
       {/* ── F4: Preview Overlay ── */}
       {previewState && (
@@ -2885,6 +2890,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         onDismissStream={() => setExecutionStream(null)}
         refineStream={refineStream}
         portfolioStream={portfolioStream}
+        focusedNode={focusedNode ? {
+          ...focusedNode,
+          node: active.rawNodesRef.current.find(n => n.id === focusedNode.node?.id) || focusedNode.node,
+          isSplitting: nodeTools.isSplitting,
+          isMerging: nodeTools.isMerging,
+          mergeTarget: nodeTools.mergeTarget,
+        } : null}
+        onDismissFocus={() => { setFocusedNode(null); active.setSelectedNode(null); }}
         emailContext={emailContext}
         pipelineStages={pipelineStages}
         onClosePipeline={() => setPipelineStages(null)}
@@ -2982,38 +2995,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         idea={ideaText}
       />
 
-      <footer className="legend">
-        {dynamicDomain && dynamicLegendTypes.length > 0 ? (
-          <div className="legend-group">
-            <span className="legend-group-label">{dynamicDomain}</span>
-            {dynamicLegendTypes.map((type) => {
-              const cfg = getNodeConfig(type, dynamicConfigRef.current);
-              return (
-                <div key={type} className="legend-item">
-                  <span className="legend-dot" style={{ background: cfg.color }} />
-                  <span className="legend-label" style={{ color: cfg.color }}>{cfg.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          Object.entries(LEGEND_GROUPS).map(([groupLabel, types]) => (
-            <div key={groupLabel} className="legend-group">
-              <span className="legend-group-label">{groupLabel}</span>
-              {types.map((type) => {
-                const cfg = NODE_TYPES_CONFIG[type];
-                if (!cfg) return null;
-                return (
-                  <div key={type} className="legend-item">
-                    <span className="legend-dot" style={{ background: cfg.color }} />
-                    <span className="legend-label" style={{ color: cfg.color }}>{cfg.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ))
-        )}
-      </footer>
     </div>
   );
 }

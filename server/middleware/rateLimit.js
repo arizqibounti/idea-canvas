@@ -1,6 +1,9 @@
 // ── Rate Limiting Middleware ────────────────────────────────────
 // In-memory token-bucket rate limiter per user UID.
 // Two tiers: generation limit (plan-based) and general limit (all API).
+// Disabled entirely in dev mode.
+
+const IS_DEV = process.env.NODE_ENV !== 'production';
 
 const buckets = new Map();
 
@@ -51,6 +54,8 @@ function getGenerationCount(userId, plan) {
  * Limit is based on user's plan (free: 20/day, pro: 150/day).
  */
 function generationLimit(req, res, next) {
+  if (IS_DEV) return next();
+
   const uid = req.user?.uid;
   if (!uid) return res.status(401).json({ error: 'Auth required' });
 
@@ -77,6 +82,8 @@ function generationLimit(req, res, next) {
  * generalLimit — blocks if user exceeded per-minute API rate.
  */
 function generalLimit(req, res, next) {
+  if (IS_DEV) return next();
+
   const key = `api:${req.user?.uid || req.ip}`;
   const result = checkLimit(key, GENERAL_LIMIT);
   if (!result.allowed) {
