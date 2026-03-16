@@ -1077,6 +1077,100 @@ Ground every change in what the debate identified — the hiring manager's speci
 
 Generate 6-15 high-impact changes. Output ONLY the JSON object. No markdown fences, no explanation.`;
 
+// ── Learn-mode debate prompts (curriculum quality critique) ──────
+
+const LEARN_DEBATE_CRITIC_PROMPT = `You are an expert curriculum designer and learning scientist evaluating a concept learning tree. You assess whether this curriculum will actually help a student build deep, durable understanding — not just surface familiarity.
+
+Your job: generate 6-10 critique nodes that identify structural weaknesses in the learning path.
+
+**EVALUATION FRAMEWORK — assess based on:**
+
+1. **PREREQUISITE ORDERING**: Are concepts sequenced so that every concept's prerequisites are taught first? Flag any concept that requires knowledge the tree hasn't yet introduced. Check for circular or missing dependency edges.
+
+2. **CONCEPT COVERAGE**: Are there gaps where a critical sub-concept is missing? Would a student hit a wall because the tree skips a necessary building block? Is the scope appropriate — not too broad (shallow survey) or too narrow (misses context)?
+
+3. **DIFFICULTY PROGRESSION**: Does difficulty ramp smoothly? Flag sudden jumps where a student would go from basic recall to advanced application without intermediate steps. Check that exercises match the concepts they follow.
+
+4. **PEDAGOGICAL QUALITY**: Are analogies accurate and helpful (not misleading)? Are misconception nodes targeting real, common misunderstandings? Do exercise nodes test the right level of understanding?
+
+5. **MILESTONE PLACEMENT**: Are milestones at natural integration points where multiple concepts come together? Or are they arbitrary? Does each milestone have enough preceding concepts to form a meaningful checkpoint?
+
+6. **ENGAGEMENT & MOTIVATION**: Is the curriculum front-loaded with too much theory before any hands-on practice? Are there enough concrete examples and exercises to maintain engagement? Would a student understand *why* each concept matters before diving into *how*?
+
+**Output format — valid JSON object, nothing else:**
+{
+  "verdict": "NO" | "YES",
+  "round_summary": "string (2-3 sentences: will this curriculum effectively build understanding, or does it have structural issues?)",
+  "critiques": [
+    {
+      "id": "string (e.g. dc_1, dc_2)",
+      "targetNodeId": "string (real id from the tree)",
+      "targetNodeLabel": "string (label of that node)",
+      "category": "prerequisite" | "coverage" | "difficulty" | "pedagogy" | "milestone" | "engagement",
+      "challenge": "string (1 punchy sentence, max 12 words, names the specific curriculum gap)",
+      "reasoning": "string (2-3 sentences with specifics — name the missing concept, broken ordering, or pedagogical issue)"
+    }
+  ],
+  "suggestions": ["string (specific, actionable improvements to make the curriculum more effective)"]
+}
+
+**Verdict rules:**
+- "YES" = This curriculum will effectively build understanding — prerequisites are ordered, difficulty ramps smoothly, and the learning path is complete.
+- "NO" = This curriculum has structural issues — missing prerequisites, concept gaps, broken ordering, or pedagogical weaknesses that will confuse or frustrate the student.
+- You CAN say "YES" in round 1 if the curriculum is genuinely well-designed.
+
+Output ONLY the JSON object. No markdown fences, no explanation.`;
+
+const LEARN_DEBATE_ARCHITECT_PROMPT = `You are a master tutor and instructional designer. A curriculum reviewer has flagged weaknesses in this concept learning tree. Your job: address each critique by generating new nodes that strengthen the learning path.
+
+**FOR EACH CRITIQUE — respond with the right approach:**
+
+1. **For "prerequisite" critiques**: Generate a \`prerequisite\` node that fills the missing dependency — explain the concept clearly and connect it as a parent of the concept that needs it. Ensure the parentId chain is correct.
+
+2. **For "coverage" critiques**: Generate \`concept\` or \`prerequisite\` nodes that fill the identified gap — add the missing building block with clear reasoning that explains what it is and why the student needs it before proceeding.
+
+3. **For "difficulty" critiques**: Generate \`exercise\` or \`analogy\` nodes that bridge the difficulty jump — create intermediate steps, worked examples, or scaffolded exercises that ease the transition from simple to complex.
+
+4. **For "pedagogy" critiques**: Generate \`analogy\` nodes with more accurate/helpful comparisons, or \`misconception\` nodes that directly address the identified issue. Replace misleading analogies with better ones.
+
+5. **For "milestone" critiques**: Generate \`milestone\` nodes at better integration points, or \`exercise\` nodes that test cross-concept understanding to make the milestone meaningful.
+
+6. **For "engagement" critiques**: Generate \`exercise\` nodes with hands-on activities, \`analogy\` nodes with relatable real-world connections, or reorder by adding bridge nodes that motivate the "why" before the "how."
+
+**Output rules:** one JSON object per line, no markdown, no arrays.
+Each node shape: {"id": "string", "parentId": "string", "type": "string", "label": "string (max 8 words)", "reasoning": "string (2-3 sentences with the specific pedagogical fix)"}
+
+**Node types to use:** concept, prerequisite, exercise, analogy, misconception, milestone
+
+**Rules:**
+- parentId must be the targetNodeId from the critique being addressed (or another new node you generate)
+- All new ids must be prefixed with "rebut_r{round}_"
+- Be concrete. "Add more exercises" is rejected. "Add a matrix multiplication exercise: multiply a 3x2 matrix by a 2x1 vector step-by-step, showing how each output element is computed as a dot product" is accepted.
+- Do NOT re-output existing nodes. Only generate new ones.
+
+Generate enough nodes to address all critiques. Output ONLY node JSON objects, one per line.`;
+
+const LEARN_DEBATE_FINALIZE_PROMPT = `You are a curriculum architect synthesizing a completed pedagogical review into a refined concept learning tree. The curriculum reviewer and tutor have reached consensus. Crystallize the findings directly into the tree nodes.
+
+**WHAT TO DO:**
+1. Review which concepts were challenged and what specific improvements were established in the responses
+2. For challenged nodes: UPDATE them so their reasoning reflects better explanations, corrected ordering, or improved pedagogy
+3. For gaps the review surfaced but no response node covers: ADD new nodes with clear educational purpose
+4. Focus on making the learning path smooth, complete, and motivating
+
+**OUTPUT FORMAT — one JSON object per line:**
+- To UPDATE an existing node: {"_update": true, "id": "exact-existing-node-id", "type": "original-type", "label": "updated label max 8 words", "reasoning": "2-3 sentences embedding the pedagogical improvements from the review"}
+- To ADD a new synthesis node: {"id": "final_N", "parentId": "parent-id", "type": "type", "label": "label max 8 words", "reasoning": "2-3 sentences explaining the educational purpose"}
+
+**STRICT RULES:**
+- Only update nodes that were directly challenged.
+- Only add new nodes for gaps the review revealed.
+- Updated/new reasoning MUST embed the specific pedagogical fixes from the debate.
+- Do NOT output critique or rebuttal nodes.
+- Output 3-8 nodes total.
+
+Output ONLY node JSON objects, one per line. No markdown, no explanation.`;
+
 // ── Debate prompt maps + helpers ───────────────────────────────
 
 const CRITIC_PROMPT_MAP = {
@@ -1085,6 +1179,7 @@ const CRITIC_PROMPT_MAP = {
   decision: DECIDE_DEBATE_CRITIC_PROMPT,
   writing:  WRITE_DEBATE_CRITIC_PROMPT,
   plan:     PLAN_DEBATE_CRITIC_PROMPT,
+  learn:    LEARN_DEBATE_CRITIC_PROMPT,
 };
 
 const ARCHITECT_PROMPT_MAP = {
@@ -1093,6 +1188,7 @@ const ARCHITECT_PROMPT_MAP = {
   decision: DECIDE_DEBATE_ARCHITECT_PROMPT,
   writing:  WRITE_DEBATE_ARCHITECT_PROMPT,
   plan:     PLAN_DEBATE_ARCHITECT_PROMPT,
+  learn:    LEARN_DEBATE_ARCHITECT_PROMPT,
 };
 
 const FINALIZE_PROMPT_MAP = {
@@ -1101,6 +1197,7 @@ const FINALIZE_PROMPT_MAP = {
   decision: DECIDE_DEBATE_FINALIZE_PROMPT,
   writing:  WRITE_DEBATE_FINALIZE_PROMPT,
   plan:     PLAN_DEBATE_FINALIZE_PROMPT,
+  learn:    LEARN_DEBATE_FINALIZE_PROMPT,
 };
 
 const MODE_SERVER_META = {
@@ -1395,6 +1492,27 @@ Rules:
 - Return 2-3 weaknesses maximum
 - Focus on execution risk, not aspirational thinking`;
 
+const REFINE_CRITIQUE_PROMPT_LEARN = `You are a curriculum quality reviewer evaluating a concept learning tree. Identify the 2-3 weakest nodes.
+
+Evaluate every node against these criteria:
+1. Prerequisite ordering: Does each concept have its dependencies taught first?
+2. Concept completeness: Are critical building blocks missing between concepts?
+3. Difficulty progression: Are there sudden jumps without intermediate scaffolding?
+4. Pedagogical clarity: Are explanations, analogies, and exercises clear and accurate?
+
+Output ONLY a single JSON object (no markdown, no explanation):
+{
+  "weaknesses": [
+    { "nodeId": "string", "nodeLabel": "string", "severity": 1-10, "reason": "string (1 sentence)", "approach": "expand" | "deepen" | "rewrite" | "add_evidence" }
+  ],
+  "overallScore": 1-10,
+  "stopReason": null
+}
+
+Rules:
+- Return 2-3 weaknesses maximum
+- Focus on learning path quality, not content depth`;
+
 const REFINE_CRITIQUE_PROMPT_MAP = {
   idea:     REFINE_CRITIQUE_PROMPT_IDEA,
   resume:   REFINE_CRITIQUE_PROMPT_RESUME,
@@ -1402,6 +1520,7 @@ const REFINE_CRITIQUE_PROMPT_MAP = {
   decision: REFINE_CRITIQUE_PROMPT_DECISION,
   writing:  REFINE_CRITIQUE_PROMPT_WRITING,
   plan:     REFINE_CRITIQUE_PROMPT_PLAN,
+  learn:    REFINE_CRITIQUE_PROMPT_LEARN,
 };
 
 const REFINE_STRENGTHEN_PROMPT = `You are a surgical tree improver. You receive a thinking tree and a list of weaknesses. Your job is to generate ONLY the nodes needed to fix those weaknesses.
@@ -1598,6 +1717,10 @@ module.exports = {
   PLAN_DEBATE_CRITIC_PROMPT,
   PLAN_DEBATE_ARCHITECT_PROMPT,
   PLAN_DEBATE_FINALIZE_PROMPT,
+  LEARN_DEBATE_CRITIC_PROMPT,
+  LEARN_DEBATE_ARCHITECT_PROMPT,
+  LEARN_DEBATE_FINALIZE_PROMPT,
+  REFINE_CRITIQUE_PROMPT_LEARN,
   DEBATE_CRITIC_PROMPT,
   DEBATE_ARCHITECT_PROMPT,
   DEBATE_FINALIZE_PROMPT,
