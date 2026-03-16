@@ -105,6 +105,31 @@ const IdeaNode = memo(({ data }) => {
         </div>
       )}
 
+      {/* Mastery badge (learn mode) */}
+      {data.mastery != null && data.mastery > 0 && (
+        <div style={{
+          position: 'absolute', top: 7,
+          right: data.score != null ? (isStarred ? 100 : 50) : (isStarred ? 65 : 10),
+          display: 'flex', alignItems: 'center', padding: '1px 6px',
+          borderRadius: 4, fontSize: 10, fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          background: data.mastery >= 8 ? 'rgba(34,197,94,0.15)' : data.mastery >= 5 ? 'rgba(251,191,36,0.15)' : 'rgba(239,68,68,0.15)',
+          color: data.mastery >= 8 ? '#22c55e' : data.mastery >= 5 ? '#fbbf24' : '#ef4444',
+          border: `1px solid ${data.mastery >= 8 ? 'rgba(34,197,94,0.3)' : data.mastery >= 5 ? 'rgba(251,191,36,0.3)' : 'rgba(239,68,68,0.3)'}`,
+        }}>
+          {data.mastery >= 8 ? '✓' : data.mastery >= 5 ? '◐' : '○'} {data.mastery}/10
+        </div>
+      )}
+
+      {/* Mastery left accent bar (learn mode) */}
+      {data.mastery != null && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, bottom: 0, width: 4,
+          borderRadius: '8px 0 0 8px',
+          background: data.mastery >= 8 ? '#22c55e' : data.mastery >= 5 ? '#fbbf24' : data.mastery >= 1 ? '#ef4444' : '#374151',
+        }} />
+      )}
+
       {/* Depth indicator */}
       {data.depth >= 2 && (
         <span style={{

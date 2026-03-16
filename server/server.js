@@ -148,6 +148,13 @@ app.post('/api/refine/score',       (req, res) => handleRefineScore(client, req,
 app.post('/api/portfolio/generate', generationLimit, (req, res) => handlePortfolioGenerate(client, req, res, gemini));
 app.post('/api/portfolio/score',    (req, res) => handlePortfolioScore(client, req, res, gemini));
 
+// Learn mode (probe/evaluate lightweight, adapt rate-limited)
+const { handleLearnProbe, handleLearnEvaluate, handleLearnAdapt, handleLearnSocratic } = require('./engine/learn');
+app.post('/api/learn/probe',       (req, res) => handleLearnProbe(client, req, res));
+app.post('/api/learn/evaluate',    (req, res) => handleLearnEvaluate(client, req, res));
+app.post('/api/learn/adapt',       generationLimit, (req, res) => handleLearnAdapt(client, req, res));
+app.post('/api/learn/socratic',    (req, res) => handleLearnSocratic(client, req, res));
+
 // Node tools (split/merge)
 app.post('/api/split-node',  generationLimit, (req, res) => handleSplitNode(client, req, res));
 app.post('/api/merge-nodes', generationLimit, (req, res) => handleMergeNodes(client, req, res));

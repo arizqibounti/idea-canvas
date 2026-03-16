@@ -14,6 +14,7 @@ const {
   CAUSAL_SYSTEM_PROMPT,
   AGGREGATE_PROMPT,
   REFINE_PROMPT,
+  LEARN_CURRICULUM_PROMPT,
 } = require('./prompts');
 
 const { sseHeaders, streamToSSE, streamToSSECollect, parseMessageToNodes } = require('../utils/sse');
@@ -50,6 +51,7 @@ async function handleGenerate(client, req, res) {
   // Select system prompt based on the active mode
   const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
     : mode === 'causal' ? CAUSAL_SYSTEM_PROMPT
+    : mode === 'learn' ? LEARN_CURRICULUM_PROMPT
     : SYSTEM_PROMPT;
 
   // userContent can be a string or an array of content blocks (for PDF)

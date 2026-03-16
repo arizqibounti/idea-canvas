@@ -29,6 +29,7 @@ import SettingsPage from './settings/SettingsPage';
 import KnowledgeGraph from './KnowledgeGraph';
 import { useAutoRefine } from './useAutoRefine';
 import { usePortfolio } from './usePortfolio';
+import { useLearnLoop } from './useLearnLoop';
 import PipelineOverlay from './PipelineOverlay';
 import FlowchartView from './FlowchartView';
 import GmailPicker from './GmailConnect';
@@ -60,6 +61,7 @@ const DEBATE_LABELS = {
   decision: { icon: '⚖', label: 'ADVOCATE',  tooltip: "Devil's advocate analysis of your decision" },
   writing:  { icon: '✦', label: 'EDITORIAL', tooltip: 'Senior editor review of your writing' },
   plan:     { icon: '◉', label: 'RISK',      tooltip: 'Risk analyst review of your plan' },
+  learn:    { icon: '⧫', label: 'CHALLENGE', tooltip: 'Socratic challenge of your understanding' },
 };
 
 const CHAT_LABELS = {
@@ -69,6 +71,7 @@ const CHAT_LABELS = {
   decision: { title: 'ANALYST',   tooltip: 'Decision analyst companion' },
   writing:  { title: 'EDITOR',    tooltip: 'Writing editor companion' },
   plan:     { title: 'PLANNER',   tooltip: 'Project advisor companion' },
+  learn:    { title: 'TUTOR',     tooltip: 'AI learning tutor' },
 };
 
 // Helper: stream generation via WebSocket, with same callback pattern as readSSEStream
@@ -531,6 +534,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     yjsSyncRef: { current: null },
   });
 
+  // ── Learn Loop hook (idea canvas only) ──────────────────────
+  const learn$ = useLearnLoop({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    dynamicTypesRef: idea$.dynamicTypesRef,
+    yjsSyncRef,
+    setNodeCount: idea$.setNodeCount,
+  });
+
   // ── Load initial session from dashboard ───────────────────
   const initialSessionLoaded = useRef(false);
   useEffect(() => {
@@ -678,6 +691,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
   const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
+  const [learnStream, setLearnStream] = useState(null); // live learn loop progress for inline chat card
   const [focusedNode, setFocusedNode] = useState(null); // { node, surgicalExpanded } for chat-first node interactions
 
   // ── Share ────────────────────────────────────────────────────
@@ -1567,6 +1581,23 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     });
   }, [portfolio$, ideaText, displayMode, portfolioFocus]);
 
+  // ── Shared: run learn loop inline in chat ──────────────────
+  const startLearnInChat = useCallback((targetMastery = 7) => {
+    setLearnStream({ status: 'generating_probe', detail: 'Starting comprehension loop...' });
+    setShowChat(true);
+    learn$.handleStartLearn(ideaText, targetMastery, (progress) => {
+      if (progress.status === 'done' || progress.status === 'complete') {
+        setLearnStream(null);
+        setPendingChatCards(prev => [...prev, {
+          type: 'learn_card',
+          state: { status: 'complete', masteryMap: progress.masteryMap || {}, totalConcepts: progress.totalConcepts },
+        }]);
+      } else {
+        setLearnStream(progress);
+      }
+    });
+  }, [learn$, ideaText]);
+
   // ── Load session handlers ─────────────────────────────────
   const handleLoadIdeaSession = useCallback((session) => {
     idea$.handleLoadSession(session, setIdea);
@@ -1893,12 +1924,107 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
 
+  // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
+  const handleExecuteAction = useCallback(async (nodeId) => {
+    const targetNode = active.rawNodesRef.current.find(n => n.id === nodeId);
+    if (!targetNode) return;
+    if (!cbProjectPath) {
+      setPendingChatCards(prev => [...prev, {
+        label: '⚠ No project path set',
+        detail: 'Enter your local project path in the CODE mode header to enable "Fix this".',
+        buttons: [],
+      }]);
+      setShowChat(true);
+      return;
+    }
+
+    // Set node to in_progress
+    active.updateNodeStatus(nodeId, 'in_progress', null);
+
+    // Initialize live execution stream in chat
+    const nodeLabel = targetNode.data.label;
+    setExecutionStream({ nodeLabel, text: '', done: false, error: null, nodeId });
+    setShowChat(true);
+
+    // Create abort controller
+    const abortController = new AbortController();
+    executionAbortRef.current = abortController;
+
+    let streamAccum = '';
+
+    try {
+      const res = await authFetch(`${API_URL}/api/execute-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeId,
+          nodeData: targetNode.data,
+          mode: 'codebase',
+          projectPath: cbProjectPath,
+        }),
+        signal: abortController.signal,
+      });
+
+      // Read SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+
+          try {
+            const evt = JSON.parse(payload);
+            if (evt._text) {
+              streamAccum += evt.text;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
+            } else if (evt._progress) {
+              streamAccum += `\n── ${evt.stage} ──\n`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
+            } else if (evt._result) {
+              active.updateNodeStatus(nodeId, 'completed', evt);
+              streamAccum += `\n✓ ${evt.summary || 'Fix completed successfully.'}`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true } : prev);
+            } else if (evt._error) {
+              active.updateNodeStatus(nodeId, 'failed', { error: evt.error });
+              streamAccum += `\n✗ Error: ${evt.error || 'An error occurred.'}`;
+              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true, error: evt.error } : prev);
+            }
+          } catch {
+            // skip unparseable lines
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        active.updateNodeStatus(nodeId, 'failed', { error: 'Aborted by user' });
+        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + '\n⏹ Execution stopped by user.', done: true, error: 'Aborted' } : prev);
+      } else {
+        active.updateNodeStatus(nodeId, 'failed', { error: err.message });
+        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + `\n✗ ${err.message || 'Network error.'}`, done: true, error: err.message } : prev);
+      }
+    } finally {
+      executionAbortRef.current = null;
+    }
+  }, [active, cbProjectPath]);
+
   const handleCardButtonClick = useCallback((btn) => {
     if (btn.actionType === 'openPanel') {
       if (btn.panel === 'debate') setShowDebate(true);
       else if (btn.panel === 'refine') startRefineInChat(3);
       else if (btn.panel === 'portfolio') startPortfolioInChat();
       else if (btn.panel === 'fractalExpand') setShowAutoFractal(true);
+      else if (btn.panel === 'learn') startLearnInChat(7);
     } else if (btn.actionType === 'stopExecution') {
       if (executionAbortRef.current) {
         executionAbortRef.current.abort();
@@ -1985,104 +2111,22 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       setFocusedNode(null);
       active.setSelectedNode(null);
     }
-  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction]);
-
-  // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
-  const handleExecuteAction = useCallback(async (nodeId) => {
-    const targetNode = active.rawNodesRef.current.find(n => n.id === nodeId);
-    if (!targetNode) return;
-    if (!cbProjectPath) {
-      setPendingChatCards(prev => [...prev, {
-        label: '⚠ No project path set',
-        detail: 'Enter your local project path in the CODE mode header to enable "Fix this".',
-        buttons: [],
-      }]);
-      setShowChat(true);
-      return;
+    // ── Learn mode actions ──────────────────────────────────
+    else if (btn.actionType === 'submitLearnAnswer') {
+      learn$.submitAnswer(btn.answer);
+    } else if (btn.actionType === 'learnContinue') {
+      learn$.continueLoop();
+    } else if (btn.actionType === 'learnExplainDifferently') {
+      learn$.requestExplainDifferently();
+    } else if (btn.actionType === 'learnSkip') {
+      learn$.skipConcept(btn.conceptId);
+    } else if (btn.actionType === 'learnHint') {
+      learn$.requestHint();
+    } else if (btn.actionType === 'stopLearn') {
+      learn$.handleStopLearn();
+      setLearnStream(null);
     }
-
-    // Set node to in_progress
-    active.updateNodeStatus(nodeId, 'in_progress', null);
-
-    // Initialize live execution stream in chat
-    const nodeLabel = targetNode.data.label;
-    setExecutionStream({ nodeLabel, text: '', done: false, error: null, nodeId });
-    setShowChat(true);
-
-    // Create abort controller
-    const abortController = new AbortController();
-    executionAbortRef.current = abortController;
-
-    let streamAccum = '';
-
-    try {
-      const res = await authFetch(`${API_URL}/api/execute-action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nodeId,
-          nodeData: targetNode.data,
-          mode: 'codebase',
-          projectPath: cbProjectPath,
-        }),
-        signal: abortController.signal,
-      });
-
-      // Read SSE stream
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6).trim();
-          if (payload === '[DONE]') continue;
-
-          try {
-            const evt = JSON.parse(payload);
-            if (evt._text) {
-              // Append Claude Code text output
-              streamAccum += evt.text;
-              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
-            } else if (evt._progress) {
-              // Append progress marker
-              streamAccum += `\n── ${evt.stage} ──\n`;
-              setExecutionStream(prev => prev ? { ...prev, text: streamAccum } : prev);
-            } else if (evt._result) {
-              // Mark node as completed
-              active.updateNodeStatus(nodeId, 'completed', evt);
-              streamAccum += `\n✓ ${evt.summary || 'Fix completed successfully.'}`;
-              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true } : prev);
-            } else if (evt._error) {
-              active.updateNodeStatus(nodeId, 'failed', { error: evt.error });
-              streamAccum += `\n✗ Error: ${evt.error || 'An error occurred.'}`;
-              setExecutionStream(prev => prev ? { ...prev, text: streamAccum, done: true, error: evt.error } : prev);
-            }
-          } catch {
-            // skip unparseable lines
-          }
-        }
-      }
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        active.updateNodeStatus(nodeId, 'failed', { error: 'Aborted by user' });
-        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + '\n⏹ Execution stopped by user.', done: true, error: 'Aborted' } : prev);
-      } else {
-        active.updateNodeStatus(nodeId, 'failed', { error: err.message });
-        setExecutionStream(prev => prev ? { ...prev, text: streamAccum + `\n✗ ${err.message || 'Network error.'}`, done: true, error: err.message } : prev);
-      }
-    } finally {
-      executionAbortRef.current = null;
-    }
-  }, [active, cbProjectPath]);
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction, learn$]);
 
   // ── Toolbar scroll arrows ────────────────────────────────
   const updateToolbarScroll = useCallback(() => {
@@ -2192,10 +2236,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         // Fractal callbacks
         onFractalExpand: active.handleFractalExpand,
         onToggleCollapse: active.handleToggleCollapse,
+        // Learn mode mastery
+        ...(displayMode === 'learn' && learn$.masteryMap[n.id] ? { mastery: learn$.masteryMap[n.id].score } : {}),
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [active.nodes, selectedNodeId, is3D, isolatedRound, roundRange, treeSearchTrim, chatFilterActive, chatFilter, childCountMap]);
+  }), [active.nodes, selectedNodeId, is3D, isolatedRound, roundRange, treeSearchTrim, chatFilterActive, chatFilter, childCountMap, displayMode, learn$.masteryMap]);
 
   const activeEdges = active.edges;
   const displayEdges = useMemo(() => is3D ? activeEdges : activeEdges.map(e => {
@@ -2301,6 +2347,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               >
                 ◈ PORTFOLIO
               </button>
+              {displayMode === 'learn' && (
+                <button
+                  className={`btn btn-icon ${learn$.isLearning ? 'active-icon' : ''}`}
+                  onClick={() => startLearnInChat(7)}
+                  title="Start comprehension loop — quiz yourself on concepts"
+                  disabled={learn$.isLearning}
+                >
+                  ⧫ LEARN
+                </button>
+              )}
               <div className="toolbar-sep" />
               <button
                 className="btn btn-icon btn-share-icon"
@@ -2890,6 +2946,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         onDismissStream={() => setExecutionStream(null)}
         refineStream={refineStream}
         portfolioStream={portfolioStream}
+        learnStream={learnStream}
         focusedNode={focusedNode ? {
           ...focusedNode,
           node: active.rawNodesRef.current.find(n => n.id === focusedNode.node?.id) || focusedNode.node,

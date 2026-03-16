@@ -78,6 +78,19 @@ export const MODES = [
       'go-to-market', 'gtm',
     ],
   },
+  {
+    id: 'learn',
+    label: 'LEARN',
+    icon: '⧫',
+    color: '#34d399',
+    placeholder: 'what do you want to learn? describe a topic, concept, or skill...',
+    keywords: [
+      'learn', 'teach', 'explain', 'understand', 'tutorial', 'study',
+      'concept', 'fundamentals', 'how does', 'what is', 'course',
+      'curriculum', 'prerequisites', 'mastery',
+      'teach me', 'help me understand', 'deep dive',
+    ],
+  },
 ];
 
 // ── Mode Detection ─────────────────────────────────────────────────────────────

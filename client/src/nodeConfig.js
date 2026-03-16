@@ -204,6 +204,55 @@ export const NODE_TYPES_CONFIG = {
     icon: '⬡',
     label: 'AGGREGATION',
   },
+  // ── Learn mode (concept mastery tree) ───────────────────────
+  concept: {
+    color: '#34d399',
+    bg: '#0f1f1a',
+    border: '#34d399',
+    glow: 'rgba(52, 211, 153, 0.3)',
+    icon: '◆',
+    label: 'CONCEPT',
+  },
+  prerequisite: {
+    color: '#f472b6',
+    bg: '#1f1218',
+    border: '#f472b6',
+    glow: 'rgba(244, 114, 182, 0.3)',
+    icon: '◁',
+    label: 'PREREQ',
+  },
+  exercise: {
+    color: '#fbbf24',
+    bg: '#1f1d10',
+    border: '#fbbf24',
+    glow: 'rgba(251, 191, 36, 0.3)',
+    icon: '▶',
+    label: 'EXERCISE',
+  },
+  analogy: {
+    color: '#a78bfa',
+    bg: '#1a1830',
+    border: '#a78bfa',
+    glow: 'rgba(167, 139, 250, 0.4)',
+    icon: '≈',
+    label: 'ANALOGY',
+  },
+  misconception: {
+    color: '#fb7185',
+    bg: '#1f1520',
+    border: '#fb7185',
+    glow: 'rgba(251, 113, 133, 0.3)',
+    icon: '⚠',
+    label: 'TRAP',
+  },
+  milestone: {
+    color: '#38bdf8',
+    bg: '#0f1922',
+    border: '#38bdf8',
+    glow: 'rgba(56, 189, 248, 0.3)',
+    icon: '◉',
+    label: 'MILESTONE',
+  },
 };
 
 // ── Dynamic palette for AI-declared node types ──────────────
