@@ -1059,6 +1059,22 @@
   background: rgba(108,99,255,0.12);
   color: var(--accent);
 }
+.ctx-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 4px 0;
+}
+.ctx-item-danger {
+  color: #ef4444 !important;
+}
+.ctx-item-danger:hover {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #ef4444 !important;
+}
+.ctx-item-active {
+  color: #a78bfa !important;
+  background: rgba(139, 92, 246, 0.08) !important;
+}
 
 /* ── Prototype / Mockup ──────────────────────────────────────── */
 .btn-mockup {
@@ -3122,6 +3138,146 @@
   background: rgba(99, 102, 241, 0.25);
   border-color: #6c63ff;
   color: #c7d2fe;
+}
+
+/* ── Pipeline card in chat ── */
+.pipeline-chat-card {
+  margin: 8px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: rgba(139, 92, 246, 0.06);
+  padding: 12px;
+}
+.pipeline-chat-card.pipeline-chat-done {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.06);
+}
+.pipeline-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pipeline-chat-icon {
+  color: #a78bfa;
+  font-size: 14px;
+}
+.pipeline-chat-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #c4b5fd;
+}
+.pipeline-chat-counter {
+  font-size: 10px;
+  background: rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.pipeline-chat-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.pipeline-chat-close:hover { color: #fff; }
+.pipeline-chat-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 8px;
+}
+.pipeline-chat-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 56px;
+}
+.pcs-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  border: 2px solid #333;
+  color: #555;
+  background: transparent;
+  transition: all 0.3s;
+}
+.pcs-active .pcs-icon {
+  border-color: #7c3aed;
+  color: #a78bfa;
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.4);
+  animation: pipeline-pulse 2s ease-in-out infinite;
+}
+.pcs-done .pcs-icon {
+  border-color: #22c55e;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+}
+.pcs-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #555;
+}
+.pcs-active .pcs-label { color: #a78bfa; }
+.pcs-done .pcs-label { color: #22c55e; }
+.pcs-connector {
+  flex: 1;
+  height: 2px;
+  background: #333;
+  margin: 0 4px;
+  margin-bottom: 18px;
+  transition: background 0.3s;
+}
+.pcs-connector-done {
+  background: #22c55e;
+}
+@keyframes pipeline-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(124, 58, 237, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(124, 58, 237, 0.6); }
+}
+.pipeline-chat-detail {
+  font-size: 12px;
+  color: #888;
+  padding: 4px 0;
+}
+.pipeline-chat-detail .pipeline-pulse {
+  color: #a78bfa;
+  animation: blink 1.2s infinite;
+  margin-right: 6px;
+}
+.pipeline-chat-round {
+  color: #666;
+  font-style: italic;
+}
+.pipeline-chat-substages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pcs-sub {
+  font-size: 11px;
+  color: #555;
+}
+.pcs-sub.sub-active { color: #a78bfa; }
+.pcs-sub.sub-done { color: #22c55e; }
+.pipeline-chat-done-msg {
+  font-size: 12px;
+  color: #22c55e;
+  margin-top: 6px;
+  font-weight: 500;
 }
 
 /* ── Execution stream card in chat ── */

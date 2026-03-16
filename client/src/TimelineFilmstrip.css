@@ -1,0 +1,354 @@
+/* ── Timeline Filmstrip ─────────────────────────────────────── */
+.timeline-filmstrip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  background: #0d0d14;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  z-index: 10;
+  padding: 0 8px;
+  gap: 8px;
+  user-select: none;
+}
+.timeline-filmstrip.flat-mode {
+  height: 72px;
+}
+.timeline-filmstrip.track-mode {
+  height: auto;
+  max-height: 260px;
+  align-items: flex-start;
+  padding: 6px 8px;
+}
+
+/* ── Transport Controls (J/K/L) ── */
+.filmstrip-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.filmstrip-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.filmstrip-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ccc;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.filmstrip-btn.playing {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.filmstrip-key-hint {
+  font-size: 8px;
+  color: #444;
+  font-family: monospace;
+  text-align: center;
+  margin-top: 1px;
+}
+
+/* ── Position Indicator ── */
+.filmstrip-position {
+  font-size: 10px;
+  color: #555;
+  font-family: monospace;
+  min-width: 48px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* ── Track (scrollable thumbnails) ── */
+.filmstrip-track {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px 4px;
+  position: relative;
+  scroll-behavior: smooth;
+}
+
+.filmstrip-track::-webkit-scrollbar {
+  height: 4px;
+}
+.filmstrip-track::-webkit-scrollbar-track {
+  background: transparent;
+}
+.filmstrip-track::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+.filmstrip-track::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ── Thumbnail Cards ── */
+.filmstrip-thumb {
+  min-width: 52px;
+  max-width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 2px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  position: relative;
+}
+.filmstrip-thumb:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.filmstrip-thumb.active {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: var(--thumb-color, #a78bfa);
+  box-shadow: 0 0 10px var(--thumb-glow, rgba(139, 92, 246, 0.3));
+}
+
+.filmstrip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.filmstrip-label {
+  font-size: 8px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46px;
+  text-align: center;
+  line-height: 1.2;
+}
+.filmstrip-thumb.active .filmstrip-label {
+  color: #bbb;
+}
+
+.filmstrip-type {
+  font-size: 7px;
+  color: #444;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ── Connector lines between thumbs ── */
+.filmstrip-connector {
+  width: 8px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+.filmstrip-connector.done {
+  background: rgba(139, 92, 246, 0.3);
+}
+
+/* ── Track Mode Toggle ── */
+.filmstrip-mode-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #666;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.filmstrip-mode-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ccc;
+}
+.filmstrip-mode-toggle.active {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* ── Track Mode Layout ── */
+.filmstrip-tracks-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+}
+.filmstrip-tracks-container::-webkit-scrollbar {
+  width: 4px;
+}
+.filmstrip-tracks-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.filmstrip-tracks-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+/* ── Single Track Row ── */
+.filmstrip-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 42px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.filmstrip-track-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.filmstrip-track-row.muted {
+  opacity: 0.35;
+}
+
+/* ── Track Header ── */
+.filmstrip-track-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 130px;
+  max-width: 130px;
+  padding: 4px 6px;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.track-sm-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #555;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: monospace;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+  padding: 0;
+}
+.track-sm-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ccc;
+}
+.track-sm-btn.solo-active {
+  background: rgba(250, 204, 21, 0.2);
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.4);
+}
+.track-sm-btn.mute-active {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.track-type-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.track-type-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #777;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60px;
+}
+
+.track-type-count {
+  font-size: 8px;
+  color: #444;
+  font-family: monospace;
+  margin-left: auto;
+}
+
+/* ── Track Thumbnails (horizontal scroll inside each track) ── */
+.filmstrip-track-thumbs {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 4px;
+  scroll-behavior: smooth;
+}
+.filmstrip-track-thumbs::-webkit-scrollbar {
+  height: 3px;
+}
+.filmstrip-track-thumbs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.filmstrip-track-thumbs::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+}
+
+/* Smaller thumbs in track mode */
+.track-mode .filmstrip-thumb {
+  min-width: 40px;
+  max-width: 40px;
+  height: 36px;
+  gap: 2px;
+  padding: 3px 2px;
+}
+.track-mode .filmstrip-dot {
+  width: 6px;
+  height: 6px;
+}
+.track-mode .filmstrip-label {
+  font-size: 7px;
+  max-width: 36px;
+}
+.track-mode .filmstrip-type {
+  display: none;
+}
+.track-mode .filmstrip-connector {
+  width: 4px;
+}
+
+/* ── Muted thumb appearance ── */
+.filmstrip-thumb.muted-thumb {
+  opacity: 0.25;
+  filter: saturate(0.3);
+  pointer-events: none;
+}

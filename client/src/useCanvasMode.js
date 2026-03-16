@@ -756,6 +756,28 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     expandingNodeRef.current = null;
   }, []);
 
+  // ── Delete a node and all its descendants ──────────────────
+  const deleteNodeBranch = useCallback((nodeId) => {
+    const getDescIds = (id, visited = new Set()) => {
+      if (visited.has(id)) return [];
+      visited.add(id);
+      const children = rawNodesRef.current.filter(n => {
+        const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+        return pids.includes(id);
+      });
+      return children.flatMap(c => [c.id, ...getDescIds(c.id, visited)]);
+    };
+    const descendantIds = new Set(getDescIds(nodeId));
+    descendantIds.add(nodeId); // include the node itself
+    rawNodesRef.current = rawNodesRef.current.filter(n => !descendantIds.has(n.id));
+    applyLayout(rawNodesRef.current, drillStackRef.current);
+    setNodeCount(rawNodesRef.current.length);
+    yjsSyncRef?.current?.removeNodesFromYjs([...descendantIds]);
+    // Deselect if deleted node was selected
+    setSelectedNode(prev => prev && descendantIds.has(prev.id) ? null : prev);
+    return [...descendantIds];
+  }, [applyLayout, yjsSyncRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return {
     // State
     nodes, edges, isGenerating, setIsGenerating, isRegenerating, setIsRegenerating,
@@ -774,5 +796,6 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef }
     // Fractal handlers
     handleFractalExpand, handleToggleCollapse, handleCollapseAll, handleExpandAll,
     handleAutoFractal, handleStopAutoFractal,
+    deleteNodeBranch,
   };
 }

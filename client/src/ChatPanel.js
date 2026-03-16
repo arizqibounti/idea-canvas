@@ -156,7 +156,7 @@ const CHAT_MODE_CONFIG = {
   plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, emailContext }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, emailContext, pipelineStages, onClosePipeline }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -171,7 +171,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamingText, executionStream, refineStream, portfolioStream]);
+  }, [messages, streamingText, executionStream, refineStream, portfolioStream, pipelineStages]);
 
   // Auto-scroll execution stream output to bottom
   useEffect(() => {
@@ -436,6 +436,69 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             </div>
           )
         ))}
+
+        {/* ── Pipeline Progress ── */}
+        {pipelineStages && (() => {
+          const activeStage = pipelineStages.find(s => s.status === 'active');
+          const allDone = pipelineStages.every(s => s.status === 'done');
+          const completedCount = pipelineStages.filter(s => s.status === 'done').length;
+          const totalCount = pipelineStages.length;
+          const ICONS = { generate: '◈', debate: '⚔', refine: '⟲', portfolio: '◆' };
+          return (
+            <div className={`pipeline-chat-card ${allDone ? 'pipeline-chat-done' : ''}`}>
+              <div className="pipeline-chat-header">
+                <span className="pipeline-chat-icon">⟡</span>
+                <span className="pipeline-chat-title">
+                  {allDone ? 'PIPELINE COMPLETE' : 'PIPELINE ACTIVE'}
+                </span>
+                <span className="pipeline-chat-counter">{completedCount}/{totalCount}</span>
+                <button className="pipeline-chat-close" onClick={onClosePipeline}>✕</button>
+              </div>
+              <div className="pipeline-chat-stepper">
+                {pipelineStages.map((stage, i) => (
+                  <React.Fragment key={stage.id}>
+                    <div className={`pipeline-chat-stage ${
+                      stage.status === 'done' ? 'pcs-done' :
+                      stage.status === 'active' ? 'pcs-active' : 'pcs-pending'
+                    }`}>
+                      <div className="pcs-icon">
+                        {stage.status === 'done' ? '✓' : ICONS[stage.id] || '●'}
+                      </div>
+                      <div className="pcs-label">{stage.label}</div>
+                    </div>
+                    {i < pipelineStages.length - 1 && (
+                      <div className={`pcs-connector ${stage.status === 'done' ? 'pcs-connector-done' : ''}`} />
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+              {activeStage && (
+                <div className="pipeline-chat-detail">
+                  <span className="pipeline-pulse">●</span>
+                  {activeStage.detail || activeStage.label}
+                  {activeStage.round && (
+                    <span className="pipeline-chat-round"> — Round {activeStage.round}/{activeStage.maxRounds}</span>
+                  )}
+                </div>
+              )}
+              {activeStage?.substages && (
+                <div className="pipeline-chat-substages">
+                  {activeStage.substages.map((sub, i) => (
+                    <span key={i} className={`pcs-sub ${
+                      sub.status === 'done' ? 'sub-done' :
+                      sub.status === 'active' ? 'sub-active' : 'sub-pending'
+                    }`}>
+                      {sub.status === 'done' ? '✓' : sub.status === 'active' ? '●' : '○'} {sub.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {allDone && (
+                <div className="pipeline-chat-done-msg">All stages complete ✓</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Live Execution Stream ── */}
         {executionStream && (

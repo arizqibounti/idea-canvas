@@ -226,10 +226,20 @@ async function handleMessage(ws, client, raw) {
 function createFakeRes(ws, requestId, state, collectedNodes, onMeta) {
   let headersSent = false;
 
+  const EventEmitter = require('events');
+  const emitter = new EventEmitter();
+
+  // When WebSocket closes, emit 'close' so SSE abort handlers work
+  ws.on('close', () => emitter.emit('close'));
+
   return {
     // SSE header setting (no-op for WebSocket)
     setHeader() {},
     flushHeaders() { headersSent = true; },
+
+    // Event emitter passthrough for res.on('close', ...) compatibility
+    on: emitter.on.bind(emitter),
+    removeListener: emitter.removeListener.bind(emitter),
 
     // The key method: intercept SSE writes and convert to WebSocket messages
     write(chunk) {

@@ -31,13 +31,15 @@ import Sidebar from './Sidebar';
 import SettingsPage from './settings/SettingsPage';
 import KnowledgeGraph from './KnowledgeGraph';
 import { useAutoRefine } from './useAutoRefine';
-import RefinePanel from './RefinePanel';
-import PortfolioPanel from './PortfolioPanel';
+import { usePortfolio } from './usePortfolio';
 import PipelineOverlay from './PipelineOverlay';
 import FlowchartView from './FlowchartView';
 import GmailPicker from './GmailConnect';
 import useGmail from './useGmail';
 import InviteAccept from './InviteAccept';
+import { useTimelineNav } from './useTimelineNav';
+import { useNodeTools } from './useNodeTools';
+import TimelineFilmstrip from './TimelineFilmstrip';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
@@ -507,6 +509,22 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setNodeCount: cb$.setNodeCount,
   });
 
+  // ── Portfolio hooks (one per canvas) ────────────────────
+  const portfolioIdea$ = usePortfolio({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    setNodeCount: idea$.setNodeCount,
+    yjsSyncRef,
+  });
+  const portfolioCb$ = usePortfolio({
+    rawNodesRef: cb$.rawNodesRef,
+    applyLayout: cb$.applyLayout,
+    drillStackRef: cb$.drillStackRef,
+    setNodeCount: cb$.setNodeCount,
+    yjsSyncRef: { current: null },
+  });
+
   // ── Load initial session from dashboard ───────────────────
   const initialSessionLoaded = useRef(false);
   useEffect(() => {
@@ -578,11 +596,33 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const activeMode  = displayMode === 'codebase' ? 'codebase' : 'idea';
   const active = activeMode === 'idea' ? idea$ : cb$;
   const refine$ = activeMode === 'idea' ? refineIdea$ : refineCb$;
+  const portfolio$ = activeMode === 'idea' ? portfolioIdea$ : portfolioCb$;
+  // ── Timeline filmstrip navigation ──────────────────────────
+  const timeline = useTimelineNav({
+    rawNodesRef: active.rawNodesRef,
+    selectedNode: active.selectedNode,
+    handleNodeClick: active.handleNodeClick,
+    nodeCount: active.nodeCount,
+  });
   const ideaText = useMemo(() => {
     if (activeMode === 'codebase') return cbFolderName;
     if (displayMode === 'resume') return resumeJobLabel;
     return idea;
   }, [activeMode, cbFolderName, displayMode, resumeJobLabel, idea]);
+  // ── Node precision tools ────────────────────────────────────
+  const nodeTools = useNodeTools({
+    rawNodesRef: active.rawNodesRef,
+    applyLayout: active.applyLayout,
+    drillStackRef: active.drillStackRef,
+    setNodeCount: active.setNodeCount,
+    yjsSyncRef,
+    selectedNode: active.selectedNode,
+    handleNodeClick: active.handleNodeClick,
+    deleteNodeBranch: active.deleteNodeBranch,
+    handleSaveNodeEdit: active.handleSaveNodeEdit,
+    idea: ideaText,
+    mode: displayMode,
+  });
 
   // ── Memory Layer ──────────────────────────────────────────
   const [showMemory, setShowMemory] = useState(false);
@@ -633,17 +673,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [autoFractalRunning, setAutoFractalRunning] = useState(false);
   const [autoFractalProgress, setAutoFractalProgress] = useState(null);
 
-  // ── Auto-Refine (⟲ REFINE) ────────────────────────────
-  const [showRefine, setShowRefine] = useState(false);
-
-  // ── Portfolio (◈ PORTFOLIO) ────────────────────────────
-  const [showPortfolio, setShowPortfolio] = useState(false);
-  const [portfolioData, setPortfolioData] = useState({ alternatives: [], scores: null, recommendation: '' });
-
   // ── Post-generation automation options ───────────────────
   const [autoRefineOnGen, setAutoRefineOnGen] = useState(false);
   const [autoPortfolioOnGen, setAutoPortfolioOnGen] = useState(false);
-  const [portfolioAutoGen, setPortfolioAutoGen] = useState(false); // triggers auto-generate in PortfolioPanel
   const [portfolioFocus, setPortfolioFocus] = useState(null); // dynamic focus context from chat (types/nodeIds/userIntent)
   const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
   const [emailContext, setEmailContext] = useState(null); // { id, subject, messageCount, formatted }
@@ -766,6 +798,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
     idea$.resetCanvas();
     idea$.setIsGenerating(true);
+    setShowChat(true);
     setRedirectState('idle');
     setDebateAutoStart(false);
     // Reset dynamic config for new generation
@@ -900,6 +933,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
     idea$.resetCanvas();
     idea$.setIsGenerating(true);
+    setShowChat(true);
     setMultiAgentProgress('Starting multi-agent analysis...');
     setRedirectState('idle');
     setDebateAutoStart(false);
@@ -1019,6 +1053,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
     idea$.resetCanvas();
     idea$.setIsGenerating(true);
+    setShowChat(true);
     setMultiAgentProgress('Planning research strategy...');
     setRedirectState('idle');
     setDebateAutoStart(false);
@@ -1036,6 +1071,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ...(autoPortfolioOnGen ? [{ id: 'portfolio', label: 'Portfolio', status: 'pending', detail: null }] : []),
       ];
       setPipelineStages(stages);
+      setShowChat(true);  // open chat to show pipeline progress
     }
 
     if (idea$.abortRef.current) idea$.abortRef.current.abort();
@@ -1436,13 +1472,65 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     await refine$.handleGoDeeper(ideaText, displayMode, additionalRounds, onProgress);
   }, [refine$, ideaText, displayMode]);
 
-  // Opens the refine panel + starts auto-refine (used by Portfolio panel)
-  const handleOpenAndStartRefine = useCallback(() => {
-    setShowRefine(true);
-    setShowPortfolio(false);
-    // Start with a small delay so the panel renders first
-    setTimeout(() => handleStartRefine(3), 100);
+  // ── Shared: run refine inline in chat ────────────────────
+  const startRefineInChat = useCallback((rounds = 3, pipelineCallback) => {
+    setRefineStream({ status: 'critiquing', round: 1, maxRounds: rounds });
+    setShowChat(true);
+    const refineHistory = [];
+    handleStartRefine(rounds, (progress) => {
+      // Forward to pipeline overlay if provided
+      pipelineCallback?.(progress);
+      if (progress.status === 'round_complete') {
+        refineHistory.push({
+          round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
+          newNodeCount: progress.newNodeCount, summary: progress.summary,
+        });
+      }
+      if (progress.status === 'done' || progress.status === 'complete') {
+        setRefineStream(null);
+        setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
+      } else {
+        setRefineStream({ ...progress, history: refineHistory });
+      }
+    });
   }, [handleStartRefine]);
+
+  // ── Shared: run portfolio inline in chat ────────────────
+  const startPortfolioInChat = useCallback((pipelineCallback) => {
+    setPortfolioStream({ status: 'generating', stageDetail: 'Starting...', alternatives: [], scores: [] });
+    setShowChat(true);
+    portfolio$.generate({
+      idea: ideaText,
+      mode: displayMode,
+      focus: portfolioFocus,
+      count: 3,
+      existingTitles: portfolio$.alternatives.map(a => a.title),
+      onProgress: (progress) => {
+        // Forward to pipeline overlay if provided
+        pipelineCallback?.(progress);
+        if (progress.status === 'done') {
+          setPortfolioStream(null);
+          setPendingChatCards(prev => [...prev, {
+            type: 'portfolio_card',
+            state: {
+              status: 'done',
+              alternatives: progress.alternatives || [],
+              scores: progress.scores || [],
+              recommendation: progress.recommendation || '',
+            },
+          }]);
+        } else {
+          setPortfolioStream(prev => ({
+            ...(prev || {}),
+            status: 'generating',
+            stageDetail: progress.stageDetail || '',
+            alternatives: progress.alternatives || prev?.alternatives || [],
+            scores: progress.scores || prev?.scores || [],
+          }));
+        }
+      },
+    });
+  }, [portfolio$, ideaText, displayMode, portfolioFocus]);
 
   // ── Load session handlers ─────────────────────────────────
   const handleLoadIdeaSession = useCallback((session) => {
@@ -1522,50 +1610,57 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
     // Post-debate automation: auto-trigger refine and/or portfolio after consensus
     if (autoRefineOnGen && !refine$.isRefining) {
-      setShowRefine(true);
-      // Small delay so panel mounts before starting
-      setTimeout(() => {
-        refine$.handleStartRefine(ideaText, displayMode, 3, (progress) => {
-          // Update pipeline overlay with refine progress
-          if (progress.status === 'critiquing' || progress.status === 'strengthening' || progress.status === 'scoring') {
-            setPipelineStages(prev => prev?.map(s =>
-              s.id === 'refine' ? {
-                ...s, status: 'active',
-                detail: progress.detail || progress.status,
-                round: progress.round, maxRounds: progress.maxRounds,
-                substages: [
-                  { label: 'Research', status: progress.detail?.includes('research') || progress.detail?.includes('Research') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
-                  { label: 'Lenses', status: progress.detail?.includes('lens') || progress.detail?.includes('Lens') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
-                  { label: 'Critique', status: progress.status === 'critiquing' ? 'active' : progress.status === 'strengthening' || progress.status === 'scoring' ? 'done' : 'pending' },
-                  { label: 'Strengthen', status: progress.status === 'strengthening' ? 'active' : progress.status === 'scoring' ? 'done' : 'pending' },
-                  { label: 'Score', status: progress.status === 'scoring' ? 'active' : 'pending' },
-                ],
-                progress: progress.status === 'critiquing' ? 20 : progress.status === 'strengthening' ? 55 : 85,
-              } : s
-            ));
-          } else if (progress.status === 'round_complete') {
-            setPipelineStages(prev => prev?.map(s =>
-              s.id === 'refine' ? {
-                ...s,
-                detail: `Round ${progress.round}/${progress.maxRounds} — ${progress.oldScore?.toFixed?.(1)} → ${progress.newScore?.toFixed?.(1)}`,
-                progress: Math.round((progress.round / progress.maxRounds) * 100),
-              } : s
-            ));
-          } else if (progress.status === 'complete' || progress.status === 'done') {
-            setPipelineStages(prev => prev?.map(s =>
-              s.id === 'refine' ? { ...s, status: 'done', detail: 'Refinement complete', substages: null, progress: null } :
-              s.id === 'portfolio' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Generating alternatives...' } :
-              s
-            ));
+      // Run refine inline in chat with pipeline overlay updates
+      startRefineInChat(3, (progress) => {
+        if (progress.status === 'critiquing' || progress.status === 'strengthening' || progress.status === 'scoring') {
+          setPipelineStages(prev => prev?.map(s =>
+            s.id === 'refine' ? {
+              ...s, status: 'active',
+              detail: progress.detail || progress.status,
+              round: progress.round, maxRounds: progress.maxRounds,
+              substages: [
+                { label: 'Research', status: progress.detail?.includes('research') || progress.detail?.includes('Research') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
+                { label: 'Lenses', status: progress.detail?.includes('lens') || progress.detail?.includes('Lens') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
+                { label: 'Critique', status: progress.status === 'critiquing' ? 'active' : progress.status === 'strengthening' || progress.status === 'scoring' ? 'done' : 'pending' },
+                { label: 'Strengthen', status: progress.status === 'strengthening' ? 'active' : progress.status === 'scoring' ? 'done' : 'pending' },
+                { label: 'Score', status: progress.status === 'scoring' ? 'active' : 'pending' },
+              ],
+              progress: progress.status === 'critiquing' ? 20 : progress.status === 'strengthening' ? 55 : 85,
+            } : s
+          ));
+        } else if (progress.status === 'round_complete') {
+          setPipelineStages(prev => prev?.map(s =>
+            s.id === 'refine' ? {
+              ...s,
+              detail: `Round ${progress.round}/${progress.maxRounds} — ${progress.oldScore?.toFixed?.(1)} → ${progress.newScore?.toFixed?.(1)}`,
+              progress: Math.round((progress.round / progress.maxRounds) * 100),
+            } : s
+          ));
+        } else if (progress.status === 'complete' || progress.status === 'done') {
+          setPipelineStages(prev => prev?.map(s =>
+            s.id === 'refine' ? { ...s, status: 'done', detail: 'Refinement complete', substages: null, progress: null } :
+            s.id === 'portfolio' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Generating alternatives...' } :
+            s
+          ));
+          // Chain: start portfolio after refine completes
+          if (autoPortfolioOnGen) {
+            startPortfolioInChat((portfolioProgress) => {
+              setPipelineStages(prev => prev?.map(s =>
+                s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
+              ));
+            });
           }
-        });
-      }, 500);
+        }
+      });
+    } else if (autoPortfolioOnGen) {
+      // No refine, just portfolio
+      startPortfolioInChat((portfolioProgress) => {
+        setPipelineStages(prev => prev?.map(s =>
+          s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
+        ));
+      });
     }
-    if (autoPortfolioOnGen) {
-      setShowPortfolio(true);
-      setPortfolioAutoGen(true);
-    }
-  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, refine$, displayMode, resumeJobLabel]);
+  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, refine$, displayMode, resumeJobLabel, startRefineInChat, startPortfolioInChat]);
 
   // ── Suggestion expand: add suggestion node + children to tree ─
   const handleSuggestionExpand = useCallback(async (suggestionText) => {
@@ -1672,23 +1767,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     // Refine: run inline in chat
     if (actions.refine) {
       applyScope(actions.refine);
-      setRefineStream({ status: 'critiquing', round: 1, maxRounds: 3 });
-      setShowChat(true);
-      const refineHistory = [];
-      handleStartRefine(3, (progress) => {
-        if (progress.status === 'round_complete') {
-          refineHistory.push({
-            round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
-            newNodeCount: progress.newNodeCount, summary: progress.summary,
-          });
-        }
-        if (progress.status === 'done') {
-          setRefineStream(null);
-          setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
-        } else {
-          setRefineStream({ ...progress, history: refineHistory });
-        }
-      });
+      startRefineInChat(3);
     }
     // Refine more: continue refining
     if (actions.refineMore) {
@@ -1714,30 +1793,21 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (actions.portfolio) {
       applyScope(actions.portfolio);
       const actionVal = actions.portfolio;
-      let focus = null;
       if (actionVal && typeof actionVal === 'object' && actionVal !== true) {
         const scopedNodes = getScopedNodes(actionVal);
         const nodeSummaries = scopedNodes.slice(0, 20).map(n => {
           const d = n.data || n;
           return `[${d.type}] ${d.label}: ${(d.reasoning || '').slice(0, 100)}`;
         });
-        focus = { types: actionVal.types || null, nodeIds: actionVal.nodeIds || null, nodeSummaries };
-        setPortfolioFocus(focus);
+        setPortfolioFocus({ types: actionVal.types || null, nodeIds: actionVal.nodeIds || null, nodeSummaries });
       } else {
         setPortfolioFocus(null);
       }
-      setPortfolioStream({ status: 'generating', stageDetail: 'Starting...', alternatives: [], scores: [] });
-      setShowChat(true);
-      // Use the portfolio panel's generate flow via auto-gen
-      setShowPortfolio(true);
-      setPortfolioAutoGen(true);
+      startPortfolioInChat();
     }
     // Portfolio more: generate more alternatives
     if (actions.portfolioMore) {
-      setPortfolioStream({ status: 'generating', stageDetail: 'Generating more alternatives...', alternatives: [], scores: [] });
-      setShowChat(true);
-      setShowPortfolio(true);
-      setPortfolioAutoGen(true);
+      startPortfolioInChat();
     }
     // Fractal expand: open panel and start
     if (actions.fractalExpand) {
@@ -1784,15 +1854,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (cards.length > 0) {
       setPendingChatCards(prev => [...prev, ...cards]);
     }
-  }, [active, handleStartRefine, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
+  }, [active, startRefineInChat, startPortfolioInChat, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
 
   const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
 
   const handleCardButtonClick = useCallback((btn) => {
     if (btn.actionType === 'openPanel') {
       if (btn.panel === 'debate') setShowDebate(true);
-      else if (btn.panel === 'refine') setShowRefine(true);
-      else if (btn.panel === 'portfolio') setShowPortfolio(true);
+      else if (btn.panel === 'refine') startRefineInChat(3);
+      else if (btn.panel === 'portfolio') startPortfolioInChat();
       else if (btn.panel === 'fractalExpand') setShowAutoFractal(true);
     } else if (btn.actionType === 'stopExecution') {
       if (executionAbortRef.current) {
@@ -1822,52 +1892,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       });
     } else if (btn.actionType === 'exploreAlternative') {
       // Explore a portfolio alternative on the canvas
-      const alt = portfolioData.alternatives?.find(a => a.index === btn.altIndex);
-      if (alt) {
-        const flowNodes = alt.nodes.map(n => {
-          const flowNode = buildFlowNode(n);
-          if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
-          return flowNode;
-        });
-        active.rawNodesRef.current = flowNodes;
-        active.applyLayout(active.rawNodesRef.current, active.drillStackRef?.current);
-        active.setNodeCount?.(active.rawNodesRef.current.length);
-      }
+      portfolio$.handleExplore(btn.altIndex);
     } else if (btn.actionType === 'exploreAndRefine') {
       // Explore then start refine
-      const alt = portfolioData.alternatives?.find(a => a.index === btn.altIndex);
-      if (alt) {
-        const flowNodes = alt.nodes.map(n => {
-          const flowNode = buildFlowNode(n);
-          if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
-          return flowNode;
-        });
-        active.rawNodesRef.current = flowNodes;
-        active.applyLayout(active.rawNodesRef.current, active.drillStackRef?.current);
-        active.setNodeCount?.(active.rawNodesRef.current.length);
-        // Auto-start refine
-        setRefineStream({ status: 'critiquing', round: 1, maxRounds: 3 });
-        const refineHistory = [];
-        handleStartRefine(3, (progress) => {
-          if (progress.status === 'round_complete') {
-            refineHistory.push({
-              round: progress.round, oldScore: progress.oldScore, newScore: progress.newScore,
-              newNodeCount: progress.newNodeCount, summary: progress.summary,
-            });
-          }
-          if (progress.status === 'done') {
-            setRefineStream(null);
-            setPendingChatCards(prev => [...prev, { type: 'refine_card', state: { status: 'done', history: refineHistory } }]);
-          } else {
-            setRefineStream({ ...progress, history: refineHistory });
-          }
-        });
-      }
+      portfolio$.handleExplore(btn.altIndex);
+      startRefineInChat(3);
     } else if (btn.actionType === 'generateMore') {
-      setShowPortfolio(true);
-      setPortfolioAutoGen(true);
+      startPortfolioInChat();
     }
-  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolioData]);
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat]);
 
   // ── Execute action on a node (e.g., "Fix this" via Claude Code) ──
   const handleExecuteAction = useCallback(async (nodeId) => {
@@ -2168,16 +2201,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 ∞ EXPLORE
               </button>
               <button
-                className={`btn btn-icon ${showRefine ? 'active-icon' : ''}`}
-                onClick={() => setShowRefine((v) => !v)}
+                className={`btn btn-icon ${refine$.isRefining ? 'active-icon' : ''}`}
+                onClick={() => startRefineInChat(3)}
                 title="Auto-refine — recursive critique and strengthen loop"
+                disabled={refine$.isRefining}
               >
                 ⟲ REFINE
               </button>
               <button
-                className={`btn btn-icon ${showPortfolio ? 'active-icon' : ''}`}
-                onClick={() => setShowPortfolio((v) => !v)}
+                className={`btn btn-icon ${portfolio$.isGenerating ? 'active-icon' : ''}`}
+                onClick={() => startPortfolioInChat()}
                 title="Generate and compare alternative approaches"
+                disabled={portfolio$.isGenerating}
               >
                 ◈ PORTFOLIO
               </button>
@@ -2437,6 +2472,28 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         {/* TimelineBar2D removed — not useful for users */}
       </main>
 
+      {/* ── Timeline Filmstrip ── */}
+      {(active.rawNodesRef.current?.length || 0) > 1 && (
+        <div style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
+        <TimelineFilmstrip
+          topoOrder={timeline.topoOrder}
+          currentIndex={timeline.currentIndex}
+          isPlaying={timeline.isPlaying}
+          onGoToIndex={timeline.goToIndex}
+          onTogglePlay={timeline.togglePlay}
+          onGoNext={timeline.goNext}
+          onGoPrev={timeline.goPrev}
+          onFilterChange={(filter) => {
+            if (filter) {
+              setChatFilter({ types: filter.visibleTypes });
+            } else {
+              setChatFilter(null);
+            }
+          }}
+        />
+        </div>
+      )}
+
       {/* ── Bottom input bar ── */}
       <footer className="bottom-bar" style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
         {/* Idea mode input row */}
@@ -2623,6 +2680,24 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           onExecuteAction={handleExecuteAction}
           mode={activeMode}
           hasProjectPath={!!cbProjectPath}
+          onSplit={() => {
+            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
+            if (node) nodeTools.handleRazor(node);
+          }}
+          onMerge={() => {
+            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
+            if (node) nodeTools.handleStartMerge(node);
+          }}
+          onRippleDelete={() => {
+            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
+            if (node) nodeTools.handleRippleDelete(node);
+          }}
+          onDeleteBranch={() => {
+            const node = active.rawNodesRef.current.find(n => n.id === active.contextMenu.nodeId);
+            if (node) nodeTools.handleDeleteBranch(node);
+          }}
+          isSplitting={nodeTools.isSplitting}
+          isMerging={nodeTools.isMerging}
         />
       )}
 
@@ -2675,6 +2750,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         refineStream={refineStream}
         portfolioStream={portfolioStream}
         emailContext={emailContext}
+        pipelineStages={pipelineStages}
+        onClosePipeline={() => setPipelineStages(null)}
       />
 
       {/* ── Gmail Thread Picker Modal ── */}
@@ -2749,79 +2826,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         </div>
       )}
 
-      {/* ── Auto-Refine Panel ── */}
-      {showRefine && (
-        <RefinePanel
-          mode={displayMode}
-          isRefining={refine$.isRefining}
-          refineProgress={refine$.refineProgress}
-          refineHistory={refine$.refineHistory}
-          onStart={handleStartRefine}
-          onStop={handleStopRefine}
-          onGoDeeper={handleGoDeeper}
-          onClose={() => setShowRefine(false)}
-          nodeCount={active.rawNodesRef.current.length}
-        />
-      )}
-
-      {/* ── Portfolio Panel ── */}
-      {showPortfolio && (
-        <PortfolioPanel
-          idea={ideaText}
-          mode={displayMode}
-          focus={portfolioFocus}
-          onClose={() => { setShowPortfolio(false); setPortfolioFocus(null); }}
-          portfolioData={portfolioData}
-          onPortfolioDataChange={setPortfolioData}
-          rawNodesRef={active.rawNodesRef}
-          applyLayout={active.applyLayout}
-          drillStackRef={active.drillStackRef}
-          setNodeCount={active.setNodeCount}
-          yjsSyncRef={yjsSyncRef}
-          onStartRefine={handleOpenAndStartRefine}
-          autoGenerate={portfolioAutoGen}
-          onAutoGenDone={() => {
-            setPortfolioAutoGen(false);
-            // Freeze portfolio data into chat card and clear stream
-            if (portfolioStream) {
-              setPendingChatCards(prev => [...prev, {
-                type: 'portfolio_card',
-                state: {
-                  status: 'done',
-                  alternatives: portfolioData.alternatives,
-                  scores: portfolioData.scores || [],
-                  recommendation: portfolioData.recommendation || '',
-                },
-              }]);
-              setPortfolioStream(null);
-            }
-          }}
-          onPipelineUpdate={(stage) => {
-            setPipelineStages(prev => prev?.map(s =>
-              s.id === 'portfolio' ? { ...s, ...stage } : s
-            ));
-            // Also update live portfolio stream if active
-            if (portfolioStream || stage.status === 'active') {
-              setPortfolioStream(prev => ({
-                ...(prev || {}),
-                status: stage.status === 'done' ? 'done' : 'generating',
-                stageDetail: stage.detail || '',
-                alternatives: portfolioData.alternatives || [],
-                scores: portfolioData.scores || [],
-                recommendation: portfolioData.recommendation || '',
-              }));
-            }
-          }}
-        />
-      )}
-
-      {/* ── Pipeline Activity Overlay ── */}
-      {pipelineStages && (
-        <PipelineOverlay
-          stages={pipelineStages}
-          onClose={() => setPipelineStages(null)}
-        />
-      )}
+      {/* Pipeline now renders inside ChatPanel */}
 
       {/* ── Resume Changes Modal ── */}
       <ResumeChangesModal

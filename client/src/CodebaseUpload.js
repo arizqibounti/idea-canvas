@@ -22,7 +22,8 @@ const PRIORITY_PATTERNS = [
   { re: /\.(routes?|controller|handler|endpoint|api)\.(js|ts|py|go|rb)$/i, score: 9 },
   { re: /\.(model|schema|entity|migration)\.(js|ts|py|go|rb)$/i, score: 9 },
   { re: /package\.json$/i, score: 8 },
-  { re: /README\.md$/i, score: 7 },
+  { re: /README\.md$/i, score: 8 },
+  { re: /\.md$/i, score: 6 },
   { re: /\.(component|page|view|screen|container)\.(jsx|tsx|js|ts)$/i, score: 7 },
   { re: /\.(config|settings|constants)\.(js|ts|py|json)$/i, score: 5 },
   { re: /\.(service|store|context|hook|util|helper)\.(js|ts)$/i, score: 4 },
@@ -484,7 +485,7 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
       )}
 
       <div className="upload-hint">
-        Supports JavaScript, TypeScript, Python, Go, Ruby, Java and more.
+        Supports JavaScript, TypeScript, Python, Go, Ruby, Java, Markdown and more.
         node_modules and build artifacts are automatically excluded.
       </div>
     </div>

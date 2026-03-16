@@ -61,6 +61,7 @@ const { handleMockup, handleResumeChanges, handleExportGithub, handleFetchUrl, h
 // ── Auto-refine + Portfolio engines ──────────────────────────
 const { handleRefineCritique, handleRefineStrengthen, handleRefineScore } = require('./engine/refine');
 const { handlePortfolioGenerate, handlePortfolioScore } = require('./engine/portfolio');
+const { handleSplitNode, handleMergeNodes } = require('./engine/nodeTools');
 
 // ── Node action execution engine ─────────────────────────────
 const { handleExecuteAction, stopExecution } = require('./engine/execute');
@@ -146,6 +147,10 @@ app.post('/api/refine/score',       (req, res) => handleRefineScore(client, req,
 // Portfolio (generate rate-limited, score lightweight) — uses Gemini
 app.post('/api/portfolio/generate', generationLimit, (req, res) => handlePortfolioGenerate(client, req, res, gemini));
 app.post('/api/portfolio/score',    (req, res) => handlePortfolioScore(client, req, res, gemini));
+
+// Node tools (split/merge)
+app.post('/api/split-node',  generationLimit, (req, res) => handleSplitNode(client, req, res));
+app.post('/api/merge-nodes', generationLimit, (req, res) => handleMergeNodes(client, req, res));
 
 // Specialty
 app.post('/api/mockup',            (req, res) => handleMockup(client, req, res));
