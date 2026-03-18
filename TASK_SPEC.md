@@ -11,7 +11,7 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - Claude emits `_meta` header declaring types, then streams 18–25 nodes
 - Frontend configures dynamic rendering (12-color palette, icons, legend) from `_meta`
 - Optional steering instruction to shift AI focus; supports incremental expansion
-- **Six modes**: Idea, Code, Resume, Decide, Write, Plan — auto-detected or manually locked
+- **Seven modes**: Idea, Code, Resume, Decide, Write, Plan, Learn — auto-detected or manually locked
 
 ### 2. Multi-Agent Generation
 - Three parallel AI agents: first principles, analogical reasoning, adversarial thinking
@@ -101,13 +101,95 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - **Sprint Mode**: Gamified 20-minute session (Generate → Critique → Converge)
 - **Version History**: Up to 15 versions per idea for iteration comparison
 
+### 17. Refine Pipeline
+- **Auto-Refine Engine**: Research-agent-enriched critique → strengthen → score loop
+- Multi-agent lens analysis (analogical, first-principles, adversarial) for enrichment
+- Severity-badged critique results with approach recommendations
+- Recursive strengthening with SSE-streamed node updates
+- RefinePanel side panel and inline RefineCard in chat
+
+### 18. Portfolio Generation
+- **Alternative Approaches**: Generates 3–5 alternative solution trees with mini-trees
+- Multi-agent enrichment pipeline (market, tech, audience research agents)
+- Multi-dimensional scoring (market potential, feasibility, innovation, etc.)
+- PortfolioPanel with tabbed navigation and scoring visualizations
+- Inline PortfolioCard in chat with mini dimension bars
+
+### 19. Learn Mode (Autonomous Comprehension)
+- **Concept DAG Generation**: AI generates a directed acyclic graph of concepts for any topic
+- **Comprehension Loop**: Probe → Evaluate → Adapt cycle for each concept node
+- **Socratic Questioning**: AI uses Socratic dialogue to deepen understanding
+- **Mastery Tracking**: Per-node mastery badges and prerequisite dependency checking
+- **Curriculum-Quality Critique**: Learn-specific critique prompts for educational quality
+- Inline LearnCard in chat with quiz interactions and mastery progress
+
+### 20. Memory Mnemonics (Veo 3)
+- **Mnemonic Video Generation**: Claude crafts vivid visual metaphor → Veo 3 generates 6-second mnemonic video
+- Videos stored in Google Cloud Storage (`gs://lasttouchashar-mnemonics/`)
+- 🎬 button on learn-mode concept nodes → polling with progress → ▶ playback
+- VideoModal with strategy description, scene description, and HTML5 video player
+
+### 21. AutoIdea Experiment Loop
+- **Autonomous Iteration**: Mutate → Score → Compare → Keep/Discard across multiple iterations
+- Strategy badges (refine, pivot, explore, combine, niche) per mutation
+- Comparative scoring against baseline with score delta visualization
+- Inline ExperimentCard in chat with iteration progress
+
+### 22. Node Tools (Precision Editing)
+- **Razor Split**: AI splits a single node into two complementary specific nodes
+- **Merge**: AI synthesizes two nodes into one unified node
+- **Ripple Delete**: Remove a node and reconnect its children
+- **Slip Edit**: Adjust node positioning in the tree
+- PreviewOverlay for atomic preview/reject before committing AI results
+
+### 23. Action Execution Engine
+- Dispatches node actions to mode-specific executors (Code mode via Claude Code CLI)
+- Concurrency control with SSE streaming for execution progress
+- Stoppable execution with `/api/stop-execution`
+
+### 24. Knowledge Graph (Zettelkasten)
+- Cross-session node clustering and similarity search
+- Persistent knowledge store with embedding-based retrieval
+- KnowledgeGraph view for exploring connections across sessions
+
+### 25. Workspaces & Team Collaboration
+- Workspace CRUD with role-based access control (owner, admin, member)
+- Token-based invitation system with accept/revoke
+- Pro-plan gating for additional workspace creation
+- InviteAccept page for `/invite/:token` URLs
+
+### 26. Gmail Integration
+- OAuth2 connection for reading email threads
+- Thread search and picker modal
+- Email content as tree generation context
+- In-memory token storage (privacy-first, no persistence)
+
+### 27. Billing (Stripe)
+- Stripe checkout and customer portal integration
+- Billing status tracking per user
+- Webhook handling for subscription events
+
+### 28. Enhanced UI/UX
+- **Sidebar Navigation**: Session navigation with mode config, date-grouped sessions, import/create flows
+- **Ghost Nodes**: Shimmer-animated placeholder nodes during AI streaming
+- **Undo Stack**: Up to 60 canvas snapshots with Ctrl+Z/Ctrl+Y keyboard support
+- **Hover Preview**: Floating preview card on 400ms node hover with full metadata
+- **Pipeline Overlay**: Banner showing Generate→Debate→Refine→Portfolio stage progress
+- **Cinematic Controller**: AI video-like replay of tree-building with smooth camera movements
+- **Inspector Panel**: Deep node editing with full metadata control (label, reasoning, type, parents, children, scores)
+- **Flowchart View**: Main ReactFlow canvas with auto-fit, toolbar, search, collapse/expand, and drill navigation
+- **Timeline Filmstrip**: Horizontal node thumbnail strip with transport controls and type filtering
+- **Chat-First Node Interaction**: NodeFocusCard replaces separate edit panels with inline chat actions
+- **User Profiles**: `/api/me` endpoint for user profile management
+
 ## Technical Stack
 
 - **Frontend**: React 19, Create React App, @xyflow/react, dagre, react-markdown, remark-gfm, react-force-graph-3d, Firebase Auth SDK
-- **Backend**: Node.js, Express, @anthropic-ai/sdk, firebase-admin, ws, express-rate-limit
-- **AI Models**: `claude-opus-4-5` (debate/generation with extended thinking), `claude-sonnet-4-20250514` (chat/utilities/fractal expand/fractal select)
+- **Backend**: Node.js, Express, @anthropic-ai/sdk, @google/genai, @google-cloud/storage, firebase-admin, ws, express-rate-limit, stripe
+- **AI Models**: `claude-opus-4-5` (debate/generation with extended thinking), `claude-sonnet-4-20250514` (chat/utilities/fractal expand/fractal select), Veo 3 (`veo-3.0-generate-001`) for mnemonic video generation, Gemini for experiment scoring
 - **Streaming**: Server-Sent Events (SSE)
-- **Persistence**: Firebase/Firestore (server) + localStorage (client) + WebSocket (sync)
+- **Persistence**: Firebase/Firestore (server) + localStorage (client) + WebSocket (sync) + Google Cloud Storage (videos)
+- **Payments**: Stripe (checkout, portal, webhooks)
 - **Infrastructure**: Docker, CORS, rate limiting, Firebase Auth
 - **Ports**: Frontend 3000, Backend 5001
 
@@ -134,3 +216,4 @@ Each mode has consistent, tailored labels across all UI touchpoints:
 | Decision | ⚖ ADVOCATE | ✦ ANALYST | DEVIL'S ADVOCATE | DECISION ANALYST | Devil's Advocate | Strategic Advisor |
 | Writing | ✦ EDITORIAL | ✦ EDITOR | EDITORIAL REVIEW | WRITING EDITOR | Senior Editor | Writer |
 | Plan | ◉ RISK | ✦ PLANNER | RISK ANALYSIS | PROJECT ADVISOR | Risk Analyst | Project Manager |
+| Learn | — | ✦ TUTOR | — | LEARNING TUTOR | — | — |

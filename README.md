@@ -6,7 +6,7 @@ An AI-powered structured thinking visualization tool that transforms any input �
 
 ### Core canvas modes
 - **Domain-Adaptive Idea Trees**: Enter any input and Claude AI automatically detects the domain, selects appropriate node types, and generates 18–25 interconnected nodes. The AI emits a `_meta` header declaring the domain and types, which the frontend uses to configure colors, icons, and legend dynamically.
-- **Six Canvas Modes**: Idea, Code (codebase), Resume, Decide, Write, Plan — each with tailored system prompts, mode-specific debate personas, and contextual UI labels. Auto-detected from input text or manually locked via mode tabs.
+- **Seven Canvas Modes**: Idea, Code (codebase), Resume, Decide, Write, Plan, Learn — each with tailored system prompts, mode-specific debate personas, and contextual UI labels. Auto-detected from input text or manually locked via mode tabs.
 - **URL Auto-Detection & Fetching**: URLs in the input are automatically detected, fetched via the server proxy, and their content is included as reference context for the AI.
 - **Multi-Agent Research**: Deep research mode that plans a research strategy, fetches multiple URLs, and synthesizes findings into a comprehensive tree.
 - **Branch Regeneration**: Expand any node with 5–10 new AI-generated child nodes
@@ -23,6 +23,40 @@ An AI-powered structured thinking visualization tool that transforms any input �
 - **File Upload**: Attach plain-text files (.txt, .md, .csv, .json, .html, .rtf) to prefill the idea field
 - **Node Scoring**: Automated quality scoring of nodes (relevance, specificity, actionability)
 - **Template Extraction**: Extract structural templates from generated trees for reuse
+- **Node Tools**: Precision editing — Razor Split (split node into two), Merge (synthesize two into one), Ripple Delete, Slip Edit
+- **Undo/Redo**: 60-snapshot undo stack with Ctrl+Z/Ctrl+Y keyboard support
+- **Ghost Nodes**: Shimmer-animated placeholder nodes during AI streaming
+- **Hover Preview**: Floating preview card on node hover with full metadata
+
+### Refine pipeline
+- **Auto-Refine Engine**: Research-agent-enriched critique → strengthen → score loop
+- Multi-agent lens analysis (analogical, first-principles, adversarial) for enrichment
+- Severity-badged critiques with approach recommendations
+- RefinePanel side panel and inline RefineCard in chat
+
+### Portfolio generation
+- **Alternative Approaches**: Generate 3–5 alternative solution trees with mini-trees
+- Multi-agent enrichment (market, tech, audience research agents)
+- Multi-dimensional scoring visualization
+- PortfolioPanel with tabbed navigation and inline PortfolioCard in chat
+
+### Learn mode (autonomous comprehension)
+- **Concept DAG Generation**: AI generates directed acyclic graph of concepts for any topic
+- **Comprehension Loop**: Probe → Evaluate → Adapt cycle with mastery tracking
+- **Socratic Questioning**: AI Socratic dialogue for deeper understanding
+- **Memory Mnemonics**: Claude crafts visual metaphor → Veo 3 generates 6-second mnemonic video → stored in GCS
+- 🎬 button on concept nodes, VideoModal with strategy description and HTML5 video playback
+- Inline LearnCard in chat with quiz interactions and mastery badges
+
+### AutoIdea experiment loop
+- **Autonomous Iteration**: Mutate → Score → Compare → Keep/Discard across configurable iterations
+- Strategy badges (refine, pivot, explore, combine, niche) per mutation
+- Comparative scoring with delta visualization
+- Inline ExperimentCard in chat
+
+### Action execution
+- Dispatch node actions to mode-specific executors with SSE progress streaming
+- Stoppable execution via stop endpoint
 
 ### Stress-testing and debate
 - **Mode-Specific Debate**: Multi-round autonomous debate between domain-specific personas:
@@ -46,26 +80,54 @@ An AI-powered structured thinking visualization tool that transforms any input �
 - **Interactive Visualizations**: Generate self-contained HTML artifacts from tree analysis
 - **Multiple Artifacts**: Manage a collection of generated visual outputs
 
+### Knowledge graph
+- **Zettelkasten-Style Graph**: Cross-session node clustering and similarity search
+- Persistent knowledge store with embedding-based retrieval
+- Explore connections across sessions
+
 ### Visualization and navigation
 - **3D Graph**: Toggle to a 3D force-directed view with temporal rounds on the X-axis and node-type clusters on YZ
 - **2D Temporal Navigation**: Timeline bar with round range slider, play/pause, playback speed, and optional round isolation
 - **Cross-Links**: Toggle visibility of cross-relationship edges between non-parent nodes
 - **Node Search**: Filter nodes by text with dimming of non-matching nodes
+- **Flowchart View**: ReactFlow canvas with auto-fit, toolbar, search, collapse/expand, drill navigation
+- **Timeline Filmstrip**: Horizontal node thumbnail strip with transport controls and type filtering
+- **Cinematic Controller**: AI video-like replay of tree-building with smooth camera movements
+- **Pipeline Overlay**: Stage progress banner (Generate→Debate→Refine→Portfolio)
+- **Inspector Panel**: Deep node editing with full metadata control
 
 ### Export and sharing
 - **Share via Link**: Generate shareable tree links stored in Firestore
 - **Export Dropdown**: Export as PNG, SVG, interactive HTML, or copy to clipboard
 - **Export to GitHub**: Create a new GitHub repo with markdown files generated from the tree and debate history
 
+### Workspaces and collaboration
+- **Workspace CRUD**: Create, manage, and switch between team workspaces
+- **Role-Based Access**: Owner, admin, member roles with permission controls
+- **Token-Based Invitations**: Invite team members via shareable links
+- **Pro-Plan Gating**: Additional workspaces available on paid plans
+
+### Gmail integration
+- **OAuth2 Connection**: Connect Gmail for reading email threads
+- **Thread Search**: Search and pick email threads as tree generation context
+- **Privacy-First**: In-memory token storage, no persistence
+
+### Billing (Stripe)
+- **Subscription Management**: Stripe checkout and customer portal
+- **Billing Status**: Per-user subscription tracking
+- **Webhooks**: Automated subscription event handling
+
 ### Authentication and persistence
 - **Firebase Authentication**: Google sign-in with landing page for unauthenticated users
 - **Session Dashboard**: Grid view of all saved sessions with node counts, timestamps, and mode badges
+- **Sidebar Navigation**: Session grouping by date, mode config, import/create flows
 - **Firestore Persistence**: Server-side session storage via Firebase/Firestore gateway
 - **Usage Tracking**: Per-user generation limits with visual usage indicator
 - **Rate Limiting**: Request throttling for generation and general API endpoints
 - **Local Auto-Save**: Automatic canvas saves to localStorage with session resume banners
 - **Version History**: Up to 15 versions per idea for comparing iterations
 - **Memory Layer**: Cross-session pattern analysis identifying blindspots, biases, and strengths
+- **User Profiles**: Profile management via `/api/me`
 
 ## Project Structure
 
@@ -75,18 +137,27 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── App.js                   # Main shell, mode switching, toolbar, timeline
 │       ├── App.css                  # All styles (dark theme)
 │       ├── AuthContext.js           # Firebase auth provider + Google sign-in
+│       ├── UserContext.js           # User profile, workspace, billing context
 │       ├── LandingPage.js           # Unauthenticated landing page
 │       ├── SessionDashboard.js      # Saved sessions grid view
+│       ├── Sidebar.js               # Session navigation sidebar with mode config
 │       ├── IdeaCanvas.js            # ReactFlow canvas with node layout, double-click drill
-│       ├── IdeaNode.js              # Node component (⊕ expand, collapse chevron, depth, glow)
+│       ├── IdeaNode.js              # Node component (⊕ expand, collapse, mnemonic 🎬/▶)
+│       ├── FlowchartView.js         # Main ReactFlow canvas with auto-fit and toolbar
 │       ├── NodeEditPanel.js         # Node detail/edit panel + mockup generation
+│       ├── InspectorPanel.js        # Deep node editing with full metadata control
 │       ├── NodeContextMenu.js       # Right-click context menu
 │       ├── DrillBreadcrumb.js       # Drill-down breadcrumb navigation
 │       ├── PrototypePlayer.js       # iframe viewer for HTML mockups
+│       ├── PreviewOverlay.js        # Atomic preview/reject for AI results
 │       ├── CodebaseUpload.js        # Drag-and-drop codebase file upload
-│       ├── DebatePanel.js           # Mode-specific debate loop (critique + rebut + finalize)
-│       ├── ChatPanel.js             # AI chat companion with markdown rendering
+│       ├── DebatePanel.js           # Mode-specific debate loop
+│       ├── ChatPanel.js             # AI chat companion with markdown + action cards
 │       ├── CanvasPanel.js           # A2UI interactive visualization panel
+│       ├── RefinePanel.js           # Critique→strengthen→score loop panel
+│       ├── PortfolioPanel.js        # Alternative approaches with scoring
+│       ├── PipelineOverlay.js       # Generate→Debate→Refine→Portfolio stage banner
+│       ├── VideoModal.js            # Mnemonic video playback modal
 │       ├── MemoryLayer.js           # Thinking pattern analysis UI
 │       ├── SprintMode.js            # 20-minute sprint timer + phase management
 │       ├── ResumeInput.js           # Resume mode: JD URL fetch, paste JD, PDF upload
@@ -97,26 +168,56 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── ExportGitHubModal.js     # Export tree + debate to GitHub repo
 │       ├── LoadModal.js             # Load saved sessions modal
 │       ├── HistoryModal.js          # Version history modal
+│       ├── GmailConnect.js          # Gmail OAuth connect/disconnect
+│       ├── InviteAccept.js          # Workspace invite acceptance page
 │       ├── Graph3D.js               # 3D force-directed graph
+│       ├── KnowledgeGraph.js        # Zettelkasten cross-session cluster view
+│       ├── TimelineFilmstrip.js     # Horizontal node thumbnails with transport
+│       ├── CinematicController.js   # AI video-like tree replay
+│       ├── chat/
+│       │   ├── ExperimentCard.js    # AutoIdea experiment loop card
+│       │   ├── LearnCard.js         # Comprehension loop quiz card
+│       │   ├── NodeFocusCard.js     # Chat-first node interaction card
+│       │   ├── PortfolioCard.js     # Portfolio alternatives card
+│       │   └── RefineCard.js        # Refine progress/results card
 │       ├── api.js                   # Auth-aware fetch wrapper (token injection)
 │       ├── exportImage.js           # PNG, SVG, clipboard, interactive HTML export
 │       ├── exportMarkdown.js        # Markdown generation for GitHub export
 │       ├── modeConfig.js            # Mode definitions + auto-detect from input
-│       ├── useCanvasMode.js         # Canvas state hook (nodes, sessions, fractal expand/collapse, auto-fractal)
-│       ├── layoutUtils.js           # Dagre layout, edge building, collapse filtering, depth computation
+│       ├── useCanvasMode.js         # Canvas state hook (nodes, sessions, fractal)
+│       ├── useLearnLoop.js          # Learn comprehension loop hook
+│       ├── useMnemonicVideo.js      # Veo 3 mnemonic video generation hook
+│       ├── useExperimentLoop.js     # AutoIdea experiment loop hook
+│       ├── useAutoRefine.js         # Critique→strengthen→score loop hook
+│       ├── usePortfolio.js          # Portfolio generation/scoring hook
+│       ├── useNodeTools.js          # Split, merge, ripple delete, slip edit hook
+│       ├── useUndoStack.js          # 60-snapshot undo/redo with Ctrl+Z/Y
+│       ├── useGhostNodes.js         # Shimmer placeholder nodes during streaming
+│       ├── useHoverPreview.js       # Floating preview on node hover
+│       ├── useTimelineNav.js        # J/K/L keyboard nav + auto-playback
+│       ├── useGmail.js              # Gmail integration hook
+│       ├── layoutUtils.js           # Dagre layout, edge building, collapse, depth
 │       ├── nodeConfig.js            # Node type colors/icons, dynamic palette
 │       ├── TemplateStore.js         # Structural template persistence
 │       └── gateway/
 │           └── useGateway.js        # Firestore session sync gateway hook
 ├── server/                          # Node.js/Express backend
-│   ├── server.js                    # Express app, route wiring, WebSocket setup
+│   ├── server.js                    # Express app, routes, WebSocket, Stripe webhooks
 │   ├── engine/
-│   │   ├── prompts.js               # All system prompts + debate/chat/fractal personas
-│   │   ├── generate.js              # Tree generation (single, multi-agent, research, fractal expand/select)
+│   │   ├── prompts.js               # All system prompts + personas
+│   │   ├── generate.js              # Tree generation (single, multi, research, fractal)
 │   │   ├── debate.js                # Debate handlers (critique, rebut, finalize)
 │   │   ├── chat.js                  # Chat companion handler
 │   │   ├── analyze.js               # Codebase analysis, scoring, templates
-│   │   └── specialty.js             # Mockup, resume changes, reflect, critique
+│   │   ├── specialty.js             # Mockup, resume changes, reflect, critique
+│   │   ├── learn.js                 # Comprehension loop (probe, evaluate, adapt, socratic)
+│   │   ├── mnemonic.js              # Veo 3 mnemonic video gen + GCS upload
+│   │   ├── experiment.js            # AutoIdea experiment loop (mutate, score, analyze)
+│   │   ├── refine.js                # Refine engine (critique, strengthen, score)
+│   │   ├── portfolio.js             # Portfolio generation + multi-agent scoring
+│   │   ├── nodeTools.js             # Node split + merge handlers
+│   │   ├── execute.js               # Action execution engine with SSE
+│   │   └── gmail.js                 # Gmail OAuth2 + thread API
 │   ├── canvas/
 │   │   ├── engine.js                # A2UI canvas generation
 │   │   └── prompts.js               # Canvas system prompts
@@ -127,7 +228,7 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │   │   ├── usage.js                 # Per-user usage tracking
 │   │   └── websocket.js             # WebSocket server setup
 │   ├── middleware/
-│   │   ├── auth.js                  # Firebase token verification middleware
+│   │   ├── auth.js                  # Firebase token verification + workspace resolution
 │   │   └── rateLimit.js             # Request rate limiting
 │   └── utils/
 │       ├── sse.js                   # SSE streaming helpers
@@ -226,6 +327,61 @@ All `/api/*` endpoints (except `/api/health` and `/api/shares/:id`) require a Fi
 | `/api/chat` | POST | Mode-specific AI chat companion. SSE stream of text chunks. |
 | `/api/canvas/generate` | POST | Generate interactive HTML visualization. SSE stream. |
 
+### Refine Pipeline
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/refine/critique` | POST | Research-agent-enriched critique with severity badges. Non-streaming. |
+| `/api/refine/strengthen` | POST | Strengthen tree based on critique. SSE stream. |
+| `/api/refine/score` | POST | Score tree quality after refinement. Non-streaming. |
+
+### Portfolio
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/portfolio/generate` | POST | Generate 3–5 alternative approaches with mini-trees. SSE stream. |
+| `/api/portfolio/score` | POST | Multi-dimensional scoring of alternatives. Non-streaming. |
+
+### Learn Mode
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/learn/probe` | POST | Generate comprehension probe questions. Non-streaming. |
+| `/api/learn/evaluate` | POST | Evaluate student answers. Non-streaming. |
+| `/api/learn/adapt` | POST | Adapt difficulty and generate follow-up. SSE stream. |
+| `/api/learn/socratic` | POST | Socratic questioning dialogue. Non-streaming. |
+| `/api/learn/mnemonic/generate` | POST | Start Veo 3 mnemonic video generation. Non-streaming. |
+| `/api/learn/mnemonic/poll` | POST | Poll mnemonic video generation status. Non-streaming. |
+
+### Experiment Loop
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/experiment/mutate` | POST | Generate mutated tree variant. SSE stream. |
+| `/api/experiment/score` | POST | Score variant against baseline. Non-streaming. |
+| `/api/experiment/analyze` | POST | Analyze results across iterations. Non-streaming. |
+
+### Node Tools
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/split-node` | POST | Split node into two complementary nodes. SSE stream. |
+| `/api/merge-nodes` | POST | Merge two nodes into one synthesis. SSE stream. |
+
+### Execution
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/execute-action` | POST | Dispatch node action with SSE progress. |
+| `/api/stop-execution` | POST | Stop running execution. Non-streaming. |
+
+### Knowledge Graph
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/knowledge/clusters` | GET | Cross-session node clustering. |
+| `/api/knowledge/similar` | POST | Embedding-based similarity search. |
+
 ### Specialty
 
 | Endpoint | Method | Description |
@@ -251,6 +407,37 @@ All `/api/*` endpoints (except `/api/health` and `/api/shares/:id`) require a Fi
 | `/api/sessions/:id` | GET | Get a specific session |
 | `/api/sessions/:id` | DELETE | Delete a session |
 | `/api/usage` | GET | Get user's daily generation usage |
+
+### Workspaces
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/workspaces` | GET/POST | List or create workspaces |
+| `/api/workspaces/:id` | GET/PUT | Get or update workspace |
+| `/api/workspaces/:id/members` | GET | List workspace members |
+| `/api/workspaces/:id/members/invite` | POST | Invite member via token |
+| `/api/workspaces/:id/members/:userId/role` | PUT | Update member role |
+| `/api/workspaces/:id/members/:userId` | DELETE | Remove member |
+| `/api/workspaces/:id/invitations` | GET | List pending invitations |
+| `/api/workspaces/:id/invitations/:id` | DELETE | Revoke invitation |
+| `/api/invitations/check` | GET | Check invitation validity |
+| `/api/invitations/accept` | POST | Accept workspace invitation |
+
+### Billing
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stripe/webhook` | POST | Stripe webhook handler |
+| `/api/billing/checkout` | POST | Create Stripe checkout session |
+| `/api/billing/portal` | POST | Create Stripe customer portal session |
+| `/api/billing/status` | GET | Get user billing status |
+
+### User Profile
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/me` | GET | Get user profile |
+| `/api/me` | PUT | Update user profile |
 
 ### Utilities
 
@@ -296,8 +483,9 @@ In Idea mode, the AI analyzes the input domain and declares its own node types v
 
 - **Frontend**: React 19, Create React App, @xyflow/react (ReactFlow), dagre, react-markdown, remark-gfm, react-force-graph-3d
 - **Backend**: Node.js, Express, WebSocket (ws)
-- **AI**: Anthropic Claude (`claude-opus-4-5` for debate/generation, `claude-sonnet-4-20250514` for chat/utilities) via streaming SSE
+- **AI**: Anthropic Claude (`claude-opus-4-5` for debate/generation, `claude-sonnet-4-20250514` for chat/utilities) via streaming SSE; Google Veo 3 (`veo-3.0-generate-001`) for mnemonic videos; Gemini for experiment scoring
 - **Authentication**: Firebase Auth (Google sign-in)
-- **Persistence**: Firebase/Firestore (server-side sessions, shares, usage) + browser localStorage (auto-save, versions, memory)
+- **Persistence**: Firebase/Firestore (server-side sessions, shares, usage) + browser localStorage (auto-save, versions, memory) + Google Cloud Storage (mnemonic videos)
+- **Payments**: Stripe (checkout, customer portal, webhooks)
 - **Infrastructure**: Docker, CORS, rate limiting
 - **Development**: Concurrently (runs client + server)

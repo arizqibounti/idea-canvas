@@ -16,7 +16,7 @@ An AI-powered structured thinking visualization tool that takes any input — pr
    - Nodes stream in one at a time via SSE
    - Optional steering instruction shifts the AI's focus
    - Supports incremental expansion of existing trees
-   - **Multi-mode**: Six modes — Idea, Code, Resume, Decide, Write, Plan. Auto-detected from input or locked via tabs.
+   - **Multi-mode**: Seven modes — Idea, Code, Resume, Decide, Write, Plan, Learn. Auto-detected from input or locked via tabs.
 
 2. **Multi-Agent Generation**
    - Three parallel AI agents (first principles, analogical, adversarial) generate trees independently
@@ -100,6 +100,104 @@ An AI-powered structured thinking visualization tool that takes any input — pr
     - Generate self-contained HTML artifacts from tree analysis
     - Manage a collection of generated visual outputs
     - Panel with artifact tabs and live preview
+
+### Refine Pipeline
+
+12. **Auto-Refine Engine**
+    - Research-agent-enriched critique → strengthen → score loop
+    - Multi-agent lens analysis (analogical, first-principles, adversarial) for enrichment
+    - Severity-badged critique results with approach recommendations
+    - Recursive strengthening with SSE-streamed node updates
+
+### Portfolio Generation
+
+13. **Alternative Approaches**
+    - Generate 3–5 alternative solution trees with mini-trees
+    - Multi-agent enrichment pipeline (market, tech, audience research agents)
+    - Multi-dimensional scoring (market potential, feasibility, innovation, etc.)
+    - Tabbed portfolio panel with scoring visualizations
+
+### Learn Mode (Autonomous Comprehension)
+
+14. **Concept DAG & Comprehension Loop**
+    - AI generates directed acyclic graph of concepts for any topic
+    - Probe → Evaluate → Adapt cycle for each concept node
+    - Socratic questioning for deeper understanding
+    - Per-node mastery tracking with prerequisite dependency checking
+    - Curriculum-quality critique prompts for educational rigor
+
+15. **Memory Mnemonics (Veo 3)**
+    - Claude crafts vivid visual metaphor from concept context
+    - Veo 3 generates 6-second mnemonic video
+    - Videos stored in Google Cloud Storage (`gs://lasttouchashar-mnemonics/`)
+    - 🎬 button on concept nodes → poll → ▶ playback in VideoModal
+
+### AutoIdea Experiment Loop
+
+16. **Autonomous Iteration**
+    - Mutate → Score → Compare → Keep/Discard across configurable iterations
+    - Strategy badges (refine, pivot, explore, combine, niche) per mutation
+    - Comparative scoring against baseline with score delta visualization
+
+### Node Tools (Precision Editing)
+
+17. **AI-Powered Node Operations**
+    - Razor Split: split one node into two complementary specific nodes
+    - Merge: synthesize two nodes into one unified node
+    - Ripple Delete: remove node and reconnect children
+    - Slip Edit: adjust node positioning in tree
+    - Preview overlay for atomic preview/reject before committing
+
+### Action Execution Engine
+
+18. **Mode-Specific Executors**
+    - Dispatch node actions to mode-specific executors (Code mode via Claude Code CLI)
+    - Concurrency control with SSE streaming progress
+    - Stoppable execution
+
+### Knowledge Graph (Zettelkasten)
+
+19. **Cross-Session Intelligence**
+    - Node clustering and embedding-based similarity search across sessions
+    - Persistent knowledge store
+    - Explore connections between concepts across different trees
+
+### Workspaces & Team Collaboration
+
+20. **Team Workspaces**
+    - Workspace CRUD with role-based access control (owner, admin, member)
+    - Token-based invitation system with accept/revoke
+    - Pro-plan gating for additional workspace creation
+
+### Gmail Integration
+
+21. **Email Context**
+    - OAuth2 connection for reading email threads
+    - Thread search and picker modal
+    - Email content as tree generation context
+    - In-memory token storage (privacy-first)
+
+### Billing (Stripe)
+
+22. **Subscription Management**
+    - Stripe checkout and customer portal
+    - Billing status tracking per user
+    - Webhook handling for subscription events
+
+### Enhanced UI
+
+23. **Navigation & Editing**
+    - Sidebar navigation with date-grouped sessions and mode config
+    - Ghost nodes — shimmer placeholders during AI streaming
+    - Undo stack (60 snapshots, Ctrl+Z/Ctrl+Y)
+    - Hover preview — floating card on 400ms node hover
+    - Pipeline overlay — Generate→Debate→Refine→Portfolio stage progress
+    - Cinematic controller — AI video-like tree replay
+    - Inspector panel — deep node editing with full metadata
+    - Flowchart view — ReactFlow canvas with auto-fit and toolbar
+    - Timeline filmstrip — horizontal node thumbnails with transport controls
+    - Chat-first node interaction via NodeFocusCard (replaces separate edit panels)
+    - User profiles via `/api/me`
 
 ### Visualization & Navigation
 
@@ -188,7 +286,10 @@ An AI-powered structured thinking visualization tool that takes any input — pr
 ### Backend
 - **Node.js + Express**: API server (port 5001)
 - **@anthropic-ai/sdk**: Claude model integration
+- **@google/genai**: Gemini/Veo 3 integration (mnemonic videos, experiment scoring)
+- **@google-cloud/storage**: Google Cloud Storage for mnemonic video files
 - **firebase-admin**: Server-side token verification + Firestore
+- **stripe**: Payment processing (checkout, portal, webhooks)
 - **ws**: WebSocket server for real-time sync
 - **express-rate-limit**: Request throttling
 - **SSE**: Real-time node streaming to frontend
@@ -196,7 +297,9 @@ An AI-powered structured thinking visualization tool that takes any input — pr
 
 ### AI Models
 - **claude-opus-4-5**: Debate critique/rebut/finalize, tree generation (extended thinking enabled)
-- **claude-sonnet-4-20250514**: Chat companion, regeneration, drill, scoring, utilities
+- **claude-sonnet-4-20250514**: Chat companion, regeneration, drill, scoring, learn, refine, portfolio, experiment, node tools
+- **Veo 3** (`veo-3.0-generate-001`): 6-second mnemonic video generation
+- **Gemini**: Experiment scoring and portfolio evaluation
 
 ## API Specification
 
@@ -382,6 +485,157 @@ Generate interactive HTML visualization.
 
 **Request:** `{ "nodes", "idea", "instruction" }`
 **Response:** SSE stream of HTML content
+
+### POST /api/refine/critique
+Research-agent-enriched critique. **Non-streaming.**
+
+**Request:** `{ "nodes", "idea", "mode" }`
+**Response:** `{ "critiques": [{ "category", "text", "severity" }], "approaches": [...] }`
+
+### POST /api/refine/strengthen
+Strengthen tree based on critique. SSE stream.
+
+**Request:** `{ "nodes", "idea", "critiques", "mode" }`
+**Response:** SSE stream of updated/new nodes
+
+### POST /api/refine/score
+Score tree quality. **Non-streaming.**
+
+**Request:** `{ "nodes", "idea" }`
+**Response:** `{ "score", "dimensions": { ... } }`
+
+### POST /api/portfolio/generate
+Generate alternative approaches. SSE stream.
+
+**Request:** `{ "nodes", "idea", "mode" }`
+**Response:** SSE stream of alternative mini-trees
+
+### POST /api/portfolio/score
+Score portfolio alternatives. **Non-streaming.**
+
+**Request:** `{ "alternatives", "idea" }`
+**Response:** `{ "scores": { ... } }`
+
+### POST /api/learn/probe
+Generate comprehension probes. **Non-streaming.**
+
+**Request:** `{ "nodeId", "topic", "nodes", "mastery" }`
+**Response:** `{ "probe", "expectedAnswer", "hints" }`
+
+### POST /api/learn/evaluate
+Evaluate student answer. **Non-streaming.**
+
+**Request:** `{ "nodeId", "answer", "probe", "expectedAnswer" }`
+**Response:** `{ "correct", "feedback", "mastery" }`
+
+### POST /api/learn/adapt
+Adapt difficulty. SSE stream.
+
+**Request:** `{ "nodeId", "topic", "nodes", "mastery", "history" }`
+**Response:** SSE stream of adapted content
+
+### POST /api/learn/socratic
+Socratic questioning. **Non-streaming.**
+
+**Request:** `{ "nodeId", "topic", "dialogue" }`
+**Response:** `{ "question", "guidance" }`
+
+### POST /api/learn/mnemonic/generate
+Start Veo 3 video generation. **Non-streaming.**
+
+**Request:** `{ "nodeId", "topic", "nodes" }`
+**Response:** `{ "jobId", "status": "pending", "mnemonicStrategy", "veoPrompt", "briefDescription" }`
+
+### POST /api/learn/mnemonic/poll
+Poll video generation status. **Non-streaming.**
+
+**Request:** `{ "jobId" }`
+**Response:** `{ "status": "pending|complete", "videoUrl?" }`
+
+### POST /api/experiment/mutate
+Generate mutated variant. SSE stream.
+
+**Request:** `{ "nodes", "idea", "strategy", "iteration" }`
+**Response:** SSE stream of mutated nodes
+
+### POST /api/experiment/score
+Score variant against baseline. **Non-streaming.**
+
+**Request:** `{ "baseline", "variant", "idea" }`
+**Response:** `{ "score", "delta", "breakdown" }`
+
+### POST /api/experiment/analyze
+Analyze experiment results. **Non-streaming.**
+
+**Request:** `{ "iterations", "idea" }`
+**Response:** `{ "analysis", "recommendation" }`
+
+### POST /api/split-node
+Split node into two. SSE stream.
+
+**Request:** `{ "node", "context" }`
+**Response:** SSE stream of two new nodes
+
+### POST /api/merge-nodes
+Merge two nodes. SSE stream.
+
+**Request:** `{ "nodes", "context" }`
+**Response:** SSE stream of merged node
+
+### POST /api/execute-action
+Execute node action with SSE progress.
+
+**Request:** `{ "nodeId", "action", "mode" }`
+**Response:** SSE stream of execution events
+
+### POST /api/stop-execution
+Stop a running execution. **Non-streaming.**
+
+**Response:** `{ "stopped": true }`
+
+### GET /api/knowledge/clusters
+Cross-session node clustering.
+
+**Response:** `{ "clusters": [...] }`
+
+### POST /api/knowledge/similar
+Embedding-based similarity search.
+
+**Request:** `{ "query", "limit?" }`
+**Response:** `{ "similar": [...] }`
+
+### GET /api/me
+Get user profile. **Non-streaming.**
+
+**Response:** `{ "uid", "email", "displayName", "plan", ... }`
+
+### PUT /api/me
+Update user profile. **Non-streaming.**
+
+**Request:** `{ "displayName?", ... }`
+**Response:** `{ "updated": true }`
+
+### Workspace Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/workspaces` | GET/POST | List or create workspaces |
+| `/api/workspaces/:id` | GET/PUT | Get or update workspace |
+| `/api/workspaces/:id/members` | GET | List members |
+| `/api/workspaces/:id/members/invite` | POST | Invite via token |
+| `/api/workspaces/:id/members/:userId/role` | PUT | Update role |
+| `/api/workspaces/:id/members/:userId` | DELETE | Remove member |
+| `/api/invitations/check` | GET | Check invitation |
+| `/api/invitations/accept` | POST | Accept invitation |
+
+### Billing Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stripe/webhook` | POST | Stripe webhook |
+| `/api/billing/checkout` | POST | Create checkout session |
+| `/api/billing/portal` | POST | Create portal session |
+| `/api/billing/status` | GET | Get billing status |
 
 ### POST /api/mockup
 Generate animated HTML prototype. **Non-streaming.**
