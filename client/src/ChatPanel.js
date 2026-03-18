@@ -7,6 +7,7 @@ import PortfolioCard from './chat/PortfolioCard';
 import LearnCard from './chat/LearnCard';
 import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
+import DebateCard from './chat/DebateCard';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -108,6 +109,48 @@ function serializeTree(nodes) {
   }).join('\n');
 }
 
+// Build focused node + its full subtree for scoped chat context
+function buildFocusedSubtree(focusedNode, allNodes) {
+  if (!focusedNode?.node || !allNodes?.length) return null;
+  const fNode = focusedNode.node;
+  const fId = fNode.id;
+
+  // Collect all descendant IDs via BFS
+  const childMap = new Map();
+  for (const n of allNodes) {
+    const d = n.data || n;
+    const parents = d.parentIds || (d.parentId ? [d.parentId] : []);
+    for (const pid of parents) {
+      if (!childMap.has(pid)) childMap.set(pid, []);
+      childMap.get(pid).push(n);
+    }
+  }
+
+  const subtreeIds = new Set([fId]);
+  const queue = [fId];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const child of (childMap.get(id) || [])) {
+      if (!subtreeIds.has(child.id)) {
+        subtreeIds.add(child.id);
+        queue.push(child.id);
+      }
+    }
+  }
+
+  const subtreeNodes = allNodes.filter(n => subtreeIds.has(n.id));
+  const fd = fNode.data || fNode;
+
+  return {
+    id: fId,
+    type: fd.type || 'node',
+    label: fd.label || fId,
+    reasoning: fd.reasoning || '',
+    subtree: serializeTree(subtreeNodes),
+    subtreeCount: subtreeNodes.length,
+  };
+}
+
 const ACTION_DELIMITER = '<<<ACTIONS>>>';
 
 const ACTION_LABELS = {
@@ -166,7 +209,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -231,6 +274,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
 
     try {
       const treeContext = serializeTree(nodes);
+      const focusContext = buildFocusedSubtree(focusedNode, nodes);
       const res = await authFetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -240,6 +284,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           idea,
           mode,
           emailThread: emailContext?.formatted || null,
+          focusedNode: focusContext,
         }),
         signal: controller.signal,
       });
@@ -533,6 +578,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
               <pre className="exec-stream-output">{executionStream.text || 'Starting Claude Code…'}{!executionStream.done && <span className="chat-cursor">▊</span>}</pre>
             </div>
           </div>
+        )}
+
+        {/* ── Live Debate Stream ── */}
+        {debateStream && (
+          <DebateCard state={debateStream} onAction={onCardButtonClick} />
         )}
 
         {/* ── Live Refine Stream ── */}

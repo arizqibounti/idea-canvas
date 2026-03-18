@@ -1,19 +1,21 @@
 // ── Chat engine handler ───────────────────────────────────────
 
 const { CHAT_PERSONAS } = require('./prompts');
-const { sseHeaders } = require('../utils/sse');
+const { sseHeaders, attachAbortSignal } = require('../utils/sse');
 const integrationRegistry = require('../integrations/registry');
+const ai = require('../ai/providers');
 
 // ── POST /api/chat ────────────────────────────────────────────
 
-function handleChat(client, req, res) {
-  const { messages, treeContext, idea, mode, emailThread } = req.body;
+function handleChat(_client, req, res) {
+  const { messages, treeContext, idea, mode, emailThread, focusedNode } = req.body;
 
   if (!messages || !messages.length) {
     return res.status(400).json({ error: 'messages required' });
   }
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const persona = CHAT_PERSONAS[mode] || CHAT_PERSONAS.idea;
 
@@ -83,45 +85,60 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
     }
   }
 
-  const stream = client.messages.stream({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
+  if (focusedNode) {
+    systemPrompt += `\n\nFOCUSED NODE — The user is currently looking at this node on the canvas:
+- Type: ${focusedNode.type}
+- Label: "${focusedNode.label}"
+- Reasoning: ${focusedNode.reasoning || '(none)'}
+
+${focusedNode.subtreeCount > 1 ? `This node has ${focusedNode.subtreeCount - 1} descendant(s). Its full subtree:\n${focusedNode.subtree}` : 'This node has no children yet.'}
+
+Prioritize this node and its subtree when answering. If the user's question is ambiguous, assume they're asking about this focused node. When suggesting actions, scope them to this node when appropriate (e.g. drill, expand, debate on this subtree).`;
+  }
+
+  ai.stream({
+    model: 'claude:sonnet',
     system: systemPrompt,
+    maxTokens: 4096,
     messages: messages.map(m => ({ role: m.role, content: m.content })),
-  });
+  }).then(({ stream }) => {
+    // Stream raw text chunks (not JSON nodes) for chat
+    let started = false;
+    let ended = false;
 
-  // Stream raw text chunks (not JSON nodes) for chat
-  let started = false;
-  let ended = false;
+    // Abort the stream when client disconnects
+    res.on('close', () => {
+      if (!ended) {
+        ended = true;
+        try { stream.abort(); } catch (e) { /* already done */ }
+      }
+    });
 
-  // Abort the Anthropic stream when client disconnects (e.g. user clicks Stop)
-  res.on('close', () => {
-    if (!ended) {
+    stream.on('text', (text) => {
+      if (ended) return;
+      started = true;
+      res.write(`data: ${JSON.stringify({ text })}\n\n`);
+    });
+
+    stream.on('finalMessage', () => {
+      if (ended) return;
       ended = true;
-      try { stream.abort(); } catch (e) { /* already done */ }
-    }
-  });
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
 
-  stream.on('text', (text) => {
-    if (ended) return;
-    started = true;
-    res.write(`data: ${JSON.stringify({ text })}\n\n`);
-  });
-
-  stream.on('finalMessage', () => {
-    if (ended) return;
-    ended = true;
-    res.write('data: [DONE]\n\n');
-    res.end();
-  });
-
-  stream.on('error', (err) => {
-    if (ended) return;
-    ended = true;
-    console.error('Chat stream error:', err);
-    if (!started) {
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-    }
+    stream.on('error', (err) => {
+      if (ended) return;
+      ended = true;
+      console.error('Chat stream error:', err);
+      if (!started) {
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      }
+      res.end();
+    });
+  }).catch(err => {
+    console.error('Chat stream init error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     res.end();
   });
 }

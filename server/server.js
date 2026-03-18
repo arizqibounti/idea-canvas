@@ -47,8 +47,13 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
 app.use(express.json({ limit: '10mb' }));
 
-const client = new Anthropic();
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// ── AI Provider Abstraction ─────────────────────────────────
+const { initProviders, getClaude, getGemini } = require('./ai/providers');
+const { claude: _providerClaude, gemini: _providerGemini } = initProviders();
+
+// Backward-compatible aliases — existing engine handlers use `client` and `gemini`
+const client = _providerClaude;
+const gemini = _providerGemini;
 
 // ── Engine handlers ──────────────────────────────────────────
 
@@ -97,6 +102,10 @@ app.get('/api/shares/:id', requireAuth, async (req, res) => {
 app.use('/api', requireAuth);
 // generalLimit disabled during dev — re-enable for production
 // app.use('/api', generalLimit);
+
+// ── Prompt Admin API ────────────────────────────────────────────
+app.use('/api/prompt-improve', require('./routes/promptImprove'));
+app.use('/api/prompts', require('./routes/prompts'));
 
 // ── Usage endpoint ──────────────────────────────────────────────
 app.get('/api/usage', async (req, res) => {
@@ -476,6 +485,9 @@ if (require('fs').existsSync(clientBuildPath)) {
 
 const server = app.listen(PORT, async () => {
   console.log(`Gateway running on port ${PORT}`);
+  // Initialize prompt loader (seeds from legacy on first run, builds cache)
+  const promptLoader = require('./engine/promptLoader');
+  promptLoader.init().catch(err => console.error('Prompt loader init error:', err));
   // Initialize all registered integrations (restore sessions, validate config)
   await integrationRegistry.initAll().catch(err => console.error('Integration init error:', err));
 });

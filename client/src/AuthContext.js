@@ -36,8 +36,17 @@ if (isConfigured) {
 
 const AuthContext = createContext(null);
 
+// Dev-mode fake user when Firebase isn't configured
+const DEV_USER = !isConfigured ? {
+  uid: 'local-dev',
+  email: 'dev@localhost',
+  displayName: 'Local Dev',
+  photoURL: null,
+  getIdToken: async () => null,
+} : null;
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(DEV_USER);
   const [loading, setLoading] = useState(isConfigured); // only loading if Firebase is configured
   const tokenRef = useRef(null);
   const [tokenReady, setTokenReady] = useState(!isConfigured);

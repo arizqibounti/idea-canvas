@@ -1,4 +1,5 @@
 // ── Analyze engine handlers ───────────────────────────────────
+// Now uses the AI provider abstraction layer.
 
 const {
   SCORE_NODES_PROMPT,
@@ -8,11 +9,12 @@ const {
   CRITIQUE_PROMPT,
 } = require('./prompts');
 
-const { sseHeaders, streamToSSE } = require('../utils/sse');
+const ai = require('../ai/providers');
+const { sseHeaders, streamToSSE, attachAbortSignal } = require('../utils/sse');
 
 // ── POST /api/score-nodes ─────────────────────────────────────
 
-async function handleScoreNodes(client, req, res) {
+async function handleScoreNodes(_client, req, res) {
   const { nodes, idea } = req.body;
   if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
 
@@ -25,19 +27,15 @@ async function handleScoreNodes(client, req, res) {
       parentId: n.parentId || n.data?.parentId,
     }));
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+    const { text } = await ai.call({
+      model: 'claude:sonnet',
       system: SCORE_NODES_PROMPT,
-      messages: [{
-        role: 'user',
-        content: `Idea: "${idea}"\n\nTree nodes to score:\n${JSON.stringify(nodesSummary, null, 2)}`,
-      }],
+      messages: [{ role: 'user', content: `Idea: "${idea}"\n\nTree nodes to score:\n${JSON.stringify(nodesSummary, null, 2)}` }],
+      maxTokens: 2048,
+      signal: req.signal,
     });
 
-    let text = message.content[0]?.text || '{}';
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const scores = JSON.parse(text);
+    const scores = ai.parseJSON(text);
     res.json({ scores });
   } catch (err) {
     console.error('Score nodes error:', err);
@@ -47,24 +45,20 @@ async function handleScoreNodes(client, req, res) {
 
 // ── POST /api/extract-template ───────────────────────────────
 
-async function handleExtractTemplate(client, req, res) {
+async function handleExtractTemplate(_client, req, res) {
   const { nodes, idea } = req.body;
   if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+    const { text } = await ai.call({
+      model: 'claude:sonnet',
       system: EXTRACT_TEMPLATE_PROMPT,
-      messages: [{
-        role: 'user',
-        content: `Idea: "${idea}"\n\nFinalized tree:\n${JSON.stringify(nodes, null, 2)}`,
-      }],
+      messages: [{ role: 'user', content: `Idea: "${idea}"\n\nFinalized tree:\n${JSON.stringify(nodes, null, 2)}` }],
+      maxTokens: 2048,
+      signal: req.signal,
     });
 
-    let text = message.content[0]?.text || '{}';
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const template = JSON.parse(text);
+    const template = ai.parseJSON(text);
     res.json(template);
   } catch (err) {
     console.error('Extract template error:', err);
@@ -74,11 +68,12 @@ async function handleExtractTemplate(client, req, res) {
 
 // ── POST /api/analyze-codebase ────────────────────────────────
 
-async function handleAnalyzeCodebase(client, req, res) {
+async function handleAnalyzeCodebase(_client, req, res) {
   const { files, analysisGoals, folderName, filesOmitted } = req.body;
   if (!files || !files.length) return res.status(400).json({ error: 'files are required' });
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const goalDescriptions = {
     features: 'Extract product features: what can users actually do? Look at routes, handlers, UI components.',
@@ -108,13 +103,16 @@ ${fileBlock}
 Analyze this codebase and generate the product thinking tree. Reveal what this product actually is, not just what the files contain.`;
 
   try {
-    const stream = await client.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 8192,
+    const nodeTarget = files.length > 300 ? '100-150' : files.length > 100 ? '60-100' : files.length > 20 ? '40-60' : '20-30';
+
+    const { stream: rawStream } = await ai.stream({
+      model: 'claude:opus',
       system: CODEBASE_ANALYSIS_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      messages: [{ role: 'user', content: userMessage + `\n\nTarget: ${nodeTarget} nodes for this ${files.length}-file codebase.` }],
+      maxTokens: 16384,
     });
-    await streamToSSE(res, stream);
+
+    await streamToSSE(res, rawStream);
   } catch (err) {
     console.error('Analyze codebase error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -124,7 +122,7 @@ Analyze this codebase and generate the product thinking tree. Reveal what this p
 
 // ── POST /api/reflect (Memory Layer) ─────────────────────────
 
-async function handleReflect(client, req, res) {
+async function handleReflect(_client, req, res) {
   const { sessions } = req.body;
   if (!sessions || sessions.length < 2) {
     return res.json({ patterns: [] });
@@ -139,16 +137,15 @@ async function handleReflect(client, req, res) {
   }));
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 1024,
+    const { text } = await ai.call({
+      model: 'claude:opus',
       system: REFLECT_PROMPT,
       messages: [{ role: 'user', content: `Past sessions:\n${JSON.stringify(sessionSummaries, null, 2)}` }],
+      maxTokens: 1024,
+      signal: req.signal,
     });
 
-    let text = message.content[0]?.text || '{}';
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const parsed = JSON.parse(text);
+    const parsed = ai.parseJSON(text);
     res.json(parsed);
   } catch (err) {
     console.error('Reflect error:', err);
@@ -158,11 +155,12 @@ async function handleReflect(client, req, res) {
 
 // ── POST /api/critique (Devil's Advocate) ─────────────────────
 
-async function handleCritique(client, req, res) {
+async function handleCritique(_client, req, res) {
   const { nodes, idea } = req.body;
   if (!nodes || !nodes.length) return res.status(400).json({ error: 'nodes are required' });
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const userMessage = `Idea: "${idea}"
 
@@ -172,13 +170,14 @@ ${JSON.stringify(nodes, null, 2)}
 Generate sharp, specific critique nodes challenging the assumptions in this tree.`;
 
   try {
-    const stream = await client.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
+    const { stream: rawStream } = await ai.stream({
+      model: 'claude:opus',
       system: CRITIQUE_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 4096,
     });
-    await streamToSSE(res, stream);
+
+    await streamToSSE(res, rawStream);
   } catch (err) {
     console.error('Critique error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);

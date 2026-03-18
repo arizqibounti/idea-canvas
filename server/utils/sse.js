@@ -178,4 +178,30 @@ async function geminiStreamToSSE(res, geminiStream) {
   }
 }
 
-module.exports = { streamToSSE, streamToSSECollect, parseMessageToNodes, sseHeaders, geminiStreamToSSE };
+/**
+ * Create an AbortController that aborts when the client disconnects.
+ * Attach to req so handlers can pass signal to AI calls.
+ */
+function attachAbortSignal(req, res) {
+  const controller = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      controller.abort();
+    }
+  });
+  req.signal = controller.signal;
+  return controller;
+}
+
+/**
+ * Unified stream-to-SSE dispatcher. Picks the right streamer based on provider.
+ * Works with the { stream, provider } return value from ai.stream().
+ */
+async function autoStreamToSSE(res, { stream, provider }) {
+  if (provider === 'gemini') {
+    return geminiStreamToSSE(res, stream);
+  }
+  return streamToSSE(res, stream);
+}
+
+module.exports = { streamToSSE, streamToSSECollect, parseMessageToNodes, sseHeaders, geminiStreamToSSE, attachAbortSignal, autoStreamToSSE };

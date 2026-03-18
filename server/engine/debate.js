@@ -1,6 +1,7 @@
 // ── Debate engine handlers ────────────────────────────────────
 // Critique + Rebut + Finalize → Gemini 3.1 Pro
-// Expand Suggestion → Anthropic (unchanged)
+// Expand Suggestion → Claude Sonnet
+// Now uses AI provider abstraction layer.
 
 const {
   CRITIC_PROMPT_MAP,
@@ -16,14 +17,12 @@ const {
   buildFinalizeUserMessage,
 } = require('./prompts');
 
-const { sseHeaders, streamToSSE, geminiStreamToSSE } = require('../utils/sse');
-
-const GEMINI_MODEL = 'gemini-3.1-pro-preview';
+const ai = require('../ai/providers');
+const { sseHeaders, streamToSSE, geminiStreamToSSE, attachAbortSignal } = require('../utils/sse');
 
 // ── POST /api/debate/critique ─────────────────────────────────
-// Critic evaluates the tree and returns structured critique + verdict
 
-async function handleDebateCritique(client, req, res, gemini) {
+async function handleDebateCritique(_client, req, res, _gemini) {
   const { nodes, idea, round, priorCritiques, mode } = req.body;
   if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
 
@@ -31,19 +30,15 @@ async function handleDebateCritique(client, req, res, gemini) {
   const userMessage = buildCritiqueUserMessage(mode, { idea, round, priorCritiques, nodes });
 
   try {
-    const response = await gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: criticPrompt,
-        maxOutputTokens: 10000,
-        thinkingConfig: { thinkingLevel: 'MEDIUM' },
-      },
+    const { text } = await ai.call({
+      model: 'gemini:pro',
+      system: criticPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 10000,
+      extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } },
     });
 
-    let text = response.text || '{}';
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const parsed = JSON.parse(text);
+    const parsed = ai.parseJSON(text);
     res.json(parsed);
   } catch (err) {
     console.error('Debate critique error:', err);
@@ -52,26 +47,24 @@ async function handleDebateCritique(client, req, res, gemini) {
 }
 
 // ── POST /api/debate/rebut (SSE) ──────────────────────────────
-// Architect addresses critiques by streaming new/updated nodes
 
-async function handleDebateRebut(client, req, res, gemini) {
+async function handleDebateRebut(_client, req, res, _gemini) {
   const { nodes, idea, round, critiques, mode } = req.body;
   if (!critiques?.length) return res.status(400).json({ error: 'critiques required' });
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const architectPrompt = ARCHITECT_PROMPT_MAP[mode] || DEBATE_ARCHITECT_PROMPT;
   const userMessage = buildRebutUserMessage(mode, { idea, round, critiques, nodes });
 
   try {
-    const stream = await gemini.models.generateContentStream({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: architectPrompt,
-        maxOutputTokens: 12000,
-        thinkingConfig: { thinkingLevel: 'MEDIUM' },
-      },
+    const { stream } = await ai.stream({
+      model: 'gemini:pro',
+      system: architectPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 12000,
+      extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } },
     });
     await geminiStreamToSSE(res, stream);
   } catch (err) {
@@ -82,15 +75,15 @@ async function handleDebateRebut(client, req, res, gemini) {
 }
 
 // ── POST /api/debate/finalize (SSE) ───────────────────────────
-// After consensus, architect synthesizes the debate into refined tree updates
 
-async function handleDebateFinalize(client, req, res, gemini) {
+async function handleDebateFinalize(_client, req, res, _gemini) {
   const { nodes, idea, debateHistory, mode } = req.body;
   if (!nodes?.length || !debateHistory?.length) {
     return res.status(400).json({ error: 'nodes and debateHistory required' });
   }
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const finalizePrompt = FINALIZE_PROMPT_MAP[mode] || DEBATE_FINALIZE_PROMPT;
   const responderLabel = (MODE_SERVER_META[mode] || MODE_SERVER_META.idea).responder;
@@ -105,14 +98,12 @@ Round ${r.round}:
   const userMessage = buildFinalizeUserMessage(mode, { idea, debateHistory, nodes, historyText });
 
   try {
-    const stream = await gemini.models.generateContentStream({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: finalizePrompt,
-        maxOutputTokens: 12000,
-        thinkingConfig: { thinkingLevel: 'MEDIUM' },
-      },
+    const { stream } = await ai.stream({
+      model: 'gemini:pro',
+      system: finalizePrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 12000,
+      extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } },
     });
     await geminiStreamToSSE(res, stream);
   } catch (err) {
@@ -123,13 +114,13 @@ Round ${r.round}:
 }
 
 // ── POST /api/expand-suggestion ───────────────────────────────
-// (Still uses Anthropic — not part of debate rate-limit issue)
 
-async function handleExpandSuggestion(client, req, res) {
+async function handleExpandSuggestion(_client, req, res) {
   const { suggestion, idea, nodes, mode, dynamicTypes } = req.body;
   if (!suggestion) return res.status(400).json({ error: 'suggestion is required' });
 
   sseHeaders(res);
+  attachAbortSignal(req, res);
 
   const treeContext = (nodes || []).map(n =>
     `- [${n.type}] id="${n.id}" parentId="${n.parentId || 'null'}" label="${n.label}"`
@@ -158,11 +149,11 @@ Place the suggestion under the most relevant existing node, then expand it with 
   }
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
       system: prompt,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 4096,
     });
     await streamToSSE(res, stream);
   } catch (err) {

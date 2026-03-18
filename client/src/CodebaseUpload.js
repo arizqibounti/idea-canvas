@@ -17,27 +17,133 @@ const SKIP_EXTENSIONS = new Set([
   '.DS_Store', '.log',
 ]);
 
-const PRIORITY_PATTERNS = [
-  { re: /^(index|main|app|server|routes?|router)\.(js|ts|jsx|tsx|py|go|rb|java)$/i, score: 10 },
-  { re: /\.(routes?|controller|handler|endpoint|api)\.(js|ts|py|go|rb)$/i, score: 9 },
-  { re: /\.(model|schema|entity|migration)\.(js|ts|py|go|rb)$/i, score: 9 },
-  { re: /package\.json$/i, score: 8 },
-  { re: /README\.md$/i, score: 8 },
-  { re: /\.md$/i, score: 6 },
-  { re: /\.(component|page|view|screen|container)\.(jsx|tsx|js|ts)$/i, score: 7 },
-  { re: /\.(config|settings|constants)\.(js|ts|py|json)$/i, score: 5 },
-  { re: /\.(service|store|context|hook|util|helper)\.(js|ts)$/i, score: 4 },
+// ── Application signal patterns ──────────────────────────────
+// Directories whose presence signals "this is application code, not a library".
+// Files under these paths get a significant boost.
+const APP_SIGNAL_DIRS = [
+  /\/routes?\//i, /\/handlers?\//i, /\/controllers?\//i, /\/endpoints?\//i,
+  /\/db\//i, /\/migrations?\//i, /\/queries\//i,
+  /\/agent_?tools?\//i, /\/tool_?params?\//i,
+  /\/auth\//i, /\/middleware\//i,
+  /\/api\//i, /\/services?\//i,
 ];
 
-const MAX_FILES = 150;
-const MAX_TOTAL_CHARS = 50000;
-const MAX_FILE_CHARS = 3000;
+// Detect if a module tree looks like an app (has routes, db, handlers, etc.)
+// vs a library (just src/lib.rs + generic modules).
+function detectAppDirs(allPaths) {
+  const dirSignals = new Map(); // module dir → signal count
 
-function getFilePriority(filename) {
-  for (const { re, score } of PRIORITY_PATTERNS) {
-    if (re.test(filename)) return score;
+  for (const p of allPaths) {
+    const hasSignal = APP_SIGNAL_DIRS.some(re => re.test(p));
+    if (!hasSignal) continue;
+
+    // Attribute signal to multiple granularity levels so both
+    // "crates/narrativ" and "crates/narrativ/backend" get credit
+    // Start at depth 2 to avoid overly broad matches like "crates" or "src"
+    const parts = p.split('/');
+    for (let depth = 2; depth <= Math.min(4, parts.length - 1); depth++) {
+      const key = parts.slice(0, depth).join('/');
+      dirSignals.set(key, (dirSignals.get(key) || 0) + 1);
+    }
   }
-  return 1;
+
+  // Modules with 3+ signal hits are "application" modules
+  // Use the shortest prefix that qualifies (so "crates/narrativ" covers both backend & frontend)
+  const candidates = [...dirSignals.entries()]
+    .filter(([, count]) => count >= 3)
+    .map(([dir]) => dir)
+    .sort((a, b) => a.length - b.length);
+
+  // Remove redundant longer prefixes already covered by shorter ones
+  const appModules = new Set();
+  for (const dir of candidates) {
+    const alreadyCovered = [...appModules].some(m => dir.startsWith(m + '/'));
+    if (!alreadyCovered) appModules.add(dir);
+  }
+  return appModules;
+}
+
+// Filename-only patterns (tested against the basename)
+const FILENAME_PATTERNS = [
+  { re: /^(index|main|app|server)\.(js|ts|jsx|tsx|py|go|rb|java|rs)$/i, score: 10 },
+  { re: /^(lib|mod)\.rs$/i, score: 8 },
+  { re: /^Cargo\.toml$/i, score: 7 },
+  { re: /^package\.json$/i, score: 7 },
+  { re: /^go\.(mod|sum)$/i, score: 6 },
+  { re: /^README\.md$/i, score: 5 },
+  { re: /\.(routes?|controller|handler|endpoint|api)\.(js|ts|py|go|rb|rs)$/i, score: 9 },
+  { re: /\.(model|schema|entity|migration)\.(js|ts|py|go|rb|rs)$/i, score: 9 },
+  { re: /\.(component|page|view|screen|container)\.(jsx|tsx|js|ts)$/i, score: 7 },
+  { re: /\.(service|store|context|hook|util|helper)\.(js|ts)$/i, score: 5 },
+  { re: /\.(config|settings|constants)\.(js|ts|py|json|toml|yaml)$/i, score: 4 },
+  { re: /\.rs$/i, score: 3 },
+  { re: /\.(tsx|jsx)$/i, score: 3 },
+  { re: /\.(ts|js)$/i, score: 2 },
+  { re: /\.md$/i, score: 2 },
+  { re: /\.sql$/i, score: 5 },
+];
+
+// Full-path patterns (tested against the entire relative path)
+const PATH_PATTERNS = [
+  // Route/handler/API directories — strong product signals
+  { re: /\/routes?\//i, score: 9 },
+  { re: /\/handlers?\//i, score: 9 },
+  { re: /\/controllers?\//i, score: 9 },
+  { re: /\/endpoints?\//i, score: 9 },
+  { re: /\/api\//i, score: 8 },
+  // Data layer directories
+  { re: /\/db\//i, score: 8 },
+  { re: /\/models?\//i, score: 8 },
+  { re: /\/schemas?\//i, score: 8 },
+  { re: /\/queries\//i, score: 8 },
+  { re: /\/migrations?\//i, score: 7 },
+  // Services & middleware & auth
+  { re: /\/services?\//i, score: 7 },
+  { re: /\/middleware\//i, score: 7 },
+  { re: /\/auth\//i, score: 7 },
+  // Agent/tool systems
+  { re: /\/agent_?tools?\//i, score: 9 },
+  { re: /\/tool_?params?\//i, score: 8 },
+  // Frontend routes & pages
+  { re: /\/routes\/.*\.(tsx|ts|jsx|js)$/i, score: 8 },
+  { re: /\/pages\/.*\.(tsx|ts|jsx|js)$/i, score: 8 },
+  // Feature directories
+  { re: /\/features?\//i, score: 7 },
+  { re: /\/components?\//i, score: 6 },
+  // Types & interfaces
+  { re: /\/types?\//i, score: 6 },
+  // Source entry points in nested crates/packages
+  { re: /\/src\/(main|lib)\.(rs|ts|js)$/i, score: 7 },
+];
+
+const MAX_FILES = 400;
+const MAX_TOTAL_CHARS = 180000;
+const MAX_FILE_CHARS = 6000;
+
+// Score a file by filename + path patterns, then boost if it belongs to an app module
+function getFilePriority(fullPath, appModules) {
+  const filename = fullPath.split('/').pop();
+  let best = 1;
+
+  // Check filename patterns
+  for (const { re, score } of FILENAME_PATTERNS) {
+    if (re.test(filename) && score > best) best = score;
+  }
+  // Check full-path patterns
+  for (const { re, score } of PATH_PATTERNS) {
+    if (re.test(fullPath) && score > best) best = score;
+  }
+
+  // App module boost: files inside detected application modules get +3
+  // Library/framework files stay at base score, so app code always wins
+  if (appModules && appModules.size > 0) {
+    const isApp = [...appModules].some(mod => fullPath.startsWith(mod));
+    if (isApp) {
+      best += 3;
+    }
+  }
+
+  return best;
 }
 
 function shouldSkipFile(path) {
@@ -141,10 +247,11 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
         await Promise.all(entries.map((e) => collectFilesFromEntry(e)))
       ).flat();
 
-      // Score and sort by priority
+      // Detect which modules are apps vs libraries, then score
+      const appModules = detectAppDirs(allCandidates.map(c => c.path));
       const scored = allCandidates.map((c) => ({
         ...c,
-        score: getFilePriority(c.path.split('/').pop()),
+        score: getFilePriority(c.path, appModules),
       })).sort((a, b) => b.score - a.score);
 
       const selected = scored.slice(0, MAX_FILES);
@@ -203,10 +310,11 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
       // Recursively collect files (skips excluded dirs/extensions during traversal)
       const allCandidates = await collectFilesFromHandle(dirHandle);
 
-      // Score and sort by priority
+      // Detect which modules are apps vs libraries, then score
+      const appModules = detectAppDirs(allCandidates.map(c => c.path));
       const scored = allCandidates.map((c) => ({
         ...c,
-        score: getFilePriority(c.path.split('/').pop()),
+        score: getFilePriority(c.path, appModules),
       })).sort((a, b) => b.score - a.score);
 
       const selected = scored.slice(0, MAX_FILES);
@@ -267,12 +375,16 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
     const candidates = [];
     let totalChars = 0;
 
-    const scored = Array.from(fileList)
-      .filter((f) => !shouldSkipFile(f.webkitRelativePath || f.name))
+    const filtered = Array.from(fileList)
+      .filter((f) => !shouldSkipFile(f.webkitRelativePath || f.name));
+    const allPaths = filtered.map(f => f.webkitRelativePath || f.name);
+    const appModules = detectAppDirs(allPaths);
+
+    const scored = filtered
       .map((f) => ({
         file: f,
         path: f.webkitRelativePath || f.name,
-        score: getFilePriority(f.name),
+        score: getFilePriority(f.webkitRelativePath || f.name, appModules),
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, MAX_FILES);
@@ -485,8 +597,8 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
       )}
 
       <div className="upload-hint">
-        Supports JavaScript, TypeScript, Python, Go, Ruby, Java, Markdown and more.
-        node_modules and build artifacts are automatically excluded.
+        Supports Rust, JavaScript, TypeScript, Python, Go, Ruby, Java, and more.
+        node_modules, target/, and build artifacts are automatically excluded.
       </div>
     </div>
     </div>

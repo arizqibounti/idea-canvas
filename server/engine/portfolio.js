@@ -1,5 +1,6 @@
 // ── Portfolio generation engine handlers ─────────────────────
 // Now includes research agent + multi-agent lens enrichment.
+// Uses the AI provider abstraction layer.
 
 const {
   PORTFOLIO_GENERATE_PROMPT_MAP,
@@ -10,12 +11,11 @@ const {
   LENS_ADVERSARIAL_PROMPT,
 } = require('./prompts');
 
-const { sseHeaders, geminiStreamToSSE } = require('../utils/sse');
+const { sseHeaders, autoStreamToSSE } = require('../utils/sse');
 const { fetchPage, enrichEntities } = require('../utils/web');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
 const { getKnowledgeContext } = require('../gateway/knowledge');
-
-const GEMINI_MODEL = 'gemini-3.1-pro-preview';
+const ai = require('../ai/providers');
 
 // Timeout wrapper — rejects if promise doesn't resolve within ms
 function withTimeout(promise, ms, label = 'operation') {
@@ -29,7 +29,7 @@ function withTimeout(promise, ms, label = 'operation') {
 // Streaming SSE: generate 3-5 alternative approaches with mini-trees
 // Enriched with research pipeline + multi-agent lens perspectives
 
-async function handlePortfolioGenerate(client, req, res, gemini) {
+async function handlePortfolioGenerate(_client, req, res, _gemini) {
   const { idea, mode, count = 3, fetchedUrlContent, existingTitles, focus } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
@@ -39,6 +39,7 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
     // ── Phase 0: Entity enrichment (10s timeout) ──────────
     let enrichedContent = fetchedUrlContent || [];
     try {
+      const gemini = ai.getGemini();
       const entityWork = async () => {
         const existingUrls = enrichedContent.map(u => u.url);
         const entities = await enrichEntities(gemini, idea, existingUrls);
@@ -62,6 +63,7 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
 
     let researchBrief = '';
     try {
+      const gemini = ai.getGemini();
       const researchWork = async () => {
         const existingStr = enrichedContent
           .map(u => `${u.url}: ${u.text?.slice(0, 500)}`)
@@ -99,17 +101,15 @@ async function handlePortfolioGenerate(client, req, res, gemini) {
 
         const lensResults = await Promise.all(lensPrompts.map(async (lens, i) => {
           try {
-            const response = await gemini.models.generateContent({
-              model: GEMINI_MODEL,
-              contents: lensInput,
-              config: {
-                systemInstruction: lens.prompt,
-                maxOutputTokens: 1500,
-              },
+            const { text } = await ai.call({
+              model: 'gemini:pro',
+              system: lens.prompt,
+              messages: [{ role: 'user', content: lensInput }],
+              maxTokens: 1500,
             });
             const stageMsgs = ['Analogical analysis complete', 'First-principles analysis complete', 'Adversarial analysis complete'];
             res.write(`data: ${JSON.stringify({ _progress: true, stage: `${stageMsgs[i]} (${i + 1}/3)...` })}\n\n`);
-            return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${response.text || ''}`;
+            return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${text}`;
           } catch {
             return '';
           }
@@ -191,21 +191,19 @@ One JSON per line. No markdown.`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
-    const stream = await withTimeout(
-      gemini.models.generateContentStream({
-        model: GEMINI_MODEL,
-        contents: userContent,
-        config: {
-          systemInstruction: systemPrompt,
-          maxOutputTokens: 8192,
-          thinkingConfig: { thinkingLevel: 'MEDIUM' },
-        },
+    const streamResult = await withTimeout(
+      ai.stream({
+        model: 'gemini:pro',
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: 8192,
+        extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } },
       }),
       30000,
       'Gemini stream init',
     );
 
-    await withTimeout(geminiStreamToSSE(res, stream), 90000, 'Portfolio generation stream');
+    await withTimeout(autoStreamToSSE(res, streamResult), 90000, 'Portfolio generation stream');
   } catch (err) {
     console.error('Portfolio generate error:', err);
     if (!res.writableEnded) {
@@ -219,7 +217,7 @@ One JSON per line. No markdown.`;
 // ── POST /api/portfolio/score ────────────────────────────────
 // Non-streaming JSON: score and rank alternatives
 
-async function handlePortfolioScore(client, req, res, gemini) {
+async function handlePortfolioScore(_client, req, res, _gemini) {
   const { alternatives, idea, mode, focus } = req.body;
   if (!alternatives?.length || !idea) {
     return res.status(400).json({ error: 'alternatives and idea are required' });
@@ -260,20 +258,17 @@ async function handlePortfolioScore(client, req, res, gemini) {
 
     const userContent = `Idea: "${idea}"\n\nAlternatives to score:\n${JSON.stringify(altSummaries, null, 2)}`;
 
-    const response = await gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: userContent,
-      config: {
-        systemInstruction: systemPrompt,
-        maxOutputTokens: 2048,
-      },
+    const { text: rawText } = await ai.call({
+      model: 'gemini:pro',
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 2048,
     });
 
-    const text = (response.text || '').trim();
+    const text = rawText.trim();
     let result;
     try {
-      const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-      result = JSON.parse(cleaned);
+      result = ai.parseJSON(text);
     } catch {
       // Try extracting the outermost JSON object and repairing common issues
       const match = text.match(/\{[\s\S]*\}/);

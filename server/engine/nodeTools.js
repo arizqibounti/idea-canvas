@@ -1,11 +1,13 @@
 // ── Node Tools: Split & Merge AI handlers ────────────────────
 // Precision editing operations that use AI to transform nodes.
+// Now uses the AI provider abstraction layer.
 
 const { sseHeaders, streamToSSE } = require('../utils/sse');
+const ai = require('../ai/providers');
 
 // ── POST /api/split-node ──────────────────────────────────────
 // Takes a single node and splits it into two more specific nodes.
-async function handleSplitNode(client, req, res) {
+async function handleSplitNode(_client, req, res) {
   const { node, idea, mode } = req.body;
   if (!node?.label) return res.status(400).json({ error: 'node with label is required' });
 
@@ -32,9 +34,9 @@ Output exactly 2 JSON objects, one per line. Each must have:
 Output ONLY the two JSON lines, nothing else.`;
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
+      maxTokens: 500,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -55,7 +57,7 @@ Output ONLY the two JSON lines, nothing else.`;
 
 // ── POST /api/merge-nodes ─────────────────────────────────────
 // Takes two nodes and synthesizes them into one.
-async function handleMergeNodes(client, req, res) {
+async function handleMergeNodes(_client, req, res) {
   const { nodes, idea, mode } = req.body;
   if (!nodes?.length || nodes.length < 2) return res.status(400).json({ error: 'two nodes required' });
 
@@ -85,9 +87,9 @@ Output exactly 1 JSON object on a single line:
 Output ONLY the JSON line, nothing else.`;
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
+      maxTokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
 

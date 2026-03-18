@@ -6,7 +6,6 @@ import ResumeInput from './ResumeInput';
 import HistoryModal from './HistoryModal';
 import MemoryInsights, { buildMemoryEntry, appendMemory, readMemory } from './MemoryLayer';
 
-import DebatePanel from './DebatePanel';
 import ChatPanel from './ChatPanel';
 import ResumeChangesModal from './ResumeChangesModal';
 
@@ -693,10 +692,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [showHistory, setShowHistory] = useState(false);
   const [ideaVersions, setIdeaVersions] = useState([]);
 
-  // ── Debate Panel ──────────────────────────────────────────
-  const [showDebate, setShowDebate] = useState(false);
-  const [debateAutoStart, setDebateAutoStart] = useState(false);
+  // ── Debate (inline chat card) ─────────────────────────────
   const debateRoundsRef = useRef([]);
+  const [debateStream, setDebateStream] = useState(null);
+  const debateAbortRef = useRef(null);
+  const debateLoopRef = useRef(false);
 
   // ── Chat Companion ────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
@@ -1006,13 +1006,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          setShowDebate(true);
-          setDebateAutoStart(true);
+          startDebateInChat();
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -1131,13 +1130,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          setShowDebate(true);
-          setDebateAutoStart(true);
+          startDebateInChat();
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -1267,18 +1265,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          setShowDebate(true);
-          setDebateAutoStart(true);
-          // Pipeline: generate done → debate active
-          setPipelineStages(prev => prev?.map(s =>
-            s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
-            s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
-          ));
+          startDebateInChat(() => {
+            setPipelineStages(prev => prev?.map(s =>
+              s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
+              s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
+            ));
+          });
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1489,12 +1486,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          setShowDebate(true);
-          setDebateAutoStart(true);
+          startDebateInChat();
         }
       }
     }
-  }, [idea$, displayMode, saveVersionAndMemory, startLearnInChat]);
+  }, [idea$, displayMode, saveVersionAndMemory, startLearnInChat, startDebateInChat]);
 
   const handleNewResumeAnalysis = useCallback(() => {
     idea$.resetCanvas();
@@ -1592,6 +1588,231 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       }
     });
   }, [handleStartRefine]);
+
+  // ── Debate mode config for inline card ────────────────
+  const DEBATE_MODE_CONFIG = useMemo(() => ({
+    idea:     { panelIcon: '⚔', panelTitle: 'AUTO-CRITIQUE', statusCritiquing: 'Critic researching and analyzing...', statusRebutting: 'Architect researching and responding...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the critic is satisfied.${fc>0?` ${fc} nodes updated.`:''}` },
+    resume:   { panelIcon: '◎', panelTitle: 'HIRING REVIEW', statusCritiquing: 'Hiring manager reviewing strategy...', statusRebutting: 'Career coach building responses...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the hiring manager would advance this candidate.${fc>0?` ${fc} nodes updated.`:''}` },
+    codebase: { panelIcon: '⟨/⟩', panelTitle: 'CODE AUDIT', statusCritiquing: 'Security auditor reviewing code...', statusRebutting: 'Tech lead proposing solutions...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the auditor is satisfied.${fc>0?` ${fc} nodes updated.`:''}` },
+    decision: { panelIcon: '⚖', panelTitle: "DEVIL'S ADVOCATE", statusCritiquing: "Devil's advocate analyzing...", statusRebutting: 'Strategic advisor responding...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the decision is validated.${fc>0?` ${fc} nodes updated.`:''}` },
+    writing:  { panelIcon: '✦', panelTitle: 'EDITORIAL REVIEW', statusCritiquing: 'Senior editor reviewing...', statusRebutting: 'Writer addressing critiques...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the editor approves.${fc>0?` ${fc} nodes updated.`:''}` },
+    plan:     { panelIcon: '◉', panelTitle: 'RISK ANALYSIS', statusCritiquing: 'Risk analyst reviewing...', statusRebutting: 'Project manager mitigating...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the plan is approved.${fc>0?` ${fc} nodes updated.`:''}` },
+  }), []);
+
+  // ── Shared: run debate inline in chat ────────────────
+  const startDebateInChat = useCallback(async (pipelineCallback) => {
+    const maxRounds = 5;
+    const modeConfig = DEBATE_MODE_CONFIG[displayMode] || DEBATE_MODE_CONFIG.idea;
+    const debateRounds = [];
+    const allRoundsHistory = [];
+    let currentNodes = [...active.rawNodesRef.current];
+
+    setDebateStream({ status: 'critiquing', round: 1, maxRounds, modeConfig, rounds: [], finalizeCount: 0 });
+    setShowChat(true);
+    debateLoopRef.current = true;
+
+    const updateStream = (patch) => {
+      setDebateStream(prev => prev ? { ...prev, ...patch } : null);
+    };
+
+    const serializeNodes = (nodes) => nodes.map(n => ({
+      id: n.id, type: n.data?.type || n.type, label: n.data?.label || n.label,
+      reasoning: n.data?.reasoning || n.reasoning, parentId: n.data?.parentId || n.parentId,
+    }));
+
+    try {
+      for (let round = 1; round <= maxRounds && debateLoopRef.current; round++) {
+        // ── Step 1: Critique ──
+        updateStream({ status: 'critiquing', round });
+        pipelineCallback?.({ status: 'critiquing', round });
+
+        const controller = new AbortController();
+        debateAbortRef.current = controller;
+
+        const critiqueRes = await authFetch(`${API_URL}/api/debate/critique`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nodes: serializeNodes(currentNodes), idea: ideaText, round,
+            priorCritiques: allRoundsHistory.flatMap(r => r.blockers || []), mode: displayMode,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!critiqueRes.ok) throw new Error(`Server error: ${critiqueRes.status}`);
+        const critiqueResult = await critiqueRes.json();
+
+        if (!debateLoopRef.current) break;
+
+        const { verdict, round_summary, critiques, consensus_blockers, suggestions } = critiqueResult;
+        const blockers = suggestions || consensus_blockers || [];
+
+        // Add critique nodes to canvas
+        const critiqueFlowNodes = (critiques || []).map(c => buildFlowNode({
+          id: `crit_r${round}_${c.id}`, parentId: c.targetNodeId,
+          type: 'critique', label: c.challenge, reasoning: c.reasoning,
+        }));
+        if (critiqueFlowNodes.length) {
+          currentNodes = [...currentNodes, ...critiqueFlowNodes];
+          handleDebateNodesAdded(critiqueFlowNodes);
+        }
+
+        const roundEntry = {
+          round, verdict, summary: round_summary,
+          critiques: critiques || [], suggestions: blockers,
+          rebutCount: 0,
+        };
+        debateRounds.push(roundEntry);
+        updateStream({ rounds: [...debateRounds] });
+
+        // Consensus → finalize
+        if (verdict === 'YES') {
+          allRoundsHistory.push({ ...roundEntry, blockers });
+          updateStream({ status: 'finalizing' });
+          pipelineCallback?.({ status: 'finalizing' });
+
+          let fc = 0;
+          const finController = new AbortController();
+          debateAbortRef.current = finController;
+
+          const finRes = await authFetch(`${API_URL}/api/debate/finalize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nodes: serializeNodes(currentNodes), idea: ideaText,
+              debateHistory: allRoundsHistory, mode: displayMode,
+            }),
+            signal: finController.signal,
+          });
+          if (finRes.ok) {
+            await readSSEStream(finRes, (nodeData) => {
+              if (nodeData._update) {
+                handleDebateNodeUpdate(nodeData);
+              } else {
+                const flowNode = buildFlowNode(nodeData);
+                handleDebateNodesAdded([flowNode]);
+                currentNodes = [...currentNodes, flowNode];
+              }
+              fc++;
+              updateStream({ finalizeCount: fc });
+            });
+          }
+          handleConsensusReached();
+          debateRoundsRef.current = debateRounds;
+
+          setDebateStream(null);
+          setPendingChatCards(prev => [...prev, {
+            type: 'debate_card',
+            state: { status: 'done', rounds: debateRounds, maxRounds, modeConfig, finalizeCount: fc },
+          }]);
+          pipelineCallback?.({ status: 'done' });
+          debateLoopRef.current = false;
+          return;
+        }
+
+        if (round >= maxRounds) {
+          allRoundsHistory.push({ ...roundEntry, blockers });
+          // Max rounds — finalize anyway
+          updateStream({ status: 'finalizing' });
+          let fc = 0;
+          const finController = new AbortController();
+          debateAbortRef.current = finController;
+          const finRes = await authFetch(`${API_URL}/api/debate/finalize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nodes: serializeNodes(currentNodes), idea: ideaText,
+              debateHistory: allRoundsHistory, mode: displayMode,
+            }),
+            signal: finController.signal,
+          });
+          if (finRes.ok) {
+            await readSSEStream(finRes, (nodeData) => {
+              if (nodeData._update) {
+                handleDebateNodeUpdate(nodeData);
+              } else {
+                const flowNode = buildFlowNode(nodeData);
+                handleDebateNodesAdded([flowNode]);
+                currentNodes = [...currentNodes, flowNode];
+              }
+              fc++;
+              updateStream({ finalizeCount: fc });
+            });
+          }
+          debateRoundsRef.current = debateRounds;
+          setDebateStream(null);
+          setPendingChatCards(prev => [...prev, {
+            type: 'debate_card',
+            state: { status: 'done', rounds: debateRounds, maxRounds, modeConfig, finalizeCount: fc },
+          }]);
+          pipelineCallback?.({ status: 'done' });
+          debateLoopRef.current = false;
+          return;
+        }
+
+        // ── Step 2: Rebut ──
+        if (!debateLoopRef.current) break;
+        updateStream({ status: 'rebutting', round });
+        pipelineCallback?.({ status: 'rebutting', round });
+
+        const rebutController = new AbortController();
+        debateAbortRef.current = rebutController;
+
+        const rebutRes = await authFetch(`${API_URL}/api/debate/rebut`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nodes: serializeNodes(currentNodes), idea: ideaText,
+            round, critiques: critiques || [], mode: displayMode,
+          }),
+          signal: rebutController.signal,
+        });
+
+        if (!rebutRes.ok) throw new Error(`Server error: ${rebutRes.status}`);
+
+        let rebutCount = 0;
+        await readSSEStream(rebutRes, (nodeData) => {
+          const flowNode = buildFlowNode(nodeData);
+          currentNodes = [...currentNodes, flowNode];
+          handleDebateNodesAdded([flowNode]);
+          rebutCount++;
+        });
+
+        roundEntry.rebutCount = rebutCount;
+        debateRounds[debateRounds.length - 1] = roundEntry;
+        allRoundsHistory.push({ ...roundEntry, blockers });
+        updateStream({ rounds: [...debateRounds] });
+      }
+
+      // Loop ended normally
+      debateLoopRef.current = false;
+      debateRoundsRef.current = debateRounds;
+      setDebateStream(null);
+      setPendingChatCards(prev => [...prev, {
+        type: 'debate_card',
+        state: { status: 'done', rounds: debateRounds, maxRounds, modeConfig, finalizeCount: 0 },
+      }]);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        // User stopped
+        debateRoundsRef.current = debateRounds;
+        setDebateStream(null);
+        setPendingChatCards(prev => [...prev, {
+          type: 'debate_card',
+          state: { status: 'stopped', rounds: debateRounds, maxRounds, modeConfig, finalizeCount: 0 },
+        }]);
+      } else {
+        console.error('Debate error:', err);
+        updateStream({ status: 'error', error: err.message });
+      }
+      debateLoopRef.current = false;
+    }
+  }, [active, ideaText, displayMode, handleDebateNodesAdded, handleDebateNodeUpdate, handleConsensusReached, DEBATE_MODE_CONFIG]);
+
+  const handleStopDebateInChat = useCallback(() => {
+    debateLoopRef.current = false;
+    if (debateAbortRef.current) debateAbortRef.current.abort();
+  }, []);
 
   // ── Shared: run portfolio inline in chat ────────────────
   const startPortfolioInChat = useCallback((pipelineCallback) => {
@@ -1869,14 +2090,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         return (types?.length && nodeIds?.length) ? (matchType || matchId) : (matchType && matchId);
       });
     };
-    // Debate: open debate panel and auto-start critique
+    // Debate: run inline in chat
     if (actions.debate) {
       applyScope(actions.debate);
-      setShowDebate(true);
-      setDebateAutoStart(true);
-      pushCard('debate', 'Debate Started', 'Auto-critique is analyzing your tree...', [
-        { label: 'Open Panel', actionType: 'openPanel', panel: 'debate' },
-      ]);
+      startDebateInChat();
     }
     // Refine: run inline in chat
     if (actions.refine) {
@@ -2068,7 +2285,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   const handleCardButtonClick = useCallback((btn) => {
     if (btn.actionType === 'openPanel') {
-      if (btn.panel === 'debate') setShowDebate(true);
+      if (btn.panel === 'debate') startDebateInChat();
       else if (btn.panel === 'refine') startRefineInChat(3);
       else if (btn.panel === 'portfolio') startPortfolioInChat();
       else if (btn.panel === 'fractalExpand') setShowAutoFractal(true);
@@ -2079,6 +2296,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         executionAbortRef.current = null;
       }
       authFetch(`${API_URL}/api/stop-execution`, { method: 'POST' }).catch(() => {});
+    } else if (btn.actionType === 'stopDebate') {
+      handleStopDebateInChat();
+    } else if (btn.actionType === 'resumeDebate') {
+      startDebateInChat();
     } else if (btn.actionType === 'stopRefine') {
       handleStopRefine();
     } else if (btn.actionType === 'goDeeper') {
@@ -2376,8 +2597,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
             <>
               <div className="toolbar-sep" />
               <button
-                className={`btn btn-icon btn-debate-icon ${showDebate ? 'active-icon' : ''}`}
-                onClick={() => setShowDebate((v) => !v)}
+                className={`btn btn-icon btn-debate-icon ${debateStream ? 'active-icon' : ''}`}
+                onClick={() => {
+                  if (debateStream) {
+                    // Already running — just open chat to show it
+                    setShowChat(true);
+                  } else {
+                    startDebateInChat();
+                  }
+                }}
                 title={(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).tooltip}
               >
                 {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).icon} {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).label}
@@ -3000,22 +3228,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         />
       )}
 
-      {/* ── Debate Panel ── */}
-      <DebatePanel
-        isOpen={showDebate}
-        onClose={() => { setShowDebate(false); setDebateAutoStart(false); }}
-        nodes={active.rawNodesRef.current}
-        idea={ideaText}
-        mode={displayMode}
-        onNodesAdded={handleDebateNodesAdded}
-        onNodeUpdate={handleDebateNodeUpdate}
-        autoStart={debateAutoStart}
-        debateRoundsRef={debateRoundsRef}
-        onApplyToResume={displayMode === 'resume' ? handleApplyToResume : undefined}
-        onConsensusReached={handleConsensusReached}
-        onSuggestionExpand={handleSuggestionExpand}
-      />
-
       {/* ── Chat Companion Panel ── */}
       <ChatPanel
         isOpen={showChat}
@@ -3041,6 +3253,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         portfolioStream={portfolioStream}
         learnStream={learnStream}
         experimentStream={experimentStream}
+        debateStream={debateStream}
         focusedNode={focusedNode ? {
           ...focusedNode,
           node: active.rawNodesRef.current.find(n => n.id === focusedNode.node?.id) || focusedNode.node,

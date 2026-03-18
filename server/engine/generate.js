@@ -1,4 +1,5 @@
 // ── Generate engine handlers ──────────────────────────────────
+// Now uses the AI provider abstraction layer.
 
 const {
   SYSTEM_PROMPT,
@@ -22,10 +23,11 @@ const { fetchPage, enrichEntities } = require('../utils/web');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
 const { saveNodes, getKnowledgeContext } = require('../gateway/knowledge');
 const integrationRegistry = require('../integrations/registry');
+const ai = require('../ai/providers');
 
 // ── POST /api/generate ────────────────────────────────────────
 
-async function handleGenerate(client, req, res) {
+async function handleGenerate(_client, req, res) {
   let { idea, mode, steeringInstruction, existingNodes, jdText, resumePdf, fetchedUrlContent, emailThread } = req.body;
   if (!idea && !jdText) return res.status(400).json({ error: 'idea or jdText is required' });
 
@@ -34,7 +36,8 @@ async function handleGenerate(client, req, res) {
   // ── Entity enrichment: auto-research companies/orgs mentioned in the input ──
   if (idea && !steeringInstruction && mode !== 'resume') {
     const existingUrls = (fetchedUrlContent || []).map(u => u.url);
-    const entities = await enrichEntities(client, idea, existingUrls);
+    const gemini = ai.getGemini();
+    const entities = await enrichEntities(gemini, idea, existingUrls);
     if (entities.length) {
       console.log('Entity enrichment: researching', entities.map(e => e.name));
       const enrichResults = await Promise.all(entities.map(async (e) => {
@@ -140,18 +143,18 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
   }
 
   try {
-    const streamParams = {
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userContent }],
-    };
     // When a PDF document block is included, pass the beta header for PDF support
-    const streamOptions = resumePdf
+    const requestOptions = resumePdf
       ? { headers: { 'anthropic-beta': 'pdfs-2024-09-25' } }
       : undefined;
 
-    const stream = client.messages.stream(streamParams, streamOptions);
+    const { stream } = await ai.stream({
+      model: 'claude:opus',
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4096,
+      requestOptions,
+    });
     await streamToSSE(res, stream);
   } catch (err) {
     console.error('Error:', err);
@@ -162,7 +165,7 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
 
 // ── POST /api/generate-multi (Multi-Agent: 3 Lenses + Merge) ─
 
-async function handleGenerateMulti(client, req, res) {
+async function handleGenerateMulti(_client, req, res) {
   let { idea, mode, fetchedUrlContent, templateGuidance, emailThread } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
@@ -206,16 +209,16 @@ async function handleGenerateMulti(client, req, res) {
     ];
 
     const lensResults = await Promise.all(lensPrompts.map(async (lens, i) => {
-      const message = await client.messages.create({
-        model: 'claude-opus-4-5',
-        max_tokens: 4096,
+      const { text } = await ai.call({
+        model: 'claude:opus',
         system: lens.prompt,
         messages: [{ role: 'user', content: baseUserContent }],
+        maxTokens: 4096,
       });
       // Send progress after each lens completes
       if (i === 0) res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Lens 2/3: First-principles thinking...' })}\n\n`);
       if (i === 1) res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Lens 3/3: Adversarial thinking...' })}\n\n`);
-      return message.content[0]?.text || '';
+      return text;
     }));
 
     // Phase 2: Merge
@@ -227,11 +230,11 @@ async function handleGenerateMulti(client, req, res) {
 
     const mergeMessage = `Original idea: "${idea}"\n\nThree independent analyses to merge:\n\n${mergeInput}\n\nMerge these into a single unified tree. Output _meta line first, then nodes.`;
 
-    const mergeStream = client.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
+    const { stream: mergeStream } = await ai.stream({
+      model: 'claude:opus',
       system: MULTI_AGENT_MERGE_PROMPT,
       messages: [{ role: 'user', content: mergeMessage }],
+      maxTokens: 4096,
     });
 
     await streamToSSE(res, mergeStream);
@@ -245,7 +248,7 @@ async function handleGenerateMulti(client, req, res) {
 // ── POST /api/generate-research ──────────────────────────────
 // Deep research: 3 parallel agents investigate market/tech/audience, then generate tree
 
-async function handleGenerateResearch(client, req, res) {
+async function handleGenerateResearch(_client, req, res) {
   let { idea, mode, fetchedUrlContent, templateGuidance, emailThread } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
@@ -253,8 +256,9 @@ async function handleGenerateResearch(client, req, res) {
 
   try {
     // Phase 0: Entity enrichment (reuse existing logic)
+    const gemini = ai.getGemini();
     const existingUrls = (fetchedUrlContent || []).map(u => u.url);
-    const entities = await enrichEntities(client, idea, existingUrls);
+    const entities = await enrichEntities(gemini, idea, existingUrls);
     if (entities.length) {
       console.log('Research: entity enrichment found', entities.map(e => e.name));
       const enrichResults = await Promise.all(entities.map(async (e) => {
@@ -270,7 +274,7 @@ async function handleGenerateResearch(client, req, res) {
     const existingContentStr = (fetchedUrlContent || [])
       .map(u => `${u.url}: ${u.text?.slice(0, 500)}`)
       .join('\n');
-    const researchPlan = await planResearch(client, idea, existingContentStr);
+    const researchPlan = await planResearch(gemini, idea, existingContentStr);
     console.log('Research plan:', JSON.stringify(researchPlan, null, 2).slice(0, 500));
 
     // Phase 2: Parallel research agents
@@ -286,7 +290,7 @@ async function handleGenerateResearch(client, req, res) {
 
     const agentResults = await Promise.all(
       agentTypes.map(agentType =>
-        runResearchAgent(client, agentType, researchPlan, existingContentStr).then(result => {
+        runResearchAgent(gemini, agentType, researchPlan, existingContentStr).then(result => {
           completedCount++;
           res.write(`data: ${JSON.stringify({ _progress: true, stage: `${agentLabels[agentType]} (${completedCount}/3)...` })}\n\n`);
           return result;
@@ -334,11 +338,11 @@ async function handleGenerateResearch(client, req, res) {
 
     const systemPrompt = mode === 'causal' ? CAUSAL_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
-    const stream = client.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
+    const { stream } = await ai.stream({
+      model: 'claude:opus',
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4096,
     });
 
     // Phase 5: Stream initial tree AND collect nodes for GoT pipeline
@@ -354,14 +358,24 @@ async function handleGenerateResearch(client, req, res) {
       }).join('\n');
 
       try {
-        const aggregateMsg = await client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2048,
+        const { text: aggregateText } = await ai.call({
+          model: 'claude:sonnet',
           system: AGGREGATE_PROMPT,
           messages: [{ role: 'user', content: `Existing nodes:\n${nodesSummary}\n\nFind convergence points and create synthesis nodes.` }],
+          maxTokens: 2048,
         });
 
-        const synthNodes = parseMessageToNodes(aggregateMsg);
+        // Parse aggregate response into nodes
+        const synthNodes = [];
+        for (const line of aggregateText.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const node = JSON.parse(trimmed);
+            if (!node._meta) synthNodes.push(node);
+          } catch { /* skip */ }
+        }
+
         for (const syn of synthNodes) {
           res.write(`data: ${JSON.stringify(syn)}\n\n`);
         }
@@ -374,16 +388,21 @@ async function handleGenerateResearch(client, req, res) {
             `[${n.type}] "${n.label}" (id: ${n.id}) — ${n.reasoning}`
           ).join('\n');
 
-          const refineMsg = await client.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2048,
+          const { text: refineText } = await ai.call({
+            model: 'claude:sonnet',
             system: REFINE_PROMPT,
             messages: [{ role: 'user', content: `Synthesis nodes to refine:\n${synthSummary}\n\nStrengthen reasoning with specifics or prune weak nodes.` }],
+            maxTokens: 2048,
           });
 
-          const refinedNodes = parseMessageToNodes(refineMsg);
-          for (const ref of refinedNodes) {
-            res.write(`data: ${JSON.stringify(ref)}\n\n`);
+          // Parse refined nodes
+          for (const line of refineText.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const node = JSON.parse(trimmed);
+              if (!node._meta) res.write(`data: ${JSON.stringify(node)}\n\n`);
+            } catch { /* skip */ }
           }
         }
       } catch (gotErr) {
@@ -410,7 +429,7 @@ async function handleGenerateResearch(client, req, res) {
 
 // ── POST /api/regenerate ──────────────────────────────────────
 
-async function handleRegenerate(client, req, res) {
+async function handleRegenerate(_client, req, res) {
   const { node, parentContext, dynamicTypes } = req.body;
   if (!node) return res.status(400).json({ error: 'node is required' });
 
@@ -434,11 +453,11 @@ async function handleRegenerate(client, req, res) {
   }
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 4096,
     });
     await streamToSSE(res, stream);
   } catch (err) {
@@ -450,7 +469,7 @@ async function handleRegenerate(client, req, res) {
 
 // ── POST /api/drill ──────────────────────────────────────────
 
-async function handleDrill(client, req, res) {
+async function handleDrill(_client, req, res) {
   const { node, fullContext, dynamicTypes } = req.body;
   if (!node) return res.status(400).json({ error: 'node is required' });
 
@@ -477,11 +496,11 @@ async function handleDrill(client, req, res) {
   }
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 4096,
     });
     await streamToSSE(res, stream);
   } catch (err) {
@@ -493,7 +512,7 @@ async function handleDrill(client, req, res) {
 
 // ── POST /api/fractal-expand ──────────────────────────────────
 
-async function handleFractalExpand(client, req, res) {
+async function handleFractalExpand(_client, req, res) {
   const { node, ancestorChain, dynamicTypes, treeSnapshot } = req.body;
   if (!node) return res.status(400).json({ error: 'node is required' });
 
@@ -524,11 +543,11 @@ async function handleFractalExpand(client, req, res) {
   }
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 2048,
     });
     await streamToSSE(res, stream);
   } catch (err) {
@@ -540,7 +559,7 @@ async function handleFractalExpand(client, req, res) {
 
 // ── POST /api/fractal-select (autonomous mode) ───────────────
 
-async function handleFractalSelect(client, req, res) {
+async function handleFractalSelect(_client, req, res) {
   const { leafNodes, fullContext, idea } = req.body;
   if (!leafNodes?.length) return res.status(400).json({ error: 'leafNodes required' });
 
@@ -558,14 +577,14 @@ async function handleFractalSelect(client, req, res) {
 
     const userMessage = `Original idea: "${idea || 'N/A'}"\n\nFull tree context:\n${contextStr}\n\nLeaf nodes (candidates for expansion):\n${leafList}\n\nSelect the one node with the highest depth potential.`;
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
+    const { text } = await ai.call({
+      model: 'claude:sonnet',
       system: FRACTAL_SELECT_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 256,
+      signal: req.signal,
     });
 
-    const text = message.content[0]?.text || '{}';
     // Parse the JSON response
     const match = text.match(/\{[\s\S]*\}/);
     const result = match ? JSON.parse(match[0]) : { selectedNodeId: leafNodes[0].id, reasoning: 'Default selection' };

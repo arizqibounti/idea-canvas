@@ -1,4 +1,5 @@
 // ── Specialty engine handlers ─────────────────────────────────
+// Now uses the AI provider abstraction layer.
 
 const nodeFetch = require('node-fetch');
 
@@ -8,10 +9,11 @@ const {
 } = require('./prompts');
 
 const { fetchPage, extractInternalLinks, scoreLinks, HUB_PATTERNS } = require('../utils/web');
+const ai = require('../ai/providers');
 
 // ── POST /api/mockup ──────────────────────────────────────────
 
-async function handleMockup(client, req, res) {
+async function handleMockup(_client, req, res) {
   const { featureNode, ancestorContext } = req.body;
   if (!featureNode) return res.status(400).json({ error: 'featureNode is required' });
 
@@ -30,14 +32,15 @@ ${contextSummary || '(no additional context)'}
 Generate the complete HTML demo file for this feature. The demo should show this specific feature — "${featureNode.label}" — actually working, with realistic UI and real simulated interactions. Not wireframe boxes. The actual feature UI.`;
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 6000,
+    const { text } = await ai.call({
+      model: 'claude:opus',
       system: MOCKUP_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 6000,
+      signal: req.signal,
     });
 
-    let html = message.content[0]?.text || '';
+    let html = text;
     // Strip any accidental markdown fences
     html = html.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
 
@@ -55,7 +58,7 @@ Generate the complete HTML demo file for this feature. The demo should show this
 // ── POST /api/resume/changes ──────────────────────────────────
 // Generates a precise change manifest from the debate output
 
-async function handleResumeChanges(client, req, res) {
+async function handleResumeChanges(_client, req, res) {
   const { resumePdf, nodes, debateHistory, idea } = req.body;
   if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
 
@@ -93,20 +96,19 @@ Generate the change manifest now.`,
   });
 
   try {
-    const streamOptions = resumePdf ? { headers: { 'anthropic-beta': 'pdfs-2024-09-25' } } : undefined;
-    const message = await client.messages.create(
-      {
-        model: 'claude-opus-4-5',
-        max_tokens: 4096,
-        system: RESUME_CHANGES_PROMPT,
-        messages: [{ role: 'user', content: contentParts }],
-      },
-      streamOptions
-    );
+    const requestOptions = resumePdf ? { headers: { 'anthropic-beta': 'pdfs-2024-09-25' } } : undefined;
 
-    let text = message.content.find(b => b.type === 'text')?.text || '{}';
-    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const parsed = JSON.parse(text);
+    const { text } = await ai.call({
+      model: 'claude:opus',
+      system: RESUME_CHANGES_PROMPT,
+      messages: [{ role: 'user', content: contentParts }],
+      maxTokens: 4096,
+      signal: req.signal,
+      requestOptions,
+    });
+
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
     res.json(parsed);
   } catch (err) {
     console.error('Resume changes error:', err);
@@ -117,7 +119,7 @@ Generate the change manifest now.`,
 // ── POST /api/export/github ─────────────────────────────────────
 // Creates a new GitHub repo and pushes markdown files via the Contents API
 
-async function handleExportGithub(client, req, res) {
+async function handleExportGithub(_client, req, res) {
   const { token, repoName, repoDescription, isPrivate, files } = req.body;
 
   if (!token) return res.status(400).json({ error: 'GitHub token is required' });
@@ -198,7 +200,7 @@ async function handleExportGithub(client, req, res) {
 // ── POST /api/fetch-url ────────────────────────────────────────
 // Proxy-fetches a URL and returns stripped plain text (for JD scraping)
 
-async function handleFetchUrl(client, req, res) {
+async function handleFetchUrl(_client, req, res) {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -217,7 +219,7 @@ async function handleFetchUrl(client, req, res) {
 // dives deeper into "hub" pages (blog, docs, solutions) to find
 // content that's only linked from those hub index pages.
 
-async function handleCrawlSite(client, req, res) {
+async function handleCrawlSite(_client, req, res) {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 

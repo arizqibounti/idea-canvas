@@ -1,17 +1,19 @@
 // ── Settings Page ─────────────────────────────────────────────
-// Container with tabs: Account | Workspace | Members | Billing
+// Container with tabs: Account | Workspace | Members | Billing | Prompts
 
 import React, { useState } from 'react';
 import AccountTab from './AccountTab';
 import WorkspaceTab from './WorkspaceTab';
 import MembersTab from './MembersTab';
 import BillingTab from './BillingTab';
+import PromptsTab from './PromptsTab';
 
 const TABS = [
   { id: 'account', label: 'ACCOUNT' },
   { id: 'workspace', label: 'WORKSPACE' },
   { id: 'members', label: 'MEMBERS' },
   { id: 'billing', label: 'BILLING' },
+  { id: 'prompts', label: 'PROMPTS' },
 ];
 
 export default function SettingsPage({ onClose }) {
@@ -39,6 +41,7 @@ export default function SettingsPage({ onClose }) {
         {activeTab === 'workspace' && <WorkspaceTab />}
         {activeTab === 'members' && <MembersTab />}
         {activeTab === 'billing' && <BillingTab />}
+        {activeTab === 'prompts' && <PromptsTab />}
       </div>
     </div>
   );

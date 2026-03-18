@@ -1,5 +1,6 @@
 // ── Auto-Refine engine handlers ──────────────────────────────
 // Now includes research agent + multi-agent lens enrichment.
+// Uses the AI provider abstraction layer.
 
 const {
   REFINE_CRITIQUE_PROMPT_MAP,
@@ -10,9 +11,10 @@ const {
   LENS_ADVERSARIAL_PROMPT,
 } = require('./prompts');
 
-const { sseHeaders, streamToSSE } = require('../utils/sse');
+const { sseHeaders, streamToSSE, attachAbortSignal } = require('../utils/sse');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
 const { getKnowledgeContext } = require('../gateway/knowledge');
+const ai = require('../ai/providers');
 
 // Fallback to idea mode critique if mode not found
 function getCritiquePrompt(mode) {
@@ -21,18 +23,20 @@ function getCritiquePrompt(mode) {
 
 // ── Research + multi-agent helper ──────────────────────────────
 // Runs research pipeline + 3 lens analyses on weaknesses, returns enrichment context
-async function buildRefineEnrichment(client, idea, weaknesses, existingContent) {
+async function buildRefineEnrichment(idea, weaknesses, existingContent) {
   const results = { researchBrief: '', lensInsights: '' };
 
   try {
     // Phase 1: Research planning + 3 parallel research agents
+    // Research utils still use raw Gemini client
+    const gemini = ai.getGemini();
     const existingStr = existingContent || '';
-    const researchPlan = await planResearch(client, idea, existingStr);
+    const researchPlan = await planResearch(gemini, idea, existingStr);
 
     const agentTypes = ['market', 'technology', 'audience'];
     const agentResults = await Promise.all(
       agentTypes.map(agentType =>
-        runResearchAgent(client, agentType, researchPlan, existingStr)
+        runResearchAgent(gemini, agentType, researchPlan, existingStr)
       )
     );
     results.researchBrief = buildResearchBrief(agentResults);
@@ -57,13 +61,13 @@ async function buildRefineEnrichment(client, idea, weaknesses, existingContent) 
 
     const lensResults = await Promise.all(lensPrompts.map(async (lens) => {
       try {
-        const msg = await client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1500,
+        const { text } = await ai.call({
+          model: 'claude:sonnet',
           system: lens.prompt,
           messages: [{ role: 'user', content: lensInput }],
+          maxTokens: 1500,
         });
-        return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${msg.content[0]?.text || ''}`;
+        return `=== ${lens.name.toUpperCase()} PERSPECTIVE ===\n${text}`;
       } catch {
         return '';
       }
@@ -80,7 +84,7 @@ async function buildRefineEnrichment(client, idea, weaknesses, existingContent) 
 // ── POST /api/refine/critique ────────────────────────────────
 // Lightweight non-streaming critique: identify 2-3 weakest nodes
 
-async function handleRefineCritique(client, req, res) {
+async function handleRefineCritique(_client, req, res) {
   const { nodes, idea, mode, round, priorWeaknesses } = req.body;
   if (!nodes?.length || !idea) {
     return res.status(400).json({ error: 'nodes and idea are required' });
@@ -116,14 +120,13 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
+    const { text } = await ai.call({
+      model: 'claude:sonnet',
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
+      maxTokens: 1024,
+      signal: req.signal,
     });
-
-    const text = message.content.map(c => c.text || '').join('');
 
     // Extract JSON from response (handle potential markdown wrapping)
     let result;
@@ -149,7 +152,7 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
 // Streaming SSE: generate new/updated nodes to fix weaknesses
 // Now enriched with research agents + multi-agent lenses
 
-async function handleRefineStrengthen(client, req, res) {
+async function handleRefineStrengthen(_client, req, res) {
   const { nodes, idea, mode, weaknesses, dynamicTypes, round } = req.body;
   if (!nodes?.length || !weaknesses?.length) {
     return res.status(400).json({ error: 'nodes and weaknesses are required' });
@@ -160,7 +163,7 @@ async function handleRefineStrengthen(client, req, res) {
   try {
     // ── Phase 1: Research + Multi-agent enrichment ───────────
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching context for strengthening...' })}\n\n`);
-    const enrichment = await buildRefineEnrichment(client, idea, weaknesses);
+    const enrichment = await buildRefineEnrichment(idea, weaknesses);
 
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Strengthening weak nodes with enriched context...' })}\n\n`);
 
@@ -203,11 +206,11 @@ ${JSON.stringify(nodeSummary, null, 2)}`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const { stream } = await ai.stream({
+      model: 'claude:sonnet',
       system: REFINE_STRENGTHEN_PROMPT.replace('{round}', round || 1),
       messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4096,
     });
 
     await streamToSSE(res, stream);
@@ -221,7 +224,7 @@ ${JSON.stringify(nodeSummary, null, 2)}`;
 // ── POST /api/refine/score ───────────────────────────────────
 // Quick non-streaming re-evaluation after strengthening
 
-async function handleRefineScore(client, req, res) {
+async function handleRefineScore(_client, req, res) {
   const { nodes, idea, mode } = req.body;
   if (!nodes?.length || !idea) {
     return res.status(400).json({ error: 'nodes and idea are required' });
@@ -235,17 +238,17 @@ async function handleRefineScore(client, req, res) {
       reasoning: n.reasoning || n.data?.reasoning,
     }));
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 512,
+    const { text } = await ai.call({
+      model: 'claude:sonnet',
       system: REFINE_SCORE_PROMPT,
       messages: [{
         role: 'user',
         content: `Idea: "${idea}"\nMode: ${mode || 'idea'}\n\nTree (${nodeSummary.length} nodes):\n${JSON.stringify(nodeSummary, null, 2)}`,
       }],
+      maxTokens: 512,
+      signal: req.signal,
     });
 
-    const text = message.content.map(c => c.text || '').join('');
     let result;
     try {
       result = JSON.parse(text.trim());

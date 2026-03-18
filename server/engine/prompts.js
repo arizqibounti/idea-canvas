@@ -172,15 +172,16 @@ TECHNICAL PATTERNS:
 
 PERSONA CONTEXT: Use the actor name and pain point to write realistic placeholder content. Real names, real-sounding emails, real task names — not "Lorem ipsum" or "User 1".`;
 
-const CODEBASE_ANALYSIS_PROMPT = `You are a product intelligence AI performing bottom-up analysis of a real software codebase.
+const CODEBASE_ANALYSIS_PROMPT = `You are a product intelligence AI performing deep, bottom-up analysis of a real software codebase.
 
 You will be given actual file contents from a codebase. Your job is to reverse-engineer the product thinking behind it — extracting features, architecture patterns, constraints, user segments, and technical debt — and output a structured product thinking tree that reveals what this product actually is and does.
 
 Output rules: one JSON object per line, no markdown, no arrays.
-Each node shape: {"id": "string", "parentId": "string|null", "type": "...", "label": "string (max 8 words)", "reasoning": "string (1-2 sentences)"}
+Each node shape: {"id": "string", "parentId": "string|null", "type": "...", "label": "string (max 8 words)", "reasoning": "string (2-4 sentences — be specific, cite file paths and function names)"}
 
 Node types:
 - "seed": The root — the product's core purpose as inferred from the codebase. Exactly one, parentId null.
+- "section": A major module, crate, package, or service boundary. Use these to organize large codebases into logical groupings.
 - "feature": A user-facing capability inferred from routes, handlers, or UI components.
 - "component": A significant UI component, module, or code unit worth highlighting.
 - "api_endpoint": A route, handler, or API surface area with meaningful behaviour.
@@ -191,17 +192,31 @@ Node types:
 - "problem": A core problem the software appears to be solving.
 - "metric": Success metrics implied by analytics, tracking, or business logic in the code.
 - "insight": A strategic or architectural insight about how the codebase is structured.
+- "integration": An external service, API, or third-party dependency that the codebase integrates with.
 
 Analysis focus — include only what is requested:
 - "features": Surface routes, handlers, and UI components as feature and component nodes. What can a user actually do?
 - "architecture": Surface coupling, missing patterns, bottlenecks, and smells as tech_debt, constraint, and api_endpoint nodes.
 - "users": Infer user_segment nodes from auth middleware, role checks, permission logic, and data model field names.
 
+TREE STRUCTURE RULES:
+1. Start with one seed node, then create section nodes for each major module/crate/package/service.
+2. Nest features, components, endpoints, and models UNDER their parent section — not flat under seed.
+3. Build at least 3 levels of depth. A flat tree with everything under seed is WRONG.
+4. Cross-reference: if module A depends on module B, mention it in reasoning.
+5. For monorepos/workspaces: create a section node per crate/package/service, then drill into each.
+
 IMPORTANT: Do not mechanically describe files. Think like a product person reading code — infer intent, extract user value, identify what is missing. The tree should tell a product story, not a code tour.
 
 DOCUMENTATION vs REALITY CHECK: If README, docs, or config files describe features, capabilities, or architecture — cross-check them against the actual implementation code. If you find claims in documentation that have no corresponding implementation (phantom features, aspirational descriptions, outdated references), flag each one as a "tech_debt" node with reasoning that specifically names the doc claim and the missing/incomplete code. Trust the code, not the docs. A well-written README can mask a half-built product — your job is to surface that gap.
 
-Generate 20-30 nodes total. Output each node as a single-line JSON object. Nothing else.`;
+SCALING: Match your output depth to the codebase size:
+- Small codebase (<20 files): 20-30 nodes
+- Medium codebase (20-100 files): 40-60 nodes
+- Large codebase (100-300 files): 60-100 nodes
+- Monorepo/workspace (300+ files): 100-150 nodes — cover every major module
+
+Output each node as a single-line JSON object. Nothing else.`;
 
 const REFLECT_PROMPT = `You are a product thinking coach analyzing a user's idea exploration history.
 
