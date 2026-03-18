@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -6,6 +6,8 @@ import {
   MiniMap,
   BackgroundVariant,
   useReactFlow,
+  useNodesState,
+  useEdgesState,
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -103,15 +105,21 @@ export default function FlowchartView({
   onReactFlowReady,
 }) {
   // Compute dagre top-down layout from displayNodes
-  const { nodes, edges } = useMemo(() => {
+  const layoutResult = useMemo(() => {
     if (!displayNodes || !displayNodes.length) return { nodes: [], edges: [] };
     const edgeList = buildEdges(displayNodes, { nodeConfigGetter: getNodeConfig });
     const laidOut = computeLayout(displayNodes, edgeList);
     return { nodes: laidOut, edges: edgeList };
   }, [displayNodes]);
 
-  const onNodesChange = useCallback(() => {}, []);
-  const onEdgesChange = useCallback(() => {}, []);
+  const [nodes, setNodes, onNodesChange] = useNodesState(layoutResult.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(layoutResult.edges);
+
+  // Sync layout results into React Flow state
+  useEffect(() => {
+    setNodes(layoutResult.nodes);
+    setEdges(layoutResult.edges);
+  }, [layoutResult, setNodes, setEdges]);
 
   const miniMapNodeColor = useCallback((node) => {
     return getNodeConfig(node.data?.type).color;

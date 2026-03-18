@@ -293,6 +293,27 @@ const IdeaNode = memo(({ data }) => {
         border: `2px solid ${config.bg}`, bottom: -5,
       }} />
 
+      {/* Mnemonic video button — learn mode only, concept/prerequisite/milestone */}
+      {data.onGenerateMnemonic && ['concept', 'prerequisite', 'milestone'].includes(data.type) && (
+        <button
+          className={`mnemonic-btn ${data.mnemonicStatus === 'generating' || data.mnemonicStatus === 'polling' ? 'generating' : ''} ${data.mnemonicStatus === 'complete' ? 'ready' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (data.mnemonicStatus === 'complete') {
+              data.onPlayMnemonic?.(data.nodeId);
+            } else if (!data.mnemonicStatus || data.mnemonicStatus === 'error') {
+              data.onGenerateMnemonic(data.nodeId);
+            }
+          }}
+          title={data.mnemonicStatus === 'complete' ? 'Play mnemonic video' : data.mnemonicStatus === 'generating' || data.mnemonicStatus === 'polling' ? 'Generating video...' : 'Generate memory mnemonic video'}
+          style={{
+            position: 'absolute', top: 6, left: 8, zIndex: 3,
+          }}
+        >
+          {data.mnemonicStatus === 'complete' ? '▶' : '🎬'}
+        </button>
+      )}
+
       {/* Bottom area: fractal expand OR collapse/expand OR child count */}
       {data.isExpanding ? (
         /* Loading state during expansion */

@@ -30,7 +30,10 @@ import KnowledgeGraph from './KnowledgeGraph';
 import { useAutoRefine } from './useAutoRefine';
 import { usePortfolio } from './usePortfolio';
 import { useLearnLoop } from './useLearnLoop';
+import { useExperimentLoop } from './useExperimentLoop';
+import { useMnemonicVideo } from './useMnemonicVideo';
 import PipelineOverlay from './PipelineOverlay';
+import VideoModal from './VideoModal';
 import FlowchartView from './FlowchartView';
 import GmailPicker from './GmailConnect';
 import useGmail from './useGmail';
@@ -544,6 +547,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setNodeCount: idea$.setNodeCount,
   });
 
+  const experiment$ = useExperimentLoop({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    dynamicTypesRef: idea$.dynamicTypesRef,
+    yjsSyncRef,
+    setNodeCount: idea$.setNodeCount,
+  });
+
+  const mnemonic$ = useMnemonicVideo();
+  const [videoModalNodeId, setVideoModalNodeId] = useState(null);
+
   // ── Load initial session from dashboard ───────────────────
   const initialSessionLoaded = useRef(false);
   useEffect(() => {
@@ -692,6 +707,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
   const [learnStream, setLearnStream] = useState(null); // live learn loop progress for inline chat card
+  const [experimentStream, setExperimentStream] = useState(null); // live experiment loop progress
   const [focusedNode, setFocusedNode] = useState(null); // { node, surgicalExpanded } for chat-first node interactions
 
   // ── Share ────────────────────────────────────────────────────
@@ -841,6 +857,23 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
   }, []);
 
+  // ── Shared: run learn loop inline in chat ──────────────────
+  const startLearnInChat = useCallback((targetMastery = 7, { startConceptId } = {}) => {
+    setLearnStream({ status: 'generating_probe', detail: 'Starting comprehension loop...' });
+    setShowChat(true);
+    learn$.handleStartLearn(ideaText, targetMastery, (progress) => {
+      if (progress.status === 'done' || progress.status === 'complete') {
+        setLearnStream(null);
+        setPendingChatCards(prev => [...prev, {
+          type: 'learn_card',
+          state: { status: 'complete', masteryMap: progress.masteryMap || {}, totalConcepts: progress.totalConcepts },
+        }]);
+      } else {
+        setLearnStream(progress);
+      }
+    }, { startConceptId });
+  }, [learn$, ideaText]);
+
   // ── Idea mode: generate ───────────────────────────────────
   const handleGenerate = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -968,14 +1001,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       idea$.setIsGenerating(false);
       setIsFetchingUrl(false);
       if (yjs) yjs.setLocalGenerating(false);
-      // Auto-open debate panel and kick off the loop if generation completed successfully
+      // Auto-open debate/learn panel after generation completes
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
-        setShowDebate(true);
-        setDebateAutoStart(true);
+        if (displayMode === 'learn') {
+          startLearnInChat(7);
+        } else {
+          setShowDebate(true);
+          setDebateAutoStart(true);
+        }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -1091,12 +1128,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       setIsFetchingUrl(false);
       if (yjs) yjs.setLocalGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
-        setShowDebate(true);
-        setDebateAutoStart(true);
+        if (displayMode === 'learn') {
+          startLearnInChat(7);
+        } else {
+          setShowDebate(true);
+          setDebateAutoStart(true);
+        }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -1223,17 +1264,21 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       setIsFetchingUrl(false);
       if (yjs) yjs.setLocalGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
-        setShowDebate(true);
-        setDebateAutoStart(true);
+        if (displayMode === 'learn') {
+          startLearnInChat(7);
+        } else {
+          setShowDebate(true);
+          setDebateAutoStart(true);
+          // Pipeline: generate done → debate active
+          setPipelineStages(prev => prev?.map(s =>
+            s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
+            s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
+          ));
+        }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
-        // Pipeline: generate done → debate active
-        setPipelineStages(prev => prev?.map(s =>
-          s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
-          s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
-        ));
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1441,11 +1486,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     } finally {
       idea$.setIsGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
-        setShowDebate(true);
-        setDebateAutoStart(true);
+        if (displayMode === 'learn') {
+          startLearnInChat(7);
+        } else {
+          setShowDebate(true);
+          setDebateAutoStart(true);
+        }
       }
     }
-  }, [idea$, saveVersionAndMemory]);
+  }, [idea$, displayMode, saveVersionAndMemory, startLearnInChat]);
 
   const handleNewResumeAnalysis = useCallback(() => {
     idea$.resetCanvas();
@@ -1581,22 +1630,21 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     });
   }, [portfolio$, ideaText, displayMode, portfolioFocus]);
 
-  // ── Shared: run learn loop inline in chat ──────────────────
-  const startLearnInChat = useCallback((targetMastery = 7) => {
-    setLearnStream({ status: 'generating_probe', detail: 'Starting comprehension loop...' });
+  const startExperimentInChat = useCallback((iterations = 5) => {
+    setExperimentStream({ status: 'scoring_baseline', iteration: 0, maxIterations: iterations, detail: 'Starting experiment loop...' });
     setShowChat(true);
-    learn$.handleStartLearn(ideaText, targetMastery, (progress) => {
-      if (progress.status === 'done' || progress.status === 'complete') {
-        setLearnStream(null);
+    experiment$.handleStartExperiment(ideaText, displayMode, iterations, (progress) => {
+      if (progress.status === 'done') {
+        setExperimentStream(null);
         setPendingChatCards(prev => [...prev, {
-          type: 'learn_card',
-          state: { status: 'complete', masteryMap: progress.masteryMap || {}, totalConcepts: progress.totalConcepts },
+          type: 'experiment_card',
+          state: { status: 'done', history: progress.history || [], bestTree: progress.bestTree },
         }]);
       } else {
-        setLearnStream(progress);
+        setExperimentStream(progress);
       }
     });
-  }, [learn$, ideaText]);
+  }, [experiment$, ideaText, displayMode]);
 
   // ── Load session handlers ─────────────────────────────────
   const handleLoadIdeaSession = useCallback((session) => {
@@ -2125,8 +2173,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     } else if (btn.actionType === 'stopLearn') {
       learn$.handleStopLearn();
       setLearnStream(null);
+    } else if (btn.actionType === 'stopExperiment') {
+      experiment$.handleStopExperiment();
+      setExperimentStream(null);
+    } else if (btn.actionType === 'experimentMore') {
+      startExperimentInChat(3);
+    } else if (btn.panel === 'experiment') {
+      startExperimentInChat(5);
     }
-  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction, learn$]);
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction, learn$, experiment$, startExperimentInChat]);
 
   // ── Toolbar scroll arrows ────────────────────────────────
   const updateToolbarScroll = useCallback(() => {
@@ -2238,10 +2293,20 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         onToggleCollapse: active.handleToggleCollapse,
         // Learn mode mastery
         ...(displayMode === 'learn' && learn$.masteryMap[n.id] ? { mastery: learn$.masteryMap[n.id].score } : {}),
+        // Mnemonic video (learn mode only)
+        ...(displayMode === 'learn' ? {
+          onGenerateMnemonic: (nodeId) => {
+            const serialized = active.nodes.map(nd => nd.data);
+            mnemonic$.generateMnemonic(nodeId, ideaText, serialized);
+            setVideoModalNodeId(nodeId);
+          },
+          onPlayMnemonic: (nodeId) => setVideoModalNodeId(nodeId),
+          mnemonicStatus: mnemonic$.mnemonicJobs[n.id]?.status || null,
+        } : {}),
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [active.nodes, selectedNodeId, is3D, isolatedRound, roundRange, treeSearchTrim, chatFilterActive, chatFilter, childCountMap, displayMode, learn$.masteryMap]);
+  }), [active.nodes, selectedNodeId, is3D, isolatedRound, roundRange, treeSearchTrim, chatFilterActive, chatFilter, childCountMap, displayMode, learn$.masteryMap, mnemonic$.mnemonicJobs]);
 
   const activeEdges = active.edges;
   const displayEdges = useMemo(() => is3D ? activeEdges : activeEdges.map(e => {
@@ -2355,6 +2420,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   disabled={learn$.isLearning}
                 >
                   ⧫ LEARN
+                </button>
+              )}
+              {active.nodes.length > 0 && (
+                <button
+                  className={`btn btn-icon ${experiment$.isExperimenting ? 'active-icon' : ''}`}
+                  onClick={() => startExperimentInChat(5)}
+                  title="AutoIdea — autonomous idea experimentation loop"
+                  disabled={experiment$.isExperimenting}
+                >
+                  ⟳ EXPERIMENT
                 </button>
               )}
               <div className="toolbar-sep" />
@@ -2520,14 +2595,26 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               nodes={idea$.rawNodesRef.current}
               onNodeClick={(node3d) => {
                 const raw = idea$.rawNodesRef.current.find(n => n.id === node3d.id);
-                if (raw) idea$.handleNodeClick({ id: raw.id, data: raw.data || raw });
+                if (raw) {
+                  idea$.handleNodeClick({ id: raw.id, data: raw.data || raw });
+                  if (displayMode === 'learn' && raw.data?.type && ['concept', 'prerequisite'].includes(raw.data.type)) {
+                    if (learn$.isLearning) learn$.handleStopLearn();
+                    setTimeout(() => startLearnInChat(7, { startConceptId: raw.id }), 100);
+                  }
+                }
               }}
             />
           ) : viewMode === 'flowchart' ? (
             <ReactFlowProvider>
               <FlowchartView
                 displayNodes={displayNodes}
-                onNodeClick={idea$.handleNodeClick}
+                onNodeClick={(node) => {
+                  idea$.handleNodeClick(node);
+                  if (displayMode === 'learn' && node?.data?.type && ['concept', 'prerequisite'].includes(node.data.type)) {
+                    if (learn$.isLearning) learn$.handleStopLearn();
+                    setTimeout(() => startLearnInChat(7, { startConceptId: node.id }), 100);
+                  }
+                }}
                 onNodeDoubleClick={idea$.handleDrill}
                 onNodeContextMenu={idea$.handleNodeContextMenu}
                 onCloseContextMenu={idea$.handleCloseContextMenu}
@@ -2555,7 +2642,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 isGenerating={isBusy}
                 isScoring={isScoring}
                 progressText={multiAgentProgress}
-                onNodeClick={idea$.handleNodeClick}
+                onNodeClick={(node) => {
+                  idea$.handleNodeClick(node);
+                  if (displayMode === 'learn' && node?.data?.type && ['concept', 'prerequisite'].includes(node.data.type)) {
+                    if (learn$.isLearning) learn$.handleStopLearn();
+                    setTimeout(() => startLearnInChat(7, { startConceptId: node.id }), 100);
+                  }
+                }}
                 onNodeDoubleClick={idea$.handleDrill}
                 onNodeContextMenu={idea$.handleNodeContextMenu}
                 onCloseContextMenu={idea$.handleCloseContextMenu}
@@ -2947,6 +3040,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         refineStream={refineStream}
         portfolioStream={portfolioStream}
         learnStream={learnStream}
+        experimentStream={experimentStream}
         focusedNode={focusedNode ? {
           ...focusedNode,
           node: active.rawNodesRef.current.find(n => n.id === focusedNode.node?.id) || focusedNode.node,
@@ -3050,6 +3144,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         onClose={() => setShowShareModal(false)}
         nodes={active.rawNodesRef.current}
         idea={ideaText}
+      />
+
+      <VideoModal
+        isOpen={!!videoModalNodeId}
+        onClose={() => setVideoModalNodeId(null)}
+        job={videoModalNodeId ? mnemonic$.mnemonicJobs[videoModalNodeId] : null}
+        nodeLabel={videoModalNodeId ? active.nodes.find(n => n.id === videoModalNodeId)?.data?.label : ''}
+        onRetry={videoModalNodeId ? () => {
+          const serialized = active.nodes.map(nd => nd.data);
+          mnemonic$.generateMnemonic(videoModalNodeId, ideaText, serialized);
+        } : null}
       />
 
     </div>

@@ -5,6 +5,7 @@ import { authFetch } from './api';
 import RefineCard from './chat/RefineCard';
 import PortfolioCard from './chat/PortfolioCard';
 import LearnCard from './chat/LearnCard';
+import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -47,7 +48,7 @@ const QUICK_ACTIONS = {
     { label: 'Resource Brief',  prompt: 'Write a resource requirements brief based on the dependencies and scope identified in this tree.' },
   ],
   learn:    [
-    { label: 'Quiz Me',           prompt: 'Generate a probe question for the weakest concept in my learning tree. Evaluate my answer honestly and update my mastery.' },
+    { label: 'Start Learning',    prompt: '__START_LEARN__' },
     { label: 'Explain Simply',    prompt: 'Pick the most complex concept in this tree and explain it using a simple analogy a beginner could understand.' },
     { label: 'Show Prerequisites', prompt: 'What prerequisite knowledge am I missing? Identify gaps in the concept tree and suggest what I should study first.' },
     { label: 'Learning Summary',  prompt: 'Write a concise summary of what I have learned so far based on the concepts in this tree. Highlight strong areas and remaining gaps.' },
@@ -162,10 +163,10 @@ const CHAT_MODE_CONFIG = {
   decision: { title: 'DECISION ANALYST',   icon: '⚖', emptyDesc: 'Your decision tree is loaded as context. Ask questions or use a quick action below to generate decision docs.' },
   writing:  { title: 'WRITING EDITOR',     icon: '✦', emptyDesc: 'Your writing analysis is loaded as context. Ask questions or use a quick action below to generate content.' },
   plan:     { title: 'PROJECT ADVISOR',    icon: '◉', emptyDesc: 'Your project plan is loaded as context. Ask questions or use a quick action below to generate project docs.' },
-  learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is loaded. Ask questions, request explanations, or start a comprehension check to test your understanding.' },
+  learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -377,8 +378,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
                 {actions.map((a) => (
                   <button
                     key={a.label}
-                    className="chat-quick-btn"
-                    onClick={() => sendMessage(a.prompt)}
+                    className={`chat-quick-btn${a.prompt === '__START_LEARN__' ? ' chat-quick-btn-primary' : ''}`}
+                    onClick={() => a.prompt === '__START_LEARN__' ? onCardButtonClick?.({ actionType: 'openPanel', panel: 'learn' }) : sendMessage(a.prompt)}
                   >
                     {a.label}
                   </button>
@@ -393,6 +394,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             <RefineCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'portfolio_card' ? (
             <PortfolioCard key={i} state={msg.state} onAction={onCardButtonClick} />
+          ) : msg.type === 'experiment_card' ? (
+            <ExperimentCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'action_card' ? (
             <div key={i} className="chat-action-card">
               <div className="chat-action-card-header">
@@ -545,6 +548,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         {/* ── Live Learn Stream ── */}
         {learnStream && (
           <LearnCard state={learnStream} onAction={onCardButtonClick} />
+        )}
+
+        {/* ── Live Experiment Stream ── */}
+        {experimentStream && (
+          <ExperimentCard state={experimentStream} onAction={onCardButtonClick} />
         )}
 
         {/* ── Node Focus Card (sticky) ── */}

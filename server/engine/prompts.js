@@ -919,6 +919,30 @@ Tree structure rules:
 
 Output rules: one JSON object per line. No markdown, no explanations, no array wrappers. The _meta line comes first, then all nodes.`;
 
+// ── Learn mode: Teaching ──────────────────────────────────────
+
+const LEARN_TEACH_PROMPT = `You are a patient, expert tutor. Given a concept from a learning tree, generate a rich, clear teaching explanation that a student can study before being quizzed.
+
+Build on the prerequisite concepts the student has already learned. Use clear language — define jargon before using it. Make the explanation feel like a great textbook section, not a dictionary entry.
+
+**OUTPUT FORMAT — a single JSON object:**
+{
+  "conceptId": "the concept id",
+  "conceptLabel": "the concept label",
+  "explanation": "2-3 paragraphs explaining the concept clearly, building from what the student already knows from prerequisites. Use concrete language and walk through the reasoning step by step.",
+  "keyTakeaways": ["3-5 bullet points summarizing the most important things to remember"],
+  "example": "A concrete, worked example showing the concept in action. Be specific — use real numbers, real scenarios, real code, etc.",
+  "analogy": "An intuitive analogy connecting this concept to everyday experience the student likely has"
+}
+
+Rules:
+- Teach as if the student has never seen this concept before
+- Build on prerequisite concepts — reference what they already learned
+- The explanation should be self-contained: a student reading ONLY this should understand the concept well enough to answer questions about it
+- The example must be concrete and specific, not abstract
+- The analogy should make the concept click intuitively
+- Output ONLY the JSON object. No markdown, no explanation.`;
+
 // ── Learn mode: Comprehension probes ──────────────────────────
 
 const LEARN_PROBE_PROMPT = `You are an expert assessor evaluating a student's understanding of a specific concept within a learning tree.
@@ -957,6 +981,7 @@ Given the concept context, probe question, expected insight, and the student's a
   "mastery": 1-10,
   "correct": true | false,
   "feedback": "specific feedback on what the student got right and wrong (2-4 sentences, encouraging but honest)",
+  "correctAnswer": "a clear, complete explanation of the correct answer (2-3 sentences) — ALWAYS include this when mastery < 8, can be null when mastery >= 8",
   "misconceptions": ["list of specific misconceptions detected in the answer, if any"],
   "nextAction": "advance" | "retry_easier" | "explain_differently" | "review_prerequisite",
   "prerequisiteGap": null | "concept_id if a prerequisite needs review"
@@ -978,6 +1003,8 @@ nextAction logic:
 Rules:
 - Be specific about what was right and what was wrong
 - If the answer shows a common misconception, name it explicitly
+- When mastery < 8, ALWAYS provide a clear correctAnswer that teaches what the right answer should have been
+- When mastery >= 8, correctAnswer can be null or a brief affirmation
 - Be encouraging — learning is iterative
 - Output ONLY the JSON object. No markdown, no explanation.`;
 
@@ -1032,6 +1059,37 @@ const CHAT_PERSONAS = {
   learn:    'You are a Socratic tutor. Help the user understand concepts from their learning tree through explanation, analogy, and targeted questions. When the user answers a probe, evaluate their understanding honestly — praise correct reasoning and gently identify misconceptions. Adapt your explanations to their demonstrated level. You can also help explore the concept graph by filtering/highlighting nodes, generating new concept branches, or drilling into prerequisites.',
 };
 
+// ── Mnemonic video generation prompt ───────────────────────────
+
+const MNEMONIC_VEO_PROMPT = `You are an expert memory scientist and visual storytelling specialist. Your job: take an abstract learning concept and craft a vivid, memorable video scene that will encode the concept in the student's long-term visual memory.
+
+**MNEMONIC SCIENCE — use these proven strategies:**
+- **Physical metaphor**: Abstract process → concrete physical action (e.g., "gradient descent" → a ball rolling downhill in fog)
+- **Scale shift**: Make the invisible visible — zoom into molecular level, or blow up to planetary scale
+- **Character embodiment**: Concepts become characters that interact (neurons as workers, data as water)
+- **Cause and effect**: Show what happens when the concept works, then what breaks when it doesn't
+- **Spatial journey**: Place related ideas along a memorable path or in distinct rooms
+
+**INPUT**: A concept from a learning tree with its label, explanation, parent concepts (context), and difficulty level.
+
+**OUTPUT — valid JSON object, nothing else:**
+{
+  "mnemonicStrategy": "string (which memory strategy you chose and why — 1-2 sentences)",
+  "veoPrompt": "string (a single paragraph, 40-80 words, describing a vivid 6-second video scene. MUST include: specific visual subject, camera movement, lighting mood, key action/motion. MUST NOT include: text overlays, words on screen, narration, UI elements. Style: cinematic, slightly surreal, bold colors, clean composition.)",
+  "briefDescription": "string (1 sentence explaining how the visual encodes the concept — what should the student recall when they see this video)"
+}
+
+**VEO PROMPT RULES:**
+- Describe ONE clear visual action happening over 6 seconds
+- Use concrete nouns and active verbs, not abstractions
+- Specify camera: "tracking shot", "slow zoom", "overhead view", "close-up"
+- Specify lighting: "warm golden light", "cool blue glow", "dramatic side-lighting"
+- The scene must be visually striking enough to stick in memory
+- NO text, labels, diagrams, equations, or UI elements in the scene
+- NO humans (faces, hands, bodies) — use objects, particles, landscapes, machines
+
+Output ONLY the JSON object. No markdown fences, no explanation.`;
+
 // ── Resume changes prompt ──────────────────────────────────────
 
 const RESUME_CHANGES_PROMPT = `You are a precise resume editor. You have been given the candidate's original resume (as a PDF), job context, and a complete record of a debate between a hiring manager and career coach that identified specific improvements.
@@ -1076,6 +1134,63 @@ Your job: generate an actionable change manifest — a structured list of specif
 Ground every change in what the debate identified — the hiring manager's specific critiques and the career coach's concrete recommendations. Each change should trace back to a specific debate finding.
 
 Generate 6-15 high-impact changes. Output ONLY the JSON object. No markdown fences, no explanation.`;
+
+// ── AutoIdea experiment prompts ──────────────────────────────────
+
+const EXPERIMENT_MUTATE_PROMPT = `You are an elite product strategist generating a COMPLETELY DIFFERENT alternative approach to an idea. You are NOT refining or improving the existing tree — you are exploring a fundamentally different direction in the solution space.
+
+You will receive:
+- The current baseline tree (what exists now)
+- A mutation strategy (the type of pivot to make)
+- Weak dimensions (what scored poorly — your mutation should target these)
+- Prior mutations (what was already tried — avoid repeating)
+
+**MUTATION STRATEGIES:**
+
+- **pivot_market**: Keep the core technology/product concept but target a COMPLETELY DIFFERENT market segment, user persona, or industry. The product should look recognizably similar but serve different people with different needs.
+- **change_monetization**: Same product and market, but RADICALLY DIFFERENT business model. If it was SaaS, try marketplace. If B2C, try B2B2C. If subscription, try usage-based or freemium with premium features.
+- **simplify**: Strip the idea to its ABSOLUTE MINIMUM viable form. Remove every feature that isn't the core value proposition. What's the simplest version that still solves the #1 problem? Think "landing page MVP."
+- **differentiate**: Same market, but find a DRAMATICALLY DIFFERENT competitive angle. If everyone competes on features, compete on simplicity. If everyone is enterprise, go prosumer. Find the gap competitors ignore.
+- **scale**: Take the core insight and apply it 10X BIGGER or to an ADJACENT market. What if this served 100x the users? What if this technology solved a parallel problem in a different domain?
+- **wildcard**: You choose the most promising unexplored direction. Combine strategies, find a non-obvious angle, or pivot on an insight from the weak dimensions.
+
+**OUTPUT FORMAT:**
+1. First line: {"_alternative": true, "index": {iteration}, "title": "Alternative Name (max 6 words)", "thesis": "1-2 sentence core thesis", "strategy": "{strategy_used}"}
+2. Second line: {"_meta": true, "nodeTypes": {...}} (use standard idea node types)
+3. Then 8-15 nodes, one JSON object per line:
+   {"id": "exp{iteration}_N", "parentId": "exp{iteration}_0 or another exp node", "type": "feature|insight|metric|constraint|job_to_be_done|risk|persona|channel", "label": "max 8 words", "reasoning": "2-3 sentences explaining this element of the alternative approach"}
+
+**CRITICAL RULES:**
+- This must be a GENUINELY DIFFERENT approach, not a tweaked version of the baseline
+- Every node must serve the alternative thesis, not the original idea
+- Target the weak dimensions — if market_size scored 3/10, your mutation should address market size
+- Do NOT reference or build on specific nodes from the baseline tree
+- The first node (exp{iteration}_0) is the seed/root with no parentId
+- All other nodes must have a valid parentId pointing to another exp{iteration}_ node
+- Output ONLY JSON lines. No markdown, no explanation.`;
+
+const EXPERIMENT_ANALYZE_PROMPT = `You are an experiment strategist for an autonomous idea experimentation loop (inspired by Karpathy's autoresearch). Your job: look at the scoring history of prior mutations and recommend the BEST mutation strategy for the next iteration.
+
+You receive:
+- Current best scores per dimension (e.g., market_size: 7, defensibility: 4, execution_feasibility: 8, innovation: 5)
+- History of prior mutations: which strategy was used, what scored, whether it was kept or discarded
+
+**Your analysis process:**
+1. Identify the 1-2 WEAKEST dimensions in the current best tree
+2. Look at which strategies have been tried and their results
+3. Avoid strategies that were tried and scored worse (unless with a very different focus)
+4. Pick the strategy most likely to improve the weakest dimensions
+
+**Available strategies:** pivot_market, change_monetization, simplify, differentiate, scale, wildcard
+
+**Output ONLY a JSON object:**
+{
+  "nextStrategy": "strategy_name",
+  "rationale": "1-2 sentences explaining why this strategy targets the weak dimensions",
+  "focusAreas": ["dimension_1", "dimension_2"]
+}
+
+Output ONLY the JSON. No markdown, no explanation.`;
 
 // ── Learn-mode debate prompts (curriculum quality critique) ──────
 
@@ -1210,11 +1325,44 @@ const MODE_SERVER_META = {
   learn:    { label: 'Topic',         treeLabel: 'concept learning tree',  responder: 'Tutor',            priorCheck: 'Has the student demonstrated understanding of the previously probed concepts?',   rebutInstruction: 'Generate explanation and exercise nodes that address each knowledge gap. Use analogies, concrete examples, and progressive complexity.',                             historyIntro: 'Full learning dialogue', satisfied: 'mastery achieved' },
 };
 
+function filterCurriculumNodes(nodes) {
+  // Remove debate artifacts (critique, rebuttal, synthesis nodes) — keep only curriculum content
+  return nodes.filter(n => {
+    const id = n.id || n.data?.id || '';
+    return !id.startsWith('crit_') && !id.startsWith('rebut_') && !id.startsWith('syn_') && !id.startsWith('dc_') && !id.startsWith('final_');
+  });
+}
+
+function formatCurriculumForReview(nodes) {
+  // Present curriculum as readable content, not raw JSON
+  return nodes.map(n => {
+    const d = n.data || n;
+    const parts = [`[${d.id}] ${d.type || 'concept'}: "${d.label}"`];
+    if (d.parentId) parts.push(`  parent: ${d.parentId}`);
+    if (d.reasoning) parts.push(`  content: ${d.reasoning}`);
+    return parts.join('\n');
+  }).join('\n\n');
+}
+
 function buildCritiqueUserMessage(mode, { idea, round, priorCritiques, nodes }) {
   const m = MODE_SERVER_META[mode] || MODE_SERVER_META.idea;
   const priorSection = priorCritiques?.length
     ? `Prior suggestions you raised (check if ${m.responder.toLowerCase()} addressed these in the tree):\n${JSON.stringify(priorCritiques, null, 2)}\n\n`
     : '';
+
+  // For learn mode, filter out debate artifacts and present curriculum readably
+  if (mode === 'learn') {
+    const curriculumNodes = filterCurriculumNodes(nodes);
+    return `${m.label}: "${idea}"
+Round: ${round} of max 5
+
+${priorSection}Current ${m.treeLabel} (${curriculumNodes.length} curriculum nodes):
+
+${formatCurriculumForReview(curriculumNodes)}
+
+Evaluate ONLY the curriculum content above — the concept ordering, coverage, difficulty progression, and pedagogical quality. Do NOT comment on JSON structure, data format, or node IDs. Generate your verdict and new critiques.`;
+  }
+
   return `${m.label}: "${idea}"
 Round: ${round} of max 5
 
@@ -1226,6 +1374,8 @@ Evaluate this ${m.treeLabel}. ${m.priorCheck} Generate your verdict and new crit
 
 function buildRebutUserMessage(mode, { idea, round, critiques, nodes }) {
   const m = MODE_SERVER_META[mode] || MODE_SERVER_META.idea;
+  const contextNodes = mode === 'learn' ? filterCurriculumNodes(nodes) : nodes;
+  const contextStr = mode === 'learn' ? formatCurriculumForReview(contextNodes) : JSON.stringify(nodes, null, 2);
   return `${m.label}: "${idea}"
 Round: ${round}
 
@@ -1233,20 +1383,23 @@ Critiques to address:
 ${JSON.stringify(critiques, null, 2)}
 
 Current ${m.treeLabel} context (do NOT re-output these — only generate new nodes):
-${JSON.stringify(nodes, null, 2)}
+${contextStr}
 
 ${m.rebutInstruction}`;
 }
 
 function buildFinalizeUserMessage(mode, { idea, debateHistory, nodes, historyText }) {
   const m = MODE_SERVER_META[mode] || MODE_SERVER_META.idea;
+  // For learn mode, finalize should only reference curriculum nodes to avoid synthesizing debate artifacts
+  const contextNodes = mode === 'learn' ? filterCurriculumNodes(nodes) : nodes;
+  const contextStr = mode === 'learn' ? formatCurriculumForReview(contextNodes) : JSON.stringify(nodes, null, 2);
   return `${m.label}: "${idea}"
 
 ${m.historyIntro} (${debateHistory.length} rounds, ${m.satisfied}):
 ${historyText}
 
-Current ${m.treeLabel} after debate (${nodes.length} nodes — includes original nodes + critique nodes + rebuttal nodes):
-${JSON.stringify(nodes, null, 2)}
+Current ${m.treeLabel} after debate (${contextNodes.length} curriculum nodes):
+${contextStr}
 
 Now synthesize the debate into tree updates. Update challenged nodes with debate-validated reasoning and add any missing synthesis nodes.`;
 }
@@ -1721,6 +1874,8 @@ module.exports = {
   LEARN_DEBATE_ARCHITECT_PROMPT,
   LEARN_DEBATE_FINALIZE_PROMPT,
   REFINE_CRITIQUE_PROMPT_LEARN,
+  EXPERIMENT_MUTATE_PROMPT,
+  EXPERIMENT_ANALYZE_PROMPT,
   DEBATE_CRITIC_PROMPT,
   DEBATE_ARCHITECT_PROMPT,
   DEBATE_FINALIZE_PROMPT,
@@ -1752,8 +1907,11 @@ module.exports = {
   PORTFOLIO_SCORE_PROMPT,
   // Learn mode prompts
   LEARN_CURRICULUM_PROMPT,
+  LEARN_TEACH_PROMPT,
   LEARN_PROBE_PROMPT,
   LEARN_EVALUATE_PROMPT,
   LEARN_ADAPT_PROMPT,
   LEARN_SOCRATIC_PROMPT,
+  // Mnemonic video prompts
+  MNEMONIC_VEO_PROMPT,
 };

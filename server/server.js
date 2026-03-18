@@ -149,11 +149,23 @@ app.post('/api/portfolio/generate', generationLimit, (req, res) => handlePortfol
 app.post('/api/portfolio/score',    (req, res) => handlePortfolioScore(client, req, res, gemini));
 
 // Learn mode (probe/evaluate lightweight, adapt rate-limited)
-const { handleLearnProbe, handleLearnEvaluate, handleLearnAdapt, handleLearnSocratic } = require('./engine/learn');
+const { handleLearnTeach, handleLearnProbe, handleLearnEvaluate, handleLearnAdapt, handleLearnSocratic } = require('./engine/learn');
+app.post('/api/learn/teach',      (req, res) => handleLearnTeach(client, req, res));
 app.post('/api/learn/probe',       (req, res) => handleLearnProbe(client, req, res));
 app.post('/api/learn/evaluate',    (req, res) => handleLearnEvaluate(client, req, res));
 app.post('/api/learn/adapt',       generationLimit, (req, res) => handleLearnAdapt(client, req, res));
 app.post('/api/learn/socratic',    (req, res) => handleLearnSocratic(client, req, res));
+
+// Mnemonic video (generate rate-limited, poll lightweight) — uses Gemini Veo 3
+const { handleMnemonicGenerate, handleMnemonicPoll } = require('./engine/mnemonic');
+app.post('/api/learn/mnemonic/generate', generationLimit, (req, res) => handleMnemonicGenerate(client, req, res, gemini));
+app.post('/api/learn/mnemonic/poll',     (req, res) => handleMnemonicPoll(req, res, gemini));
+
+// Experiment (mutate rate-limited, score/analyze lightweight)
+const { handleExperimentMutate, handleExperimentScore, handleExperimentAnalyze } = require('./engine/experiment');
+app.post('/api/experiment/mutate',  generationLimit, (req, res) => handleExperimentMutate(client, req, res));
+app.post('/api/experiment/score',   (req, res) => handleExperimentScore(client, req, res, gemini));
+app.post('/api/experiment/analyze', (req, res) => handleExperimentAnalyze(client, req, res));
 
 // Node tools (split/merge)
 app.post('/api/split-node',  generationLimit, (req, res) => handleSplitNode(client, req, res));

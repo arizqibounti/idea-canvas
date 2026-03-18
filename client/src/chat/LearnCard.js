@@ -22,7 +22,8 @@ export default function LearnCard({ state, onAction }) {
   if (!state) return null;
 
   const { status, conceptId, conceptLabel, conceptReasoning, mastery,
-    probe, feedback, correct, misconceptions, nextAction,
+    probe, feedback, correctAnswer, correct, misconceptions, nextAction,
+    teachContent, adaptSummary,
     milestoneId: _milestoneId, milestoneLabel, challenge, coveredConcepts, followUpQuestions: _followUpQuestions, // eslint-disable-line no-unused-vars
     detail, error, masteryMap: finalMasteryMap, totalConcepts, showHint } = state;
 
@@ -31,6 +32,8 @@ export default function LearnCard({ state, onAction }) {
   const isProbing = status === 'probing';
   const isFeedback = status === 'feedback' || status === 'milestone_feedback';
   const isSocratic = status === 'socratic' && challenge;
+  const isTeaching = status === 'teaching';
+  const isAdaptSummary = status === 'adapt_summary';
   const isError = status === 'error';
 
   return (
@@ -38,32 +41,84 @@ export default function LearnCard({ state, onAction }) {
       {/* Header */}
       <div className="learn-card-header">
         <span className="learn-card-icon">
-          {isActive && <span className="learn-pulse">●</span>}
+          {(isActive || (isTeaching && !teachContent)) && <span className="learn-pulse">●</span>}
+          {isTeaching && teachContent && '📖'}
           {isProbing && '?'}
           {isSocratic && '?'}
           {isFeedback && (correct ? '✓' : '✗')}
+          {isAdaptSummary && '💡'}
           {isDone && '★'}
           {isError && '✗'}
         </span>
         <span className="learn-card-title">
+          {isTeaching && !teachContent && `Preparing lesson for "${conceptLabel}"`}
+          {isTeaching && teachContent && `Lesson: ${conceptLabel}`}
           {status === 'generating_probe' && `Preparing question for "${conceptLabel}"`}
           {isProbing && `Quiz: ${conceptLabel}`}
           {status === 'evaluating' && 'Evaluating your answer...'}
           {isFeedback && `Feedback: ${conceptLabel}`}
           {status === 'adapting' && 'Generating alternative explanation...'}
+          {isAdaptSummary && `Alternative Explanation: ${conceptLabel}`}
           {isSocratic && `Milestone: ${milestoneLabel}`}
           {isDone && `Learning Complete${totalConcepts ? ` — ${totalConcepts} concepts` : ''}`}
           {isError && 'Learning Error'}
         </span>
-        {(isActive || isProbing || isSocratic) && (
+        {(isActive || isProbing || isSocratic || (isTeaching && !teachContent)) && (
           <button className="learn-card-stop" onClick={() => onAction?.({ actionType: 'stopLearn' })}>Stop</button>
         )}
       </div>
 
       {/* Active spinner states */}
-      {isActive && (
+      {(isActive || (isTeaching && !teachContent)) && (
         <div className="learn-card-status">
           {detail || 'Processing...'}
+        </div>
+      )}
+
+      {/* Teaching lesson */}
+      {isTeaching && teachContent && (
+        <div className="learn-card-lesson">
+          <div className="learn-lesson-explanation">{teachContent.explanation}</div>
+
+          {teachContent.keyTakeaways?.length > 0 && (
+            <div className="learn-lesson-takeaways">
+              <strong>Key Takeaways:</strong>
+              <ul>{teachContent.keyTakeaways.map((t, i) => <li key={i}>{t}</li>)}</ul>
+            </div>
+          )}
+
+          {teachContent.example && (
+            <div className="learn-lesson-example">
+              <strong>Example:</strong>
+              <div>{teachContent.example}</div>
+            </div>
+          )}
+
+          {teachContent.analogy && (
+            <div className="learn-lesson-analogy">
+              <strong>Think of it like:</strong> {teachContent.analogy}
+            </div>
+          )}
+
+          <div className="learn-card-actions">
+            <button className="learn-card-btn learn-card-btn-primary"
+              onClick={() => onAction?.({ actionType: 'learnContinue' })}>
+              Ready for Quiz →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Adapt summary (inline alternative explanation) */}
+      {isAdaptSummary && adaptSummary && (
+        <div className="learn-card-lesson">
+          <div className="learn-lesson-explanation">{adaptSummary}</div>
+          <div className="learn-card-actions">
+            <button className="learn-card-btn learn-card-btn-primary"
+              onClick={() => onAction?.({ actionType: 'learnContinue' })}>
+              Try Again
+            </button>
+          </div>
         </div>
       )}
 
@@ -164,6 +219,12 @@ export default function LearnCard({ state, onAction }) {
           <MasteryBadge mastery={mastery || 0} />
           {feedback && <div className="learn-feedback-text">{feedback}</div>}
 
+          {correctAnswer && mastery < 8 && (
+            <div className="learn-feedback-correct">
+              <strong>The key insight:</strong> {correctAnswer}
+            </div>
+          )}
+
           {misconceptions?.length > 0 && (
             <div className="learn-feedback-misconceptions">
               <strong>Misconceptions detected:</strong>
@@ -190,7 +251,7 @@ export default function LearnCard({ state, onAction }) {
           <div className="learn-complete-summary">
             {Object.entries(finalMasteryMap).map(([id, data]) => (
               <div key={id} className="learn-complete-row">
-                <span className="learn-complete-label">{id}</span>
+                <span className="learn-complete-label">{data.label || id}</span>
                 <MasteryBadge mastery={data.score || 0} />
               </div>
             ))}

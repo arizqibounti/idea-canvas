@@ -3,6 +3,7 @@
 // Follows the refine.js 3-phase pattern.
 
 const {
+  LEARN_TEACH_PROMPT,
   LEARN_PROBE_PROMPT,
   LEARN_EVALUATE_PROMPT,
   LEARN_ADAPT_PROMPT,
@@ -21,6 +22,53 @@ function nodeSummary(nodes) {
     parentIds: n.parentIds || n.data?.parentIds || [],
     difficulty: n.difficulty || n.data?.difficulty,
   }));
+}
+
+// ── POST /api/learn/teach ──────────────────────────────────
+// Non-streaming JSON: generate a rich teaching explanation for a concept
+
+async function handleLearnTeach(client, req, res) {
+  const { nodes, topic, conceptId } = req.body;
+  if (!nodes?.length || !topic || !conceptId) {
+    return res.status(400).json({ error: 'nodes, topic, and conceptId are required' });
+  }
+
+  try {
+    const compactNodes = nodeSummary(nodes);
+    const targetNode = compactNodes.find(n => n.id === conceptId);
+    if (!targetNode) {
+      return res.status(400).json({ error: `Concept ${conceptId} not found in nodes` });
+    }
+
+    // Find parent concepts for context
+    const parentNodes = compactNodes.filter(n => targetNode.parentIds?.includes(n.id));
+
+    const userContent = `Topic: "${topic}"
+
+Concept to teach:
+${JSON.stringify(targetNode, null, 2)}
+
+Prerequisite concepts the student has already learned:
+${JSON.stringify(parentNodes, null, 2)}
+
+Generate a rich, clear teaching explanation for this concept.`;
+
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: LEARN_TEACH_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+    });
+
+    const text = msg.content[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const teachContent = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+
+    res.json(teachContent);
+  } catch (err) {
+    console.error('Learn teach error:', err.message);
+    res.status(500).json({ error: 'Failed to generate teaching content: ' + err.message });
+  }
 }
 
 // ── POST /api/learn/probe ──────────────────────────────────
@@ -226,6 +274,7 @@ Generate a deep, multi-concept Socratic challenge for this milestone.`;
 }
 
 module.exports = {
+  handleLearnTeach,
   handleLearnProbe,
   handleLearnEvaluate,
   handleLearnAdapt,

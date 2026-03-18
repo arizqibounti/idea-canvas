@@ -2,7 +2,7 @@
 // Client-orchestrated comprehension loop: probe → evaluate → adapt.
 // Follows the useAutoRefine.js pattern.
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { buildFlowNode, readSSEStream } from './useCanvasMode';
 import { authFetch } from './api';
 
@@ -11,7 +11,18 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount }) {
   const [isLearning, setIsLearning] = useState(false);
   const [learnProgress, setLearnProgress] = useState(null);
-  const [masteryMap, setMasteryMap] = useState({}); // { conceptId: { score, probeCount, lastProbe } }
+  const [masteryMap, setMasteryMap] = useState(() => {
+    try {
+      const stored = localStorage.getItem('tc_learn_mastery');
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  }); // { conceptId: { score, label, probeCount, lastProbe } }
+  // Persist mastery to localStorage
+  useEffect(() => {
+    try { localStorage.setItem('tc_learn_mastery', JSON.stringify(masteryMap)); }
+    catch { /* quota exceeded, ignore */ }
+  }, [masteryMap]);
+
   const learnAbortRef = useRef(null);
   const answerResolverRef = useRef(null); // resolves when user submits answer
 
@@ -73,7 +84,7 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
   }, [serializeNodes]);
 
   // ── Main learning loop ─────────────────────────────────────
-  const handleStartLearn = useCallback(async (topic, targetMastery = 7, onProgress) => {
+  const handleStartLearn = useCallback(async (topic, targetMastery = 7, onProgress, { startConceptId } = {}) => {
     if (isLearning) return;
     setIsLearning(true);
     setLearnProgress(null);
@@ -83,6 +94,7 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
 
     const completedConcepts = new Set();
     const probeHistory = [];
+    let forcedConceptId = startConceptId || null;
 
     try {
       let iterations = 0;
@@ -180,8 +192,14 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
           continue;
         }
 
-        // Pick next concept
-        const concept = pickNextConcept(targetMastery);
+        // Pick next concept (or use forced concept on first pass)
+        let concept;
+        if (forcedConceptId) {
+          const nodes = serializeNodes();
+          concept = nodes.find(n => n.id === forcedConceptId);
+          forcedConceptId = null; // only force once
+        }
+        if (!concept) concept = pickNextConcept(targetMastery);
         if (!concept) {
           // All concepts mastered!
           const completeStatus = {
@@ -196,6 +214,53 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
         }
 
         const currentMastery = masteryMap[concept.id]?.score || 0;
+
+        // ── Step 0: Teach concept (skip if already partially learned) ──
+        if (currentMastery < 5) {
+          const teachingStatus = {
+            status: 'teaching',
+            conceptId: concept.id,
+            conceptLabel: concept.label,
+            conceptReasoning: concept.reasoning,
+            mastery: currentMastery,
+            detail: 'Preparing lesson...',
+          };
+          setLearnProgress(teachingStatus);
+          onProgress?.(teachingStatus);
+
+          try {
+            const teachRes = await authFetch(`${API_URL}/api/learn/teach`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                nodes: serializeNodes(),
+                topic,
+                conceptId: concept.id,
+              }),
+              signal: abortController.signal,
+            });
+
+            if (teachRes.ok) {
+              const teachContent = await teachRes.json();
+              const lessonStatus = {
+                status: 'teaching',
+                conceptId: concept.id,
+                conceptLabel: concept.label,
+                teachContent,
+                mastery: currentMastery,
+              };
+              setLearnProgress(lessonStatus);
+              onProgress?.(lessonStatus);
+
+              // Wait for user to click "Ready for Quiz"
+              await new Promise((resolve) => { answerResolverRef.current = resolve; });
+              if (abortController.signal.aborted) break;
+            }
+          } catch (err) {
+            if (err.name === 'AbortError') break;
+            console.warn('Teach phase failed, skipping to probe:', err.message);
+          }
+        }
 
         // ── Step 1: Generate probe ────────────────────────────
         const probingStatus = {
@@ -273,6 +338,7 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
         // Update mastery map
         const newMastery = {
           score: evaluation.mastery,
+          label: concept.label,
           probeCount: (masteryMap[concept.id]?.probeCount || 0) + 1,
           lastProbe: Date.now(),
         };
@@ -292,6 +358,7 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
           mastery: evaluation.mastery,
           correct: evaluation.correct,
           feedback: evaluation.feedback,
+          correctAnswer: evaluation.correctAnswer,
           misconceptions: evaluation.misconceptions,
           nextAction: evaluation.nextAction,
           prerequisiteGap: evaluation.prerequisiteGap,
@@ -332,6 +399,7 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
 
           if (adaptRes.ok) {
             const existingDynConfig = rawNodesRef.current[0]?.data?.dynamicConfig || null;
+            const preAdaptCount = rawNodesRef.current.length;
 
             await readSSEStream(adaptRes, (nodeData) => {
               if (nodeData._progress) {
@@ -347,10 +415,33 @@ export function useLearnLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicT
               applyLayout(rawNodesRef.current, drillStackRef?.current);
               setNodeCount?.(rawNodesRef.current.length);
             });
-          }
 
-          // Brief pause then continue loop
-          await new Promise(r => setTimeout(r, 400));
+            // Collect adapted node content for inline summary
+            const adaptedNodes = rawNodesRef.current.slice(preAdaptCount);
+            const adaptSummary = adaptedNodes
+              .filter(n => n.data?.reasoning)
+              .map(n => `**${n.data.label}:** ${n.data.reasoning}`)
+              .join('\n\n');
+
+            if (adaptSummary) {
+              const adaptDoneStatus = {
+                status: 'adapt_summary',
+                conceptId: concept.id,
+                conceptLabel: concept.label,
+                adaptSummary,
+                detail: 'Here is an alternative explanation:',
+              };
+              setLearnProgress(adaptDoneStatus);
+              onProgress?.(adaptDoneStatus);
+
+              // Wait for user to continue before looping
+              await new Promise(resolve => { answerResolverRef.current = resolve; });
+              if (abortController.signal.aborted) break;
+            }
+          } else {
+            // Brief pause on failure then continue loop
+            await new Promise(r => setTimeout(r, 400));
+          }
         }
 
         // Brief pause between concepts
