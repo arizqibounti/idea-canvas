@@ -882,7 +882,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     idea$.setIsGenerating(true);
     setShowChat(true);
     setRedirectState('idle');
-    setDebateAutoStart(false);
+
     // Reset dynamic config for new generation
     dynamicConfigRef.current = null;
     dynamicTypesRef.current = null;
@@ -1021,7 +1021,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setShowChat(true);
     setMultiAgentProgress('Starting multi-agent analysis...');
     setRedirectState('idle');
-    setDebateAutoStart(false);
+
     dynamicConfigRef.current = null;
     dynamicTypesRef.current = null;
     setDynamicDomain(null);
@@ -1144,7 +1144,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setShowChat(true);
     setMultiAgentProgress('Planning research strategy...');
     setRedirectState('idle');
-    setDebateAutoStart(false);
+
     dynamicConfigRef.current = null;
     dynamicTypesRef.current = null;
     setDynamicDomain(null);
@@ -1450,7 +1450,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setResumeChanges(null);           // clear any prior changes
     idea$.resetCanvas();
     idea$.setIsGenerating(true);
-    setDebateAutoStart(false);
+
 
     if (idea$.abortRef.current) idea$.abortRef.current.abort();
     const controller = new AbortController();
