@@ -86,9 +86,10 @@ async function call(opts) {
     if (system) {
       params.system = cache ? buildCacheableSystem(system) : system;
     }
-    if (signal) params.signal = signal;
+    const reqOpts = { ...requestOptions };
+    if (signal) reqOpts.signal = signal;
 
-    const response = await _claude.messages.create(params, requestOptions);
+    const response = await _claude.messages.create(params, reqOpts);
     const text = response.content.map(c => c.text || '').join('');
     return {
       text,
@@ -146,7 +147,9 @@ async function stream(opts) {
       params.system = cache ? buildCacheableSystem(system) : system;
     }
 
-    const claudeStream = _claude.messages.stream(params, requestOptions);
+    const streamReqOpts = { ...requestOptions };
+    if (signal) streamReqOpts.signal = signal;
+    const claudeStream = _claude.messages.stream(params, streamReqOpts);
     return { stream: claudeStream, provider: 'claude' };
   }
 

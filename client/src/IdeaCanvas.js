@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,7 @@ import {
   BackgroundVariant,
   useReactFlow,
   Panel,
+  applyNodeChanges,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import IdeaNode from './IdeaNode';
@@ -135,7 +136,21 @@ export default function IdeaCanvas({
   hasCollapsed,
   isCinematic = false,
 }) {
-  const onNodesChange = useCallback(() => {}, []);
+  // Track internal node dimensions — React Flow v12 needs to measure nodes before edges render
+  const [internalNodes, setInternalNodes] = useState(nodes);
+  const prevNodesRef = useRef(nodes);
+
+  // Sync external nodes into internal state (preserve RF-measured dimensions)
+  useEffect(() => {
+    if (nodes !== prevNodesRef.current) {
+      prevNodesRef.current = nodes;
+      setInternalNodes(nodes);
+    }
+  }, [nodes]);
+
+  const onNodesChange = useCallback((changes) => {
+    setInternalNodes(nds => applyNodeChanges(changes, nds));
+  }, []);
   const onEdgesChange = useCallback(() => {}, []);
 
   const miniMapNodeColor = useCallback((node) => {
@@ -168,7 +183,7 @@ export default function IdeaCanvas({
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <ReactFlow
-        nodes={nodes}
+        nodes={internalNodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

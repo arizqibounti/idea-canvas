@@ -44,6 +44,8 @@ import { useUndoStack } from './useUndoStack';
 import { useGhostNodes } from './useGhostNodes';
 import { useHoverPreview } from './useHoverPreview';
 import PreviewOverlay from './PreviewOverlay';
+import { usePrototypeBuilder } from './usePrototypeBuilder';
+import FullPrototypePlayer from './FullPrototypePlayer';
 import InspectorPanel from './InspectorPanel';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
@@ -556,6 +558,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   });
 
   const mnemonic$ = useMnemonicVideo();
+  const proto$ = usePrototypeBuilder();
   const [videoModalNodeId, setVideoModalNodeId] = useState(null);
 
   // ── Load initial session from dashboard ───────────────────
@@ -564,25 +567,50 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     if (initialSessionLoaded.current || !initialSession || initialSession.isNew) return;
     initialSessionLoaded.current = true;
 
-    // Determine which canvas mode to load into
-    const sessionMode = initialSession.mode || 'idea';
+    const loadSession = (session) => {
+      const sessionMode = session.mode || 'idea';
+      // Normalize cloud session nodes field to rawNodes
+      const normalized = { ...session };
+      if (!normalized.rawNodes && normalized.nodes?.length) {
+        normalized.rawNodes = normalized.nodes.map(n => n.id && n.data ? n : buildFlowNode(n));
+      }
 
-    if (sessionMode === 'codebase') {
-      // Load into codebase canvas
-      if (initialSession.rawNodes?.length) {
-        cb$.handleLoadSession(initialSession, (label) => setCbFolderName(label));
+      if (sessionMode === 'codebase') {
+        if (normalized.rawNodes?.length) {
+          cb$.handleLoadSession(normalized, (label) => setCbFolderName(label));
+        }
+        setManualMode('codebase');
+      } else {
+        if (normalized.rawNodes?.length) {
+          idea$.handleLoadSession(normalized, (label) => setIdea(label));
+        } else if (normalized.idea) {
+          setIdea(normalized.idea);
+        }
+        if (sessionMode !== 'idea') {
+          setManualMode(sessionMode);
+        }
       }
-      setManualMode('codebase');
+
+      // Restore saved prototype if present
+      if (normalized.prototype) {
+        proto$.setPrototype(normalized.prototype);
+      }
+    };
+
+    // If session already has rawNodes (local), load immediately
+    if (initialSession.rawNodes?.length) {
+      loadSession(initialSession);
+    } else if (initialSession.source === 'cloud' && initialSession.id) {
+      // Fetch full session data from server for cloud sessions
+      authFetch(`${API_URL}/api/sessions/${initialSession.id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(fullSession => {
+          if (fullSession) loadSession(fullSession);
+          else loadSession(initialSession);
+        })
+        .catch(() => loadSession(initialSession));
     } else {
-      // Load into idea canvas (for all non-codebase modes)
-      if (initialSession.rawNodes?.length) {
-        idea$.handleLoadSession(initialSession, (label) => setIdea(label));
-      } else if (initialSession.idea) {
-        setIdea(initialSession.idea);
-      }
-      if (sessionMode !== 'idea') {
-        setManualMode(sessionMode);
-      }
+      loadSession(initialSession);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -697,6 +725,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [debateStream, setDebateStream] = useState(null);
   const debateAbortRef = useRef(null);
   const debateLoopRef = useRef(false);
+  const startDebateInChatRef = useRef(null);
+  const handleConsensusReachedRef = useRef(null);
 
   // ── Chat Companion ────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
@@ -708,6 +738,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
   const [learnStream, setLearnStream] = useState(null); // live learn loop progress for inline chat card
   const [experimentStream, setExperimentStream] = useState(null); // live experiment loop progress
+  const [prototypeStream, setPrototypeStream] = useState(null); // live prototype build progress
+  const [showPrototypeViewer, setShowPrototypeViewer] = useState(false);
   const [focusedNode, setFocusedNode] = useState(null); // { node, surgicalExpanded } for chat-first node interactions
 
   // ── Share ────────────────────────────────────────────────────
@@ -740,6 +772,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Post-generation automation options ───────────────────
   const [autoRefineOnGen, setAutoRefineOnGen] = useState(false);
   const [autoPortfolioOnGen, setAutoPortfolioOnGen] = useState(false);
+  const [autoPrototypeOnGen, setAutoPrototypeOnGen] = useState(false);
   const [portfolioFocus, setPortfolioFocus] = useState(null); // dynamic focus context from chat (types/nodeIds/userIntent)
   const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
   const [emailContext, setEmailContext] = useState(null); // { id, subject, messageCount, formatted }
@@ -753,7 +786,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   });
 
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d'
+  const [viewMode, setViewMode] = useState('tree'); // 'tree' | 'flowchart' | '3d'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -778,12 +811,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Auto-save (skip when Yjs handles persistence) ────────
   useEffect(() => {
     if (yjs) return; // Yjs handles persistence via y-indexeddb
-    if (activeMode === 'idea') idea$.triggerAutoSave(idea);
+    if (activeMode === 'idea') idea$.triggerAutoSave(idea, displayMode);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idea$.nodeCount, idea, activeMode]);
 
   useEffect(() => {
-    if (activeMode === 'codebase') cb$.triggerAutoSave(cbFolderName);
+    if (activeMode === 'codebase') cb$.triggerAutoSave(cbFolderName, 'codebase');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cb$.nodeCount, cbFolderName, activeMode]);
 
@@ -1006,12 +1039,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          startDebateInChat();
+          startDebateInChatRef.current?.();
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   // ── Multi-agent generation (3 lenses + merge) ─────────────
   const handleGenerateMulti = useCallback(async () => {
@@ -1130,12 +1163,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          startDebateInChat();
+          startDebateInChatRef.current?.();
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   const handleGenerateResearch = useCallback(async () => {
     if (!idea.trim() || idea$.isGenerating || idea$.isRegenerating) return;
@@ -1151,12 +1184,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setDynamicLegendTypes([]);
 
     // Initialise pipeline overlay when automation checkboxes are active
-    if (autoRefineOnGen || autoPortfolioOnGen) {
+    if (autoRefineOnGen || autoPortfolioOnGen || autoPrototypeOnGen) {
       const stages = [
         { id: 'generate', label: 'Generate', status: 'active', detail: 'Research & multi-agent thinking...' },
         { id: 'debate', label: 'Debate', status: 'pending', detail: null },
         ...(autoRefineOnGen ? [{ id: 'refine', label: 'Refine', status: 'pending', detail: null }] : []),
         ...(autoPortfolioOnGen ? [{ id: 'portfolio', label: 'Portfolio', status: 'pending', detail: null }] : []),
+        ...(autoPrototypeOnGen ? [{ id: 'prototype', label: 'Prototype', status: 'pending', detail: null }] : []),
       ];
       setPipelineStages(stages);
       setShowChat(true);  // open chat to show pipeline progress
@@ -1265,7 +1299,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          startDebateInChat(() => {
+          startDebateInChatRef.current?.(() => {
             setPipelineStages(prev => prev?.map(s =>
               s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
               s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
@@ -1275,7 +1309,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
     }
-  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat, startDebateInChat]);
+  }, [idea, idea$, displayMode, saveVersionAndMemory, triggerScoring, yjs, checkUpgradable, emailContext, startLearnInChat]);
 
   const handleStop = useCallback(() => {
     active.handleStop();
@@ -1486,11 +1520,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          startDebateInChat();
+          startDebateInChatRef.current?.();
         }
       }
     }
-  }, [idea$, displayMode, saveVersionAndMemory, startLearnInChat, startDebateInChat]);
+  }, [idea$, displayMode, saveVersionAndMemory, startLearnInChat]);
 
   const handleNewResumeAnalysis = useCallback(() => {
     idea$.resetCanvas();
@@ -1589,6 +1623,51 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     });
   }, [handleStartRefine]);
 
+  // ── Shared: run prototype build inline in chat ────────────
+  const startPrototypeBuild = useCallback(() => {
+    setPrototypeStream({ status: 'planning', stage: 'Analyzing tree...', screensTotal: 0, screensComplete: 0, screenNames: [] });
+    setShowChat(true);
+
+    proto$.handleBuildPrototype(active.rawNodesRef.current, ideaText, displayMode, (event) => {
+      if (event._progress) {
+        let status = 'planning';
+        if (event.plan) status = 'generating';
+        if (event.stage?.includes('Wiring')) status = 'wiring';
+        if (event.stage?.includes('Polish')) status = 'polishing';
+        setPrototypeStream(prev => ({
+          ...prev,
+          status,
+          stage: event.stage,
+          plan: event.plan || prev?.plan,
+          screensTotal: event.plan?.screens?.length || prev?.screensTotal,
+        }));
+        // Update pipeline stages if running in pipeline
+        setPipelineStages(prev => prev?.map(s =>
+          s.id === 'prototype' ? { ...s, status: 'active', detail: event.stage } : s
+        ));
+      }
+      if (event._screen) {
+        setPrototypeStream(prev => ({
+          ...prev,
+          screensComplete: (prev?.screensComplete || 0) + 1,
+          screenNames: [...(prev?.screenNames || []), event.name],
+        }));
+      }
+      if (event._result) {
+        setPrototypeStream(prev => ({ ...prev, status: 'done' }));
+        setPipelineStages(prev => prev?.map(s =>
+          s.id === 'prototype' ? { ...s, status: 'done', detail: 'Prototype built' } : s
+        ));
+      }
+      if (event.error) {
+        setPrototypeStream(prev => ({ ...prev, status: 'error', error: event.error }));
+        setPipelineStages(prev => prev?.map(s =>
+          s.id === 'prototype' ? { ...s, status: 'error', detail: event.error } : s
+        ));
+      }
+    }, gateway.sessionId || initialSession?.id);
+  }, [proto$, active.rawNodesRef, ideaText, displayMode, gateway.sessionId, initialSession?.id]);
+
   // ── Debate mode config for inline card ────────────────
   const DEBATE_MODE_CONFIG = useMemo(() => ({
     idea:     { panelIcon: '⚔', panelTitle: 'AUTO-CRITIQUE', statusCritiquing: 'Critic researching and analyzing...', statusRebutting: 'Architect researching and responding...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the critic is satisfied.${fc>0?` ${fc} nodes updated.`:''}` },
@@ -1598,6 +1677,31 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     writing:  { panelIcon: '✦', panelTitle: 'EDITORIAL REVIEW', statusCritiquing: 'Senior editor reviewing...', statusRebutting: 'Writer addressing critiques...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the editor approves.${fc>0?` ${fc} nodes updated.`:''}` },
     plan:     { panelIcon: '◉', panelTitle: 'RISK ANALYSIS', statusCritiquing: 'Risk analyst reviewing...', statusRebutting: 'Project manager mitigating...', consensusDesc: (r, fc) => `After ${r} round${r!==1?'s':''}, the plan is approved.${fc>0?` ${fc} nodes updated.`:''}` },
   }), []);
+
+  // ── Debate: add nodes to canvas from debate loop ─────────
+  const handleDebateNodesAdded = useCallback((newNodes) => {
+    const existingIds = new Set(active.rawNodesRef.current.map(n => n.id));
+    newNodes.forEach((flowNode) => {
+      // Prevent duplicate IDs from debate rounds
+      if (existingIds.has(flowNode.id)) {
+        flowNode = { ...flowNode, id: flowNode.id + '_' + Date.now().toString(36).slice(-4) };
+      }
+      existingIds.add(flowNode.id);
+      active.rawNodesRef.current = [...active.rawNodesRef.current, flowNode];
+    });
+    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+    active.setNodeCount(active.rawNodesRef.current.length);
+  }, [active]);
+
+  // ── Debate: update existing nodes in-place after consensus ─
+  const handleDebateNodeUpdate = useCallback((updatedNode) => {
+    active.rawNodesRef.current = active.rawNodesRef.current.map((n) =>
+      n.id === updatedNode.id
+        ? { ...n, data: { ...n.data, label: updatedNode.label, reasoning: updatedNode.reasoning } }
+        : n
+    );
+    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
+  }, [active]);
 
   // ── Shared: run debate inline in chat ────────────────
   const startDebateInChat = useCallback(async (pipelineCallback) => {
@@ -1697,7 +1801,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               updateStream({ finalizeCount: fc });
             });
           }
-          handleConsensusReached();
+          handleConsensusReachedRef.current?.();
           debateRoundsRef.current = debateRounds;
 
           setDebateStream(null);
@@ -1807,7 +1911,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       }
       debateLoopRef.current = false;
     }
-  }, [active, ideaText, displayMode, handleDebateNodesAdded, handleDebateNodeUpdate, handleConsensusReached, DEBATE_MODE_CONFIG]);
+  }, [active, ideaText, displayMode, handleDebateNodesAdded, handleDebateNodeUpdate, DEBATE_MODE_CONFIG]);
+  startDebateInChatRef.current = startDebateInChat;
 
   const handleStopDebateInChat = useCallback(() => {
     debateLoopRef.current = false;
@@ -1893,25 +1998,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setShowHistory(false);
   }, [idea$]);
 
-  // ── Debate: add nodes to canvas from debate loop ─────────
-  const handleDebateNodesAdded = useCallback((newNodes) => {
-    newNodes.forEach((flowNode) => {
-      active.rawNodesRef.current = [...active.rawNodesRef.current, flowNode];
-    });
-    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
-    active.setNodeCount(active.rawNodesRef.current.length);
-  }, [active]);
-
-  // ── Debate: update existing nodes in-place after consensus ─
-  const handleDebateNodeUpdate = useCallback((updatedNode) => {
-    active.rawNodesRef.current = active.rawNodesRef.current.map((n) =>
-      n.id === updatedNode.id
-        ? { ...n, data: { ...n.data, label: updatedNode.label, reasoning: updatedNode.reasoning } }
-        : n
-    );
-    active.applyLayout(active.rawNodesRef.current, active.drillStackRef.current);
-  }, [active]);
-
   // ── Template extraction: after debate consensus ──────────
   const handleConsensusReached = useCallback(async () => {
     try {
@@ -1983,7 +2069,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               setPipelineStages(prev => prev?.map(s =>
                 s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
               ));
+              if ((portfolioProgress.status === 'done' || portfolioProgress.status === 'complete') && autoPrototypeOnGen) {
+                chainPrototype();
+              }
             });
+          } else if (autoPrototypeOnGen) {
+            chainPrototype();
           }
         }
       });
@@ -1993,9 +2084,22 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         setPipelineStages(prev => prev?.map(s =>
           s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
         ));
+        if ((portfolioProgress.status === 'done' || portfolioProgress.status === 'complete') && autoPrototypeOnGen) {
+          chainPrototype();
+        }
       });
+    } else if (autoPrototypeOnGen) {
+      chainPrototype();
     }
-  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, refine$, displayMode, resumeJobLabel, startRefineInChat, startPortfolioInChat]);
+
+    function chainPrototype() {
+      setPipelineStages(prev => prev?.map(s =>
+        s.id === 'prototype' ? { ...s, status: 'active', detail: 'Building prototype...' } : s
+      ));
+      startPrototypeBuild();
+    }
+  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, autoPrototypeOnGen, refine$, displayMode, resumeJobLabel, startRefineInChat, startPortfolioInChat, startPrototypeBuild]);
+  handleConsensusReachedRef.current = handleConsensusReached;
 
   // ── Suggestion expand: add suggestion node + children to tree ─
   const handleSuggestionExpand = useCallback(async (suggestionText) => {
@@ -2401,8 +2505,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       startExperimentInChat(3);
     } else if (btn.panel === 'experiment') {
       startExperimentInChat(5);
+    } else if (btn.actionType === 'expandSuggestion') {
+      handleSuggestionExpand(btn.suggestion).catch(err => console.error('Suggestion expand error:', err));
+    } else if (btn.actionType === 'viewPrototype') {
+      setShowPrototypeViewer(true);
+    } else if (btn.actionType === 'stopPrototype') {
+      proto$.handleStopBuild();
+      setPrototypeStream(null);
     }
-  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction, learn$, experiment$, startExperimentInChat]);
+  }, [handleStopRefine, handleGoDeeper, handleStartRefine, active, portfolio$, startRefineInChat, startPortfolioInChat, nodeTools, handleExecuteAction, learn$, experiment$, startExperimentInChat, proto$, handleSuggestionExpand]);
 
   // ── Toolbar scroll arrows ────────────────────────────────
   const updateToolbarScroll = useCallback(() => {
@@ -2660,6 +2771,20 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   ⟳ EXPERIMENT
                 </button>
               )}
+              <button
+                className={`btn btn-icon btn-prototype-icon ${proto$.isBuilding ? 'active-icon' : ''}`}
+                onClick={() => {
+                  if (proto$.prototype && !proto$.isBuilding) {
+                    setShowPrototypeViewer(true);
+                  } else if (!proto$.isBuilding) {
+                    startPrototypeBuild();
+                  }
+                }}
+                disabled={proto$.isBuilding || (active.rawNodesRef.current?.length || 0) < 5}
+                title="Build full interactive prototype from tree"
+              >
+                ◰ {proto$.prototype ? 'VIEW PROTOTYPE' : 'PROTOTYPE'}
+              </button>
               <div className="toolbar-sep" />
               <button
                 className="btn btn-icon btn-share-icon"
@@ -2754,13 +2879,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           const isActive   = displayMode === mode.id;
           const isDetected = detectedMode === mode.id && !manualMode && !isActive;
           const isManual   = manualMode === mode.id;
+          const hasNodes   = idea$.nodes.length > 0 || cb$.nodes.length > 0;
+          const isLocked   = hasNodes && !isActive;
           return (
             <button
               key={mode.id}
-              className={`mode-tab${isActive ? ' active' : ''}${isDetected ? ' detected' : ''}`}
-              style={isActive ? { color: mode.color } : {}}
-              onClick={() => handleModeSelect(mode.id)}
+              className={`mode-tab${isActive ? ' active' : ''}${isDetected ? ' detected' : ''}${isLocked ? ' disabled' : ''}`}
+              style={isActive ? { color: mode.color } : isLocked ? { opacity: 0.35, cursor: 'not-allowed' } : {}}
+              onClick={() => !isLocked && handleModeSelect(mode.id)}
               title={
+                isLocked   ? `${mode.label} — start a new session to switch modes` :
                 isManual   ? `${mode.label} — locked · click to release` :
                 isDetected ? `${mode.label} — auto-detected` :
                 mode.label
@@ -2802,8 +2930,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         </div>
       )}
 
+      {/* ── Content row: canvas + chat drawer ── */}
+      <div className="app-content-row">
+      <div className="canvas-column">
       {/* ── Canvas area ── */}
-      <main className="canvas-area" style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
+      <main className="canvas-area" style={{}}>
 
         {activeMode === 'idea' && (
           /* Resume mode with empty canvas — show the resume input panel */
@@ -2816,8 +2947,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   <MemoryInsights onDismiss={() => setShowMemory(false)} />
                 </div>
               )}
-              <IdeaEmptyState onMemoryClick={memorySessionCount >= 2 ? () => setShowMemory(true) : null} mode={displayMode} />
+              <IdeaEmptyState mode={displayMode} onExampleClick={(text) => { setIdea(text); }} />
             </>
+          ) : idea$.nodes.length === 0 && idea$.isGenerating ? (
+            <div className="generating-indicator">
+              <div className="generating-spinner" />
+              <div className="generating-text">Research & multi-agent thinking...</div>
+              <div className="generating-sub">Building your thinking tree from multiple perspectives</div>
+            </div>
           ) : viewMode === '3d' ? (
             <Graph3D
               nodes={idea$.rawNodesRef.current}
@@ -2953,7 +3090,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
       {/* ── Timeline Filmstrip ── */}
       {(active.rawNodesRef.current?.length || 0) > 1 && (
-        <div style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
+        <div style={{}}>
         <TimelineFilmstrip
           topoOrder={timeline.topoOrder}
           currentIndex={timeline.currentIndex}
@@ -2974,7 +3111,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       )}
 
       {/* ── Bottom input bar ── */}
-      <footer className="bottom-bar" style={{ marginRight: panelOpen ? '300px' : '0', transition: 'margin-right 0.25s ease' }}>
+      <footer className="bottom-bar" style={{}}>
         {/* Idea mode input row */}
         {activeMode === 'idea' && !(displayMode === 'resume' && idea$.nodes.length === 0 && !idea$.isGenerating) && (
           <div className="input-row">
@@ -3102,6 +3239,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                         <input type="checkbox" checked={autoPortfolioOnGen} onChange={e => setAutoPortfolioOnGen(e.target.checked)} />
                         <span>◈ Portfolio</span>
                       </label>
+                      <label className="gen-auto-check" title="Auto-build interactive prototype after generation">
+                        <input type="checkbox" checked={autoPrototypeOnGen} onChange={e => setAutoPrototypeOnGen(e.target.checked)} />
+                        <span>◰ Prototype</span>
+                      </label>
                     </div>
                   </>
                 )}
@@ -3154,6 +3295,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
             previewState.onReject?.();
             setPreviewState(null);
           }}
+        />
+      )}
+
+      {/* ── Full Prototype Viewer ── */}
+      {showPrototypeViewer && proto$.prototype && (
+        <FullPrototypePlayer
+          prototype={proto$.prototype}
+          onClose={() => setShowPrototypeViewer(false)}
+          onRegenScreen={(idx, instruction) => proto$.handleRegenScreen(idx, instruction, gateway.sessionId || initialSession?.id)}
         />
       )}
 
@@ -3228,6 +3378,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         />
       )}
 
+      </div>{/* end canvas-column */}
       {/* ── Chat Companion Panel ── */}
       <ChatPanel
         isOpen={showChat}
@@ -3254,6 +3405,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         learnStream={learnStream}
         experimentStream={experimentStream}
         debateStream={debateStream}
+        prototypeStream={prototypeStream}
         focusedNode={focusedNode ? {
           ...focusedNode,
           node: active.rawNodesRef.current.find(n => n.id === focusedNode.node?.id) || focusedNode.node,
@@ -3266,6 +3418,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         pipelineStages={pipelineStages}
         onClosePipeline={() => setPipelineStages(null)}
       />
+      </div>{/* end app-content-row */}
 
       {/* ── Gmail Thread Picker Modal ── */}
       <GmailPicker {...gmail} />
@@ -3399,9 +3552,21 @@ const EMPTY_STATE_CONFIG = {
     desc: (<>Describe your project or goal above and hit <kbd>Enter</kbd> or <kbd>GENERATE</kbd> to build a milestone and dependency tree.</>),
     examples: ['"Launch a mobile app in 3 months"', '"Migrate monolith to microservices"', '"Q1 go-to-market roadmap"'],
   },
+  learn: {
+    icon: '⧫',
+    title: 'LEARN CANVAS',
+    desc: (<>Type a topic above and hit <kbd>Enter</kbd> or <kbd>GENERATE</kbd> to build a learning tree with concepts and prerequisites.</>),
+    examples: ['"How neural networks work"', '"Rust ownership and borrowing"', '"Distributed systems fundamentals"'],
+  },
+  resume: {
+    icon: '◎',
+    title: 'RESUME CANVAS',
+    desc: (<>Paste a job description above and hit <kbd>Enter</kbd> or <kbd>GENERATE</kbd> to build a tailored resume analysis.</>),
+    examples: ['"Senior frontend engineer at Stripe"', '"Product manager role at a Series B startup"', '"ML engineer job description"'],
+  },
 };
 
-function IdeaEmptyState({ onMemoryClick, mode }) {
+function IdeaEmptyState({ mode, onExampleClick }) {
   const cfg = EMPTY_STATE_CONFIG[mode] || EMPTY_STATE_CONFIG.idea;
   return (
     <div className="empty-state">
@@ -3411,14 +3576,9 @@ function IdeaEmptyState({ onMemoryClick, mode }) {
       <div className="empty-examples">
         <span className="examples-label">try:</span>
         {cfg.examples.map((ex) => (
-          <span key={ex} className="example-chip">{ex}</span>
+          <span key={ex} className="example-chip" onClick={() => onExampleClick && onExampleClick(ex.replace(/^"|"$/g, ''))}>{ex}</span>
         ))}
       </div>
-      {onMemoryClick && (
-        <button className="btn btn-icon" style={{ marginTop: 16 }} onClick={onMemoryClick}>
-          ◈ VIEW YOUR THINKING PATTERNS
-        </button>
-      )}
     </div>
   );
 }

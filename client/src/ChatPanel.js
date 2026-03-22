@@ -8,6 +8,7 @@ import LearnCard from './chat/LearnCard';
 import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
 import DebateCard from './chat/DebateCard';
+import PrototypeCard from './chat/PrototypeCard';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -209,7 +210,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -441,6 +442,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             <PortfolioCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'experiment_card' ? (
             <ExperimentCard key={i} state={msg.state} onAction={onCardButtonClick} />
+          ) : msg.type === 'debate_card' ? (
+            <DebateCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'action_card' ? (
             <div key={i} className="chat-action-card">
               <div className="chat-action-card-header">
@@ -603,6 +606,11 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         {/* ── Live Experiment Stream ── */}
         {experimentStream && (
           <ExperimentCard state={experimentStream} onAction={onCardButtonClick} />
+        )}
+
+        {/* ── Live Prototype Build Stream ── */}
+        {prototypeStream && (
+          <PrototypeCard state={prototypeStream} onAction={onCardButtonClick} />
         )}
 
         {/* ── Node Focus Card (sticky) ── */}

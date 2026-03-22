@@ -62,6 +62,7 @@ const { handleDebateCritique, handleDebateRebut, handleDebateFinalize, handleExp
 const { handleScoreNodes, handleExtractTemplate, handleAnalyzeCodebase, handleReflect, handleCritique } = require('./engine/analyze');
 const { handleChat } = require('./engine/chat');
 const { handleMockup, handleResumeChanges, handleExportGithub, handleFetchUrl, handleCrawlSite } = require('./engine/specialty');
+const { handlePrototypeBuild, handlePrototypeRegenScreen } = require('./engine/prototype');
 
 // ── Auto-refine + Portfolio engines ──────────────────────────
 const { handleRefineCritique, handleRefineStrengthen, handleRefineScore } = require('./engine/refine');
@@ -182,6 +183,8 @@ app.post('/api/merge-nodes', generationLimit, (req, res) => handleMergeNodes(cli
 
 // Specialty
 app.post('/api/mockup',            (req, res) => handleMockup(client, req, res));
+app.post('/api/prototype/build',   generationLimit, (req, res) => handlePrototypeBuild(client, req, res));
+app.post('/api/prototype/regen-screen', (req, res) => handlePrototypeRegenScreen(client, req, res));
 app.post('/api/resume/changes',    (req, res) => handleResumeChanges(client, req, res));
 app.post('/api/export/github',     (req, res) => handleExportGithub(client, req, res));
 
@@ -432,6 +435,18 @@ app.get('/api/sessions/:id', async (req, res) => {
 app.delete('/api/sessions/:id', async (req, res) => {
   try {
     await sessions.deleteSession(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Prototype persistence ─────────────────────────────────────
+app.put('/api/sessions/:id/prototype', async (req, res) => {
+  try {
+    const { prototype } = req.body;
+    if (!prototype) return res.status(400).json({ error: 'prototype is required' });
+    await sessions.updateSession(req.params.id, { prototype });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

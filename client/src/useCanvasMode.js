@@ -52,14 +52,22 @@ export function readVersions(ideaKey) {
 }
 
 // ── Node builder ──────────────────────────────────────────────
-export function buildFlowNode(raw) {
+export function buildFlowNode(raw, existingIds) {
   // Normalize: support both parentId (legacy) and parentIds (brain architecture)
   const parentIds = raw.parentIds || (raw.parentId ? [raw.parentId] : []);
   // Gemini sometimes uses alternate field names — normalize gracefully
   const label = raw.label || raw.title || raw.name || '';
   const reasoning = raw.reasoning || raw.description || raw.content || raw.explanation || '';
+
+  // Ensure unique ID — AI can produce duplicate IDs across rounds (e.g. syn_1)
+  let nodeId = raw.id;
+  if (existingIds && existingIds.has(nodeId)) {
+    const suffix = '_' + Date.now().toString(36).slice(-4);
+    nodeId = nodeId + suffix;
+  }
+
   return {
-    id: raw.id,
+    id: nodeId,
     type: 'ideaNode',
     position: { x: 0, y: 0 },
     data: {
@@ -75,6 +83,28 @@ export function buildFlowNode(raw) {
       loopId: raw.loopId || null,
     },
   };
+}
+
+// Deduplicate nodes by ID — keeps last occurrence, remaps parentIds
+export function deduplicateNodes(nodes) {
+  const seen = new Map();
+  const idRemap = new Map();
+  const result = [];
+
+  for (const node of nodes) {
+    if (seen.has(node.id)) {
+      // Generate a new unique ID for the duplicate
+      const newId = node.id + '_' + Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(-2);
+      idRemap.set(node.id + ':' + seen.get(node.id), newId);
+      const remapped = { ...node, id: newId, data: { ...node.data, nodeId: newId } };
+      result.push(remapped);
+    } else {
+      seen.set(node.id, result.length);
+      result.push(node);
+    }
+  }
+
+  return result;
 }
 
 // ── Shared SSE reader ─────────────────────────────────────────
@@ -185,7 +215,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
   }, [storageKey]);
 
   // ── Save session helper ───────────────────────────────────
-  const saveSession = useCallback((labelValue, rawNodes) => {
+  const saveSession = useCallback((labelValue, rawNodes, mode) => {
     const sessions = readSessions(storageKey);
     const normalizedLabel = (labelValue || '').toLowerCase().trim();
 
@@ -201,6 +231,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
       rawNodes,
       timestamp: Date.now(),
       nodeCount: rawNodes.length,
+      ...(mode ? { mode } : {}),
     };
 
     let updated;
@@ -219,11 +250,11 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
 
   // ── Auto-save trigger (called by parent with current label) ──
   // Returns a function the parent can call when it wants auto-save
-  const triggerAutoSave = useCallback((labelValue) => {
+  const triggerAutoSave = useCallback((labelValue, mode) => {
     if (!rawNodesRef.current.length || !labelValue?.trim()) return;
     clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
-      saveSession(labelValue, rawNodesRef.current);
+      saveSession(labelValue, rawNodesRef.current, mode);
     }, 500);
   }, [saveSession]);
 
@@ -252,14 +283,16 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
 
   // ── Load/Delete session handlers ──────────────────────────
   const handleLoadSession = useCallback((session, onLabelUpdate) => {
-    rawNodesRef.current = session.rawNodes;
+    // Deduplicate nodes — AI can produce duplicate IDs across rounds
+    const dedupedNodes = deduplicateNodes(session.rawNodes || []);
+    rawNodesRef.current = dedupedNodes;
     drillStackRef.current = [];
     setDrillStack([]);
-    setNodeCount(session.rawNodes.length);
+    setNodeCount(dedupedNodes.length);
     setSelectedNode(null);
     setShowLoadModal(false);
     setShowResumeBanner(false);
-    applyLayout(session.rawNodes, []);
+    applyLayout(dedupedNodes, []);
     if (onLabelUpdate) onLabelUpdate(session.label || session[sessionLabel] || '');
   }, [applyLayout, sessionLabel]);
 
@@ -270,9 +303,9 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
     setSavedSessions(updated);
   }, [storageKey]);
 
-  const handleManualSave = useCallback((labelValue) => {
+  const handleManualSave = useCallback((labelValue, mode) => {
     if (rawNodesRef.current.length && labelValue?.trim()) {
-      saveSession(labelValue, rawNodesRef.current);
+      saveSession(labelValue, rawNodesRef.current, mode);
     }
   }, [saveSession]);
 

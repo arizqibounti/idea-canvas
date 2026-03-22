@@ -40,7 +40,7 @@ function CritiqueChip({ critique }) {
   );
 }
 
-function RoundSummary({ round, expanded, onToggle }) {
+function RoundSummary({ round, expanded, onToggle, onAction }) {
   const verdictColor = round.verdict === 'YES' ? '#51cf66' : '#ff4757';
   return (
     <div className="debate-card-round">
@@ -69,7 +69,14 @@ function RoundSummary({ round, expanded, onToggle }) {
             <div className="debate-card-section">
               <div className="debate-card-section-label">💡 Suggestions</div>
               {round.suggestions.map((s, i) => (
-                <div key={i} className="debate-card-suggestion">{s}</div>
+                <div key={i} className="debate-card-suggestion">
+                  <span className="debate-suggestion-text">{s}</span>
+                  <button
+                    className="debate-suggestion-add"
+                    title="Add to canvas as nodes"
+                    onClick={() => onAction?.({ actionType: 'expandSuggestion', suggestion: s })}
+                  >+</button>
+                </div>
               ))}
             </div>
           )}
@@ -132,6 +139,7 @@ export default function DebateCard({ state, onAction }) {
               round={r}
               expanded={expandedRound === i || (i === rounds.length - 1 && isActive)}
               onToggle={() => setExpandedRound(expandedRound === i ? null : i)}
+              onAction={onAction}
             />
           ))}
         </div>

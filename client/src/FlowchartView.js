@@ -116,9 +116,13 @@ export default function FlowchartView({
   const [edges, setEdges, onEdgesChange] = useEdgesState(layoutResult.edges);
 
   // Sync layout results into React Flow state
+  // Defer edge update to allow React Flow to measure nodes first
   useEffect(() => {
     setNodes(layoutResult.nodes);
-    setEdges(layoutResult.edges);
+    // Edges must be set after nodes are rendered so React Flow can measure them
+    requestAnimationFrame(() => {
+      setEdges(layoutResult.edges);
+    });
   }, [layoutResult, setNodes, setEdges]);
 
   const miniMapNodeColor = useCallback((node) => {
