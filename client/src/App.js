@@ -650,6 +650,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [dynamicLegendTypes, setDynamicLegendTypes] = useState([]); // ordered types for legend
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
 
+  // ── Thinking Patterns ──────────────────────────────────────
+  const [activePattern, setActivePattern] = useState(null);        // pattern definition (from _meta)
+  const [patternFramework, setPatternFramework] = useState(null);  // resolved framework metadata
+
   // ── Mode: derived ─────────────────────────────────────────
   // displayMode drives the tab highlight + placeholder + icon
   // activeMode collapses all non-codebase modes to 'idea' for canvas routing
@@ -991,8 +995,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           dynamicConfigRef.current = config;
           dynamicTypesRef.current = nodeData.types || [];
           idea$.dynamicTypesRef.current = nodeData.types || [];
-          setDynamicDomain(nodeData.domain || 'Canvas');
+          setDynamicDomain(nodeData.domainLabel || nodeData.domain || 'Canvas');
           if (yjs) yjs.writeMetaToYjs({ types: nodeData.types, domain: nodeData.domain, idea: idea.trim(), mode: displayMode });
+          // Extended _meta: store thinking pattern + resolved framework
+          if (nodeData.pattern) {
+            setActivePattern(nodeData.pattern);
+          }
+          if (nodeData.framework) {
+            setPatternFramework(nodeData.framework);
+          } else if (nodeData.frameworkSkeleton) {
+            // Minimal skeleton — could resolve server-side later
+            setPatternFramework(nodeData.frameworkSkeleton);
+          }
           return;
         }
         const flowNode = buildFlowNode(nodeData);

@@ -7,6 +7,7 @@ import WorkspaceTab from './WorkspaceTab';
 import MembersTab from './MembersTab';
 import BillingTab from './BillingTab';
 import PromptsTab from './PromptsTab';
+import PatternsTab from './PatternsTab';
 
 const TABS = [
   { id: 'account', label: 'ACCOUNT' },
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'members', label: 'MEMBERS' },
   { id: 'billing', label: 'BILLING' },
   { id: 'prompts', label: 'PROMPTS' },
+  { id: 'patterns', label: 'PATTERNS' },
 ];
 
 export default function SettingsPage({ onClose }) {
@@ -42,6 +44,7 @@ export default function SettingsPage({ onClose }) {
         {activeTab === 'members' && <MembersTab />}
         {activeTab === 'billing' && <BillingTab />}
         {activeTab === 'prompts' && <PromptsTab />}
+        {activeTab === 'patterns' && <PatternsTab />}
       </div>
     </div>
   );

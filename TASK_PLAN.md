@@ -196,6 +196,43 @@ The application is running with all core, meta, and infrastructure features buil
 - [x] Gmail OAuth connect/disconnect component (`GmailConnect.js`)
 - [x] Gmail hook for thread search and picker state (`useGmail.js`)
 
+### Backend — Thinking Patterns System
+- [x] Pattern schema validation + defaults (`server/engine/patternSchema.js`)
+- [x] Pattern store — Firestore/memory CRUD with versioning (`server/gateway/patternStore.js`)
+- [x] Pattern loader — in-memory cache + hot-reload (`server/engine/patternLoader.js`)
+- [x] 4 built-in patterns: adversarial, progressive-refine, portfolio-explore, diffusion (`server/engine/builtinPatterns.js`)
+- [x] Pattern executor — state machine with 9 stage types, branching, looping, fan-out/merge (`server/engine/patternExecutor.js`)
+- [x] Pattern execution handlers — execute, resume, execute-stage, recommend, generate (`server/engine/patternHandler.js`)
+- [x] Pattern CRUD routes — list, get, create, update, revert, delete, seed (`server/routes/patterns.js`)
+- [x] `/api/pattern/execute` — SSE-streamed pattern execution with checkpoint protocol
+- [x] `/api/pattern/resume` — Resume from checkpoint
+- [x] `/api/pattern/execute-stage` — Single stage execution (for admin test runner)
+- [x] `/api/pattern/recommend` — AI-powered pattern recommendation
+- [x] `/api/pattern/generate` — Generate pattern definition from natural language
+
+### Backend — Prompt Admin System
+- [x] Prompt store — Firestore/memory CRUD with versioning + A/B testing (`server/gateway/promptStore.js`)
+- [x] Prompt loader — hot-reload cache with A/B variant selection (`server/engine/promptLoader.js`)
+- [x] Prompt admin routes — list, get, update, revert, A/B config, metrics, seed (`server/routes/prompts.js`)
+- [x] Prompt improvement tools — critique, refine (multi-lens), experiment (3 strategies), chat (`server/routes/promptImprove.js`)
+
+### Backend — Prototype Builder
+- [x] `/api/prototype/build` — Plan → Generate screens → Wire → Polish pipeline (`server/engine/prototype.js`)
+- [x] `/api/prototype/regen-screen` — Regenerate individual screens with instructions
+
+### Frontend — Thinking Patterns
+- [x] Pattern executor hook with SSE consumption (`client/src/usePatternExecutor.js`)
+- [x] PatternsTab admin UI — two-pane editor with stage graph, form-based stage editor, AI-assisted prompts, test runner, version history (`client/src/settings/PatternsTab.js`)
+- [x] PatternGraphView — visual DAG renderer using SVG arrows (`client/src/settings/PatternGraphView.js`)
+- [x] Settings PATTERNS tab integrated into SettingsPage
+- [x] Extended _meta protocol: `pattern` + `frameworkSkeleton` fields in App.js
+- [x] ChatPanel patternFramework fallback for quick actions and personas
+
+### Frontend — Prototype Builder
+- [x] Prototype builder hook (`client/src/usePrototypeBuilder.js`)
+- [x] PrototypeCard inline chat card (`client/src/chat/PrototypeCard.js`)
+- [x] FullPrototypePlayer viewer (`client/src/FullPrototypePlayer.js`)
+
 ### UI/UX Polish
 - [x] Toolbar visual grouping with separator dividers
 - [x] Mode-specific toolbar button labels (CRITIQUE/REVIEW/AUDIT/ADVOCATE/EDITORIAL/RISK for debate; STRATEGIST/COACH/ADVISOR/ANALYST/EDITOR/PLANNER for chat)

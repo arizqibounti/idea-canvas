@@ -210,7 +210,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -387,7 +387,9 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
 
   if (!isOpen) return null;
 
-  const actions = QUICK_ACTIONS[mode] || QUICK_ACTIONS.idea;
+  const actions = patternFramework?.quickActions?.length > 0
+    ? patternFramework.quickActions
+    : (QUICK_ACTIONS[mode] || QUICK_ACTIONS.idea);
   const hasTree = nodes && nodes.length > 0;
 
   return (

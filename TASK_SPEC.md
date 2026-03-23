@@ -169,7 +169,30 @@ An AI-powered structured thinking visualization tool. Enter any input — produc
 - Billing status tracking per user
 - Webhook handling for subscription events
 
-### 28. Enhanced UI/UX
+### 28. Thinking Patterns (Declarative Processing Pipelines)
+- **Pattern Executor**: Declarative stage-graph engine. Define composable processing graphs as JSON — the executor walks the graph, streaming results via SSE with checkpoint pausing.
+- **9 Stage Types**: generate (stream nodes), transform (JSON), score (dimension aggregation), branch (safe conditional routing), loop (iterated body), merge (combine parallel results), filter (prune by score/classify), enrich (research/knowledge injection), fan_out (parallel execution)
+- **4 Built-in Patterns**: Adversarial (GAN-inspired critique loop), Progressive Refine (critique→strengthen→score), Portfolio Exploration (ensemble alternatives), Diffusion (sketch→expand→detail→sharpen→reconstruct)
+- **Admin Pattern Editor**: Settings > PATTERNS tab — visual DAG editor, form-based stage configuration with model selection, AI-assisted prompt writing/improvement, integrated test runner, version history with revert
+- **AI Pattern Generation**: Describe a thinking pattern in natural language → AI generates complete pattern definition
+- **Pattern Recommendation**: AI analyzes user input and recommends the best pattern via `/api/pattern/recommend`
+- **Checkpoint Protocol**: Executor pauses at branch/loop points, emitting `_checkpoint` SSE events for client intervention (continue, stop, skip)
+- **Extended _meta Protocol**: Generation step declares which pattern to use (`"pattern": "adversarial"`) with framework skeleton
+- **Prompt Integration**: Stage prompts reference `promptKey` values in the prompt store, enabling admin editing and A/B testing of individual stage prompts
+
+### 29. Prompt Administration
+- **Prompt Store**: Firestore/memory CRUD for all system prompts with versioned history (keeps last 20)
+- **A/B Testing**: Configure variant text, traffic split, and track metrics (calls, latency, thumbs up/down)
+- **AI Improvement Tools**: Critique (weakness analysis), Refine (multi-lens improvement), Experiment (3 strategy variants + scoring), Chat (iterative prompt engineering)
+- **Hot-Reload**: Admin edits take effect immediately without server restart
+
+### 30. Prototype Builder
+- **Multi-Screen Prototypes**: Plan → Generate screens (parallel) → Wire navigation → Polish interactions
+- **Design Tokens**: Auto-generated color, font, and component inventory from tree analysis
+- **Screen Regen**: Regenerate individual screens with user instructions
+- **Inline PrototypeCard**: Build progress with step indicators, screen tags, and view/stop buttons
+
+### 31. Enhanced UI/UX
 - **Sidebar Navigation**: Session navigation with mode config, date-grouped sessions, import/create flows
 - **Ghost Nodes**: Shimmer-animated placeholder nodes during AI streaming
 - **Undo Stack**: Up to 60 canvas snapshots with Ctrl+Z/Ctrl+Y keyboard support

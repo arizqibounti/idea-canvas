@@ -117,6 +117,15 @@ An AI-powered structured thinking visualization tool that transforms any input �
 - **Billing Status**: Per-user subscription tracking
 - **Webhooks**: Automated subscription event handling
 
+### Thinking patterns (declarative processing pipelines)
+- **Pattern Executor**: Declarative stage-graph engine replacing hardcoded debate/refine/portfolio pipelines. Define composable processing graphs as JSON — the executor walks the graph, streaming results via SSE.
+- **9 Stage Types**: generate (stream nodes), transform (JSON), score (with dimension aggregation), branch (conditional routing), loop, merge (combine parallel results), filter (prune), enrich (research injection), fan_out (parallel execution)
+- **4 Built-in Patterns**: Adversarial (GAN-inspired critique loop), Progressive Refine (critique-strengthen-score), Portfolio Exploration (ensemble alternatives), Diffusion (sketch-expand-detail-sharpen)
+- **Admin Pattern Editor**: Settings > PATTERNS tab — visual DAG editor, form-based stage configuration, AI-assisted prompt writing, test runner, version history
+- **AI Pattern Generation**: Describe a thinking pattern in natural language and the AI generates a complete pattern definition
+- **Checkpoint Protocol**: Executor pauses at branch/loop points, emitting checkpoint events for client intervention
+- **Extended _meta Protocol**: Generation step now declares which pattern to use, enabling dynamic pipeline selection per domain
+
 ### Authentication and persistence
 - **Firebase Authentication**: Google sign-in with landing page for unauthenticated users
 - **Session Dashboard**: Grid view of all saved sessions with node counts, timestamps, and mode badges
@@ -179,7 +188,13 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       │   ├── LearnCard.js         # Comprehension loop quiz card
 │       │   ├── NodeFocusCard.js     # Chat-first node interaction card
 │       │   ├── PortfolioCard.js     # Portfolio alternatives card
+│       │   ├── PrototypeCard.js    # Prototype build progress card
 │       │   └── RefineCard.js        # Refine progress/results card
+│       ├── settings/
+│       │   ├── SettingsPage.js      # Settings container with tab router
+│       │   ├── PromptsTab.js        # Prompt admin (CRUD, A/B test, AI improve)
+│       │   ├── PatternsTab.js       # Thinking pattern editor + test runner
+│       │   └── PatternGraphView.js  # Visual DAG renderer for pattern stages
 │       ├── api.js                   # Auth-aware fetch wrapper (token injection)
 │       ├── exportImage.js           # PNG, SVG, clipboard, interactive HTML export
 │       ├── exportMarkdown.js        # Markdown generation for GitHub export
@@ -189,7 +204,9 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── useMnemonicVideo.js      # Veo 3 mnemonic video generation hook
 │       ├── useExperimentLoop.js     # AutoIdea experiment loop hook
 │       ├── useAutoRefine.js         # Critique→strengthen→score loop hook
+│       ├── usePatternExecutor.js   # Thinking pattern SSE execution hook
 │       ├── usePortfolio.js          # Portfolio generation/scoring hook
+│       ├── usePrototypeBuilder.js  # Prototype builder hook
 │       ├── useNodeTools.js          # Split, merge, ripple delete, slip edit hook
 │       ├── useUndoStack.js          # 60-snapshot undo/redo with Ctrl+Z/Y
 │       ├── useGhostNodes.js         # Shimmer placeholder nodes during streaming
@@ -217,15 +234,29 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │   │   ├── portfolio.js             # Portfolio generation + multi-agent scoring
 │   │   ├── nodeTools.js             # Node split + merge handlers
 │   │   ├── execute.js               # Action execution engine with SSE
-│   │   └── gmail.js                 # Gmail OAuth2 + thread API
+│   │   ├── prototype.js             # Multi-screen prototype builder
+│   │   ├── gmail.js                 # Gmail OAuth2 + thread API
+│   │   ├── patternSchema.js         # Thinking pattern validation + defaults
+│   │   ├── patternExecutor.js       # Pattern state machine (stage graph walker)
+│   │   ├── patternHandler.js        # Pattern execution HTTP handlers
+│   │   ├── patternLoader.js         # Pattern cache + hot-reload
+│   │   ├── builtinPatterns.js       # 4 built-in pattern definitions
+│   │   ├── promptLoader.js          # Prompt cache + A/B test selection
+│   │   └── promptImprove.js         # AI-powered prompt improvement
 │   ├── canvas/
 │   │   ├── engine.js                # A2UI canvas generation
 │   │   └── prompts.js               # Canvas system prompts
+│   ├── routes/
+│   │   ├── prompts.js               # Prompt admin CRUD routes
+│   │   ├── promptImprove.js         # Prompt improvement routes
+│   │   └── patterns.js              # Thinking pattern CRUD routes
 │   ├── gateway/
 │   │   ├── protocol.js              # Gateway WebSocket protocol handler
 │   │   ├── sessions.js              # Firestore session CRUD
 │   │   ├── shares.js                # Firestore share link CRUD
 │   │   ├── usage.js                 # Per-user usage tracking
+│   │   ├── promptStore.js           # Prompt Firestore/memory CRUD + versioning
+│   │   ├── patternStore.js          # Pattern Firestore/memory CRUD + versioning
 │   │   └── websocket.js             # WebSocket server setup
 │   ├── middleware/
 │   │   ├── auth.js                  # Firebase token verification + workspace resolution

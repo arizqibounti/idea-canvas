@@ -10810,3 +10810,97 @@
 .btn-prototype-icon:hover { background: rgba(32,201,151,0.06) !important; }
 .btn-prototype-icon.active-icon { background: rgba(32,201,151,0.1) !important; }
 
+/* ── Thinking Patterns Admin ──────────────────────────────── */
+.patterns-tab { width: 100%; max-width: none; }
+.patterns-layout { display: flex; gap: 0; height: calc(100vh - 180px); margin: -32px; }
+.patterns-sidebar { width: 280px; min-width: 280px; border-right: 1px solid #252535; display: flex; flex-direction: column; overflow-y: auto; }
+.patterns-sidebar-header { padding: 12px; border-bottom: 1px solid #252535; }
+.patterns-sidebar-actions { display: flex; gap: 6px; margin-top: 8px; }
+.patterns-filter { width: 100%; background: #12121e; border: 1px solid #333; border-radius: 6px; padding: 8px 10px; color: #ccc; font-size: 12px; font-family: var(--font-mono); }
+.patterns-item { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.15s; }
+.patterns-item:hover { background: #1a1a2e; }
+.patterns-item--active { background: #1a1a30; border-left: 3px solid #6c63ff; }
+.patterns-item-icon { font-size: 18px; width: 24px; text-align: center; }
+.patterns-item-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.patterns-item-name { font-size: 12px; font-weight: 600; color: #e2e2f0; font-family: var(--font-mono); }
+.patterns-item-desc { font-size: 10px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.patterns-item-badge { font-size: 9px; color: #6c63ff; border: 1px solid #6c63ff; padding: 1px 5px; border-radius: 3px; }
+.patterns-item-version { font-size: 10px; color: #555; }
+.patterns-empty { padding: 24px 16px; color: #555; font-size: 12px; text-align: center; }
+.patterns-editor { flex: 1; overflow-y: auto; padding: 24px; }
+.patterns-editor-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #555; font-size: 14px; }
+.patterns-section { margin-bottom: 24px; border-bottom: 1px solid #1a1a2e; padding-bottom: 20px; }
+.patterns-section-title { font-size: 11px; font-weight: 700; color: #6c63ff; letter-spacing: 1px; margin-bottom: 12px; display: flex; align-items: center; font-family: var(--font-mono); }
+.patterns-meta-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.patterns-meta-row label { font-size: 11px; color: #888; min-width: 80px; padding-top: 6px; font-family: var(--font-mono); }
+.patterns-meta-row input, .patterns-meta-row select { flex: 1; background: #12121e; border: 1px solid #333; border-radius: 4px; padding: 6px 8px; color: #ccc; font-size: 12px; font-family: var(--font-mono); }
+.patterns-textarea-sm { width: 100%; background: #12121e; border: 1px solid #333; border-radius: 4px; padding: 8px; color: #ccc; font-size: 11px; font-family: var(--font-mono); resize: vertical; }
+
+/* Stage graph */
+.patterns-graph { position: relative; min-height: 200px; background: #0a0a14; border: 1px solid #252535; border-radius: 8px; padding: 20px; overflow: auto; }
+.patterns-graph-empty { padding: 40px; color: #555; text-align: center; }
+.patterns-graph-node { position: absolute; background: #151520; border: 1px solid #333; border-radius: 6px; display: flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
+.patterns-graph-node:hover { border-color: #6c63ff; }
+.patterns-graph-node--active { border-color: #6c63ff !important; box-shadow: 0 0 12px rgba(108,99,255,0.3); }
+.patterns-graph-node-icon { font-size: 16px; }
+.patterns-graph-node-name { font-size: 11px; color: #e2e2f0; font-weight: 600; font-family: var(--font-mono); }
+.patterns-graph-node-model { font-size: 9px; color: #555; margin-left: auto; }
+
+/* Stage cards */
+.patterns-stage-card { border: 1px solid #252535; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+.patterns-stage-card--open { border-color: #6c63ff; }
+.patterns-stage-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: #12121e; }
+.patterns-stage-header:hover { background: #1a1a2e; }
+.patterns-stage-type-badge { font-size: 9px; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: 700; text-transform: uppercase; }
+.patterns-stage-name { font-size: 12px; color: #e2e2f0; font-weight: 600; font-family: var(--font-mono); }
+.patterns-stage-model { font-size: 10px; color: #555; margin-left: auto; }
+.patterns-stage-terminal { font-size: 9px; color: #22c55e; border: 1px solid #22c55e; padding: 1px 4px; border-radius: 3px; }
+.patterns-stage-toggle { font-size: 14px; color: #555; margin-left: 8px; }
+.patterns-stage-body { padding: 12px; background: #0d0d18; border-top: 1px solid #252535; }
+.patterns-stage-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.patterns-stage-row label { font-size: 11px; color: #888; min-width: 80px; font-family: var(--font-mono); }
+.patterns-stage-row input, .patterns-stage-row select { flex: 1; background: #12121e; border: 1px solid #333; border-radius: 4px; padding: 5px 8px; color: #ccc; font-size: 11px; font-family: var(--font-mono); }
+.patterns-stage-textarea { width: 100%; background: #0a0a14; border: 1px solid #333; border-radius: 4px; padding: 8px; color: #b0b0c8; font-size: 11px; font-family: var(--font-mono); resize: vertical; }
+.patterns-stage-prompt-actions { margin-left: auto; display: flex; gap: 4px; }
+
+/* Version history */
+.patterns-versions { display: flex; flex-direction: column; gap: 4px; }
+.patterns-version-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid #1a1a2e; font-size: 11px; }
+.patterns-version-num { color: #6c63ff; font-weight: 700; min-width: 30px; font-family: var(--font-mono); }
+.patterns-version-date { color: #555; min-width: 80px; }
+.patterns-version-note { color: #888; flex: 1; }
+
+/* Test runner */
+.patterns-test-input { display: flex; gap: 8px; align-items: flex-start; }
+.patterns-test-input textarea { flex: 1; background: #12121e; border: 1px solid #333; border-radius: 4px; padding: 8px; color: #ccc; font-size: 12px; font-family: var(--font-mono); resize: vertical; }
+.patterns-test-results { margin-top: 12px; max-height: 300px; overflow-y: auto; background: #0a0a14; border: 1px solid #252535; border-radius: 6px; padding: 8px; }
+.patterns-test-event { padding: 3px 0; font-size: 11px; font-family: var(--font-mono); }
+.patterns-test-progress { color: #6c63ff; }
+.patterns-test-result { color: #22c55e; }
+.patterns-test-checkpoint { color: #f59e0b; }
+.patterns-test-complete { color: #20c997; font-weight: 700; }
+.patterns-test-error { color: #ff4757; }
+.patterns-test-node { color: #888; }
+
+/* Save bar */
+.patterns-save-bar { display: flex; gap: 8px; align-items: center; padding: 16px 0; border-top: 1px solid #252535; margin-top: 16px; position: sticky; bottom: 0; background: #0d0d12; }
+.patterns-save-note { flex: 1; background: #12121e; border: 1px solid #333; border-radius: 4px; padding: 8px; color: #ccc; font-size: 12px; font-family: var(--font-mono); }
+
+/* Buttons */
+.patterns-btn { background: transparent; border: 1px solid #555; color: #ccc; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 11px; font-family: var(--font-mono); font-weight: 600; transition: all 0.15s; }
+.patterns-btn:hover { border-color: #6c63ff; color: #fff; }
+.patterns-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.patterns-btn--primary { background: #6c63ff; border-color: #6c63ff; color: #fff; }
+.patterns-btn--primary:hover { background: #5a52e0; }
+.patterns-btn--danger { border-color: #ff4757; color: #ff4757; }
+.patterns-btn--danger:hover { background: rgba(255,71,87,0.1); }
+.patterns-btn--sm { padding: 4px 10px; font-size: 10px; }
+.patterns-btn--xs { padding: 2px 8px; font-size: 9px; }
+
+/* Generate modal */
+.patterns-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.patterns-modal { background: #151520; border: 1px solid #333; border-radius: 12px; padding: 24px; max-width: 560px; width: 90%; }
+.patterns-modal h3 { margin: 0 0 8px; color: #e2e2f0; font-size: 16px; font-family: var(--font-mono); }
+.patterns-modal-textarea { width: 100%; background: #0a0a14; border: 1px solid #333; border-radius: 6px; padding: 12px; color: #ccc; font-size: 12px; font-family: var(--font-mono); resize: vertical; margin: 12px 0; }
+.patterns-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+

@@ -108,6 +108,15 @@ app.use('/api', requireAuth);
 app.use('/api/prompt-improve', require('./routes/promptImprove'));
 app.use('/api/prompts', require('./routes/prompts'));
 
+// ── Pattern Admin API + Execution ──────────────────────────────
+app.use('/api/patterns', require('./routes/patterns'));
+const { handlePatternExecute, handlePatternResume, handlePatternExecuteStage, handlePatternRecommend, handlePatternGenerate } = require('./engine/patternHandler');
+app.post('/api/pattern/execute', generationLimit, (req, res) => handlePatternExecute(client, req, res));
+app.post('/api/pattern/resume', (req, res) => handlePatternResume(client, req, res));
+app.post('/api/pattern/execute-stage', (req, res) => handlePatternExecuteStage(client, req, res));
+app.post('/api/pattern/recommend', (req, res) => handlePatternRecommend(client, req, res));
+app.post('/api/pattern/generate', generationLimit, (req, res) => handlePatternGenerate(client, req, res));
+
 // ── Usage endpoint ──────────────────────────────────────────────
 app.get('/api/usage', async (req, res) => {
   try {
@@ -503,6 +512,9 @@ const server = app.listen(PORT, async () => {
   // Initialize prompt loader (seeds from legacy on first run, builds cache)
   const promptLoader = require('./engine/promptLoader');
   promptLoader.init().catch(err => console.error('Prompt loader init error:', err));
+  // Initialize pattern loader (seeds built-in patterns on first run)
+  const patternLoader = require('./engine/patternLoader');
+  patternLoader.init().catch(err => console.error('Pattern loader init error:', err));
   // Initialize all registered integrations (restore sessions, validate config)
   await integrationRegistry.initAll().catch(err => console.error('Integration init error:', err));
 });
