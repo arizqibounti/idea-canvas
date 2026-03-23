@@ -558,17 +558,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setNodeCount: idea$.setNodeCount,
   });
 
-  // ── Pattern Executor hook ────────────────────────────────────
-  const patternExec$ = usePatternExecutor({
-    rawNodesRef: idea$.rawNodesRef,
-    applyLayout: idea$.applyLayout,
-    drillStackRef: idea$.drillStackRef,
-    dynamicTypesRef: idea$.dynamicTypesRef,
-    dynamicConfigRef,
-    setNodeCount: idea$.setNodeCount,
-    buildDynamicConfigFn: buildDynamicConfig,
-  });
-
   const mnemonic$ = useMnemonicVideo();
   const proto$ = usePrototypeBuilder();
   const [videoModalNodeId, setVideoModalNodeId] = useState(null);
@@ -665,6 +654,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Thinking Patterns ──────────────────────────────────────
   const [activePattern, setActivePattern] = useState(null);        // pattern definition (from _meta)
   const [patternFramework, setPatternFramework] = useState(null);  // resolved framework metadata
+
+  // ── Pattern Executor hook (must be after dynamicConfigRef declaration) ──
+  const patternExec$ = usePatternExecutor({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    dynamicTypesRef: idea$.dynamicTypesRef,
+    dynamicConfigRef,
+    setNodeCount: idea$.setNodeCount,
+    buildDynamicConfigFn: buildDynamicConfig,
+  });
 
   // ── Mode: derived ─────────────────────────────────────────
   // displayMode drives the tab highlight + placeholder + icon
