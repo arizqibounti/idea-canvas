@@ -210,7 +210,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -581,6 +581,25 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             </div>
             <div className="exec-stream-body" ref={execStreamRef}>
               <pre className="exec-stream-output">{executionStream.text || 'Starting Claude Code…'}{!executionStream.done && <span className="chat-cursor">▊</span>}</pre>
+            </div>
+          </div>
+        )}
+
+        {/* ── Live Pattern Execution ── */}
+        {patternExecState && (
+          <div className="chat-card" style={{ borderColor: '#6c63ff' }}>
+            <div className="chat-card-header" style={{ color: '#6c63ff' }}>
+              <span>◈ PATTERN EXECUTING</span>
+              <button className="chat-card-stop" onClick={onStopPattern}>STOP</button>
+            </div>
+            <div className="chat-card-body" style={{ fontSize: 12, color: '#888' }}>
+              <div>Stage: <strong style={{ color: '#e2e2f0' }}>{patternExecState.stage || '...'}</strong></div>
+              {patternExecState.round > 0 && <div>Round: {patternExecState.round}</div>}
+              {patternExecState.checkpoint && (
+                <div style={{ marginTop: 8, color: '#f59e0b' }}>
+                  ⑂ Checkpoint reached — {patternExecState.checkpoint.options?.join(' / ')}
+                </div>
+              )}
             </div>
           </div>
         )}

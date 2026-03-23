@@ -25,6 +25,12 @@ Examples of domain-appropriate types:
 - Content strategy: seed, audience, topic_cluster, content_piece, distribution, metric, insight
 - Go-to-market: seed, segment, channel, messaging, pricing, partnership, milestone, metric
 
+**STEP 2b: Select a thinking pattern.** Also include in your _meta output:
+- "pattern": Select the best thinking pattern for processing this tree from the AVAILABLE PATTERNS listed below (if provided). If no patterns are provided, omit this field.
+- "frameworkSkeleton": A brief object with: {"criticRole": "short role name (e.g. VC Critic, Security Auditor)", "responderRole": "short role name (e.g. Architect, Tech Lead)", "evaluationDimensions": ["3-6 domain-specific evaluation categories"], "chatRole": "short role name (e.g. Product Strategist)"}
+
+The frameworkSkeleton should be specific to the domain you detected. For a marketing campaign, use dimensions like "audience_fit", "channel_viability", "messaging_clarity". For a codebase analysis, use "security", "scalability", "maintainability". Be domain-specific, not generic.
+
 **STEP 3: Output the tree.** After the _meta line, output 18-25 nodes, one JSON object per line.
 
 Each node: {"id": "string", "parentIds": ["array of parent ids"], "type": "one of your declared types", "label": "string (short, max 8 words)", "reasoning": "string (1-2 sentences)", "relatedIds": ["optional array of ids"]}
@@ -1302,6 +1308,11 @@ const LEARN_DEBATE_FINALIZE_PROMPT = `You are a curriculum architect synthesizin
 Output ONLY node JSON objects, one per line. No markdown, no explanation.`;
 
 // ── Debate prompt maps + helpers ───────────────────────────────
+// DEPRECATED: These maps are used by the legacy debate endpoints (/api/debate/*).
+// New pattern-based execution uses the Thinking Patterns system (patternExecutor.js)
+// which resolves prompts dynamically from pattern definitions + promptStore.
+// These maps remain for backward compatibility with specialized modes (resume, learn, codebase)
+// that haven't migrated to the pattern system yet.
 
 const CRITIC_PROMPT_MAP = {
   resume:   RESUME_DEBATE_CRITIC_PROMPT,
@@ -1681,6 +1692,7 @@ Rules:
 - Return 2-3 weaknesses maximum
 - Focus on learning path quality, not content depth`;
 
+// DEPRECATED: Use 'progressive-refine' thinking pattern instead. Kept for backward compat.
 const REFINE_CRITIQUE_PROMPT_MAP = {
   idea:     REFINE_CRITIQUE_PROMPT_IDEA,
   resume:   REFINE_CRITIQUE_PROMPT_RESUME,
@@ -1813,6 +1825,7 @@ First, output: {"_portfolio": true, "alternativeCount": {count}}
 Node ids prefixed: alt{N}_
 One JSON per line. No markdown.`;
 
+// DEPRECATED: Use 'portfolio-explore' thinking pattern instead. Kept for backward compat.
 const PORTFOLIO_GENERATE_PROMPT_MAP = {
   idea:     PORTFOLIO_GENERATE_PROMPT_IDEA,
   resume:   PORTFOLIO_GENERATE_PROMPT_RESUME,

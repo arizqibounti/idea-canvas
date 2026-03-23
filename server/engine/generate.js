@@ -24,6 +24,7 @@ const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils
 const { saveNodes, getKnowledgeContext } = require('../gateway/knowledge');
 const integrationRegistry = require('../integrations/registry');
 const ai = require('../ai/providers');
+const patternLoader = require('./patternLoader');
 
 // ── POST /api/generate ────────────────────────────────────────
 
@@ -52,10 +53,21 @@ async function handleGenerate(_client, req, res) {
   }
 
   // Select system prompt based on the active mode
-  const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
+  let systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
     : mode === 'causal' ? CAUSAL_SYSTEM_PROMPT
     : mode === 'learn' ? LEARN_CURRICULUM_PROMPT
     : SYSTEM_PROMPT;
+
+  // Inject available thinking patterns into the system prompt for pattern selection
+  if (systemPrompt === SYSTEM_PROMPT) {
+    const patternHints = patternLoader.getAutoSelectHints();
+    if (patternHints.length > 0) {
+      const patternList = patternHints.map(p =>
+        `- "${p.id}": ${p.name} — ${p.description}. Best for: ${p.keywords.slice(0, 5).join(', ')}`
+      ).join('\n');
+      systemPrompt += `\n\nAVAILABLE THINKING PATTERNS (select the best one for _meta.pattern):\n${patternList}`;
+    }
+  }
 
   // userContent can be a string or an array of content blocks (for PDF)
   let userContent;

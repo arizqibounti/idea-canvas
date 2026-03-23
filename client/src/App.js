@@ -30,6 +30,7 @@ import { useAutoRefine } from './useAutoRefine';
 import { usePortfolio } from './usePortfolio';
 import { useLearnLoop } from './useLearnLoop';
 import { useExperimentLoop } from './useExperimentLoop';
+import { usePatternExecutor } from './usePatternExecutor';
 import { useMnemonicVideo } from './useMnemonicVideo';
 import PipelineOverlay from './PipelineOverlay';
 import VideoModal from './VideoModal';
@@ -557,6 +558,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setNodeCount: idea$.setNodeCount,
   });
 
+  // ── Pattern Executor hook ────────────────────────────────────
+  const patternExec$ = usePatternExecutor({
+    rawNodesRef: idea$.rawNodesRef,
+    applyLayout: idea$.applyLayout,
+    drillStackRef: idea$.drillStackRef,
+    dynamicTypesRef: idea$.dynamicTypesRef,
+    dynamicConfigRef,
+    setNodeCount: idea$.setNodeCount,
+    buildDynamicConfigFn: buildDynamicConfig,
+  });
+
   const mnemonic$ = useMnemonicVideo();
   const proto$ = usePrototypeBuilder();
   const [videoModalNodeId, setVideoModalNodeId] = useState(null);
@@ -790,7 +802,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   });
 
   // ── View Mode ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('tree'); // 'tree' | 'flowchart' | '3d'
+  const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d'
   const is3D = viewMode === '3d'; // backward compat
 
   // ── 2D Temporal Navigation ──────────────────────────────
@@ -2724,16 +2736,21 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               <button
                 className={`btn btn-icon btn-debate-icon ${debateStream ? 'active-icon' : ''}`}
                 onClick={() => {
-                  if (debateStream) {
+                  if (debateStream || patternExec$.isExecuting) {
                     // Already running — just open chat to show it
+                    setShowChat(true);
+                  } else if (activePattern) {
+                    // Use thinking pattern executor
+                    const nodes = active.rawNodesRef.current;
+                    patternExec$.execute(activePattern, ideaText, nodes, displayMode, { domain: dynamicDomain });
                     setShowChat(true);
                   } else {
                     startDebateInChat();
                   }
                 }}
-                title={(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).tooltip}
+                title={patternFramework?.debateLabels?.startLabel || (DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).tooltip}
               >
-                {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).icon} {(DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).label}
+                {patternFramework?.debateLabels?.panelIcon || (DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).icon} {patternFramework?.debateLabels?.startLabel || (DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).label}
               </button>
               <button
                 className={`btn btn-icon btn-chat-icon ${showChat ? 'active-icon' : ''}`}
@@ -3431,6 +3448,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         emailContext={emailContext}
         pipelineStages={pipelineStages}
         onClosePipeline={() => setPipelineStages(null)}
+        patternFramework={patternFramework}
+        patternExecState={patternExec$.isExecuting ? { stage: patternExec$.currentStage, round: patternExec$.currentRound, checkpoint: patternExec$.checkpoint } : null}
+        onStopPattern={() => patternExec$.stop()}
       />
       </div>{/* end app-content-row */}
 
