@@ -274,8 +274,13 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     abortRef.current = controller;
 
     try {
-      const treeContext = serializeTree(nodes);
       const focusContext = buildFocusedSubtree(focusedNode, nodes);
+      // When a node is focused, send focused subtree as primary context
+      // and full tree as secondary background — this ensures the AI
+      // prioritizes the selected node instead of treating the full tree equally.
+      const treeContext = focusContext
+        ? serializeTree(nodes.filter(n => !focusContext.subtree.includes(n.id)))
+        : serializeTree(nodes);
       const res = await authFetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -343,7 +348,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     } finally {
       setIsStreaming(false);
     }
-  }, [messages, nodes, idea, mode, isStreaming, onChatAction]);
+  }, [messages, nodes, idea, mode, isStreaming, onChatAction, focusedNode, emailContext?.formatted]);
 
   const handleStop = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();

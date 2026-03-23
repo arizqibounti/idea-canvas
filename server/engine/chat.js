@@ -20,8 +20,24 @@ function handleChat(_client, req, res) {
   const persona = CHAT_PERSONAS[mode] || CHAT_PERSONAS.idea;
 
   let systemPrompt = persona;
+
+  // When a node is focused, put it FIRST in the prompt so it gets primary attention
+  if (focusedNode) {
+    systemPrompt += `\n\n**ACTIVE FOCUS — The user has selected this specific node on the canvas. Answer about THIS node unless they clearly ask about something else.**
+
+FOCUSED NODE:
+- Type: ${focusedNode.type}
+- Label: "${focusedNode.label}"
+- Reasoning: ${focusedNode.reasoning || '(none)'}
+
+${focusedNode.subtreeCount > 1 ? `This node has ${focusedNode.subtreeCount - 1} descendant(s). Its subtree:\n${focusedNode.subtree}` : 'This node has no children yet.'}
+
+When suggesting actions (debate, refine, expand, drill), scope them to this node. When the user asks a question, assume they're asking about this focused node and its subtree unless they explicitly reference something else.`;
+  }
+
   if (treeContext) {
-    systemPrompt += `\n\nThe user has generated the following thinking tree for their input "${idea || ''}":\n\n${treeContext}\n\nUse this tree as deep context. Reference specific nodes and insights when relevant. Your outputs should be grounded in this analysis.`;
+    const treeLabel = focusedNode ? 'BACKGROUND — The rest of the thinking tree' : `The user has generated the following thinking tree for their input "${idea || ''}"`;
+    systemPrompt += `\n\n${treeLabel}:\n\n${treeContext}\n\n${focusedNode ? 'This is background context. The focused node above takes priority.' : 'Use this tree as deep context. Reference specific nodes and insights when relevant. Your outputs should be grounded in this analysis.'}`;
 
     // Graph interaction instructions
     systemPrompt += `\n\nIMPORTANT — TOOL & GRAPH INTERACTION CAPABILITY:
@@ -85,16 +101,8 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
     }
   }
 
-  if (focusedNode) {
-    systemPrompt += `\n\nFOCUSED NODE — The user is currently looking at this node on the canvas:
-- Type: ${focusedNode.type}
-- Label: "${focusedNode.label}"
-- Reasoning: ${focusedNode.reasoning || '(none)'}
-
-${focusedNode.subtreeCount > 1 ? `This node has ${focusedNode.subtreeCount - 1} descendant(s). Its full subtree:\n${focusedNode.subtree}` : 'This node has no children yet.'}
-
-Prioritize this node and its subtree when answering. If the user's question is ambiguous, assume they're asking about this focused node. When suggesting actions, scope them to this node when appropriate (e.g. drill, expand, debate on this subtree).`;
-  }
+  // focusedNode context is now injected at the TOP of the prompt (before treeContext)
+  // to ensure it gets primary attention from the model.
 
   ai.stream({
     model: 'claude:sonnet',
