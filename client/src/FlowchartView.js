@@ -113,15 +113,16 @@ export default function FlowchartView({
   }, [displayNodes]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutResult.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(layoutResult.edges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  // Sync layout results into React Flow state
-  // Defer edge update to allow React Flow to measure nodes first
+  // Sync layout results — set nodes first, defer edges so RF can measure nodes
   useEffect(() => {
     setNodes(layoutResult.nodes);
-    // Edges must be set after nodes are rendered so React Flow can measure them
+    // Two-frame delay: first frame renders nodes, second frame RF measures them
     requestAnimationFrame(() => {
-      setEdges(layoutResult.edges);
+      requestAnimationFrame(() => {
+        setEdges(layoutResult.edges);
+      });
     });
   }, [layoutResult, setNodes, setEdges]);
 
