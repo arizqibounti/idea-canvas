@@ -1064,6 +1064,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         if (displayMode === 'learn') {
           startLearnInChat(7);
+        } else if (activePattern) {
+          // Use thinking pattern executor when a pattern was declared in _meta
+          const nodes = idea$.rawNodesRef.current;
+          patternExec$.execute(activePattern, idea.trim(), nodes, displayMode, { domain: dynamicDomain });
+          setShowChat(true);
         } else {
           startDebateInChatRef.current?.();
         }
