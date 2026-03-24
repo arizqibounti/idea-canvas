@@ -44,6 +44,8 @@ function newSession(idea, mode, userId, workspaceId) {
     chatMessages: [],
     canvasArtifacts: [],
     surfaces: ['web'],
+    forestId: null,
+    canvasKey: null,
   };
 }
 

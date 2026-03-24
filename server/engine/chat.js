@@ -8,7 +8,7 @@ const ai = require('../ai/providers');
 // ── POST /api/chat ────────────────────────────────────────────
 
 function handleChat(_client, req, res) {
-  const { messages, treeContext, idea, mode, emailThread, focusedNode } = req.body;
+  const { messages, treeContext, idea, mode, emailThread, focusedNode, sessionFileContext } = req.body;
 
   if (!messages || !messages.length) {
     return res.status(400).json({ error: 'messages required' });
@@ -101,8 +101,10 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
     }
   }
 
-  // focusedNode context is now injected at the TOP of the prompt (before treeContext)
-  // to ensure it gets primary attention from the model.
+  // Inject session file context
+  if (sessionFileContext) {
+    systemPrompt += `\n\n${sessionFileContext}`;
+  }
 
   ai.stream({
     model: 'claude:sonnet',

@@ -2037,6 +2037,103 @@ You receive a wired prototype HTML file. Perform these improvements:
 
 Output raw HTML only.`;
 
+// ── Forest-of-Trees Prompts ─────────────────────────────────
+
+const FOREST_DECOMPOSE_PROMPT = `You are a strategic decomposition engine. Given a complex idea or problem, decompose it into 4-6 interconnected thinking canvases.
+
+Each canvas should cover a distinct dimension of the problem. Identify dependencies between canvases (which canvas needs insights from which).
+
+Output a single JSON object with this exact structure:
+{
+  "domain": "brief domain label",
+  "rationale": "1-2 sentences explaining the decomposition logic",
+  "canvases": [
+    {
+      "canvasKey": "snake_case_key",
+      "title": "Human-Readable Title",
+      "description": "2-3 sentences scoping what this canvas covers",
+      "dependencies": ["canvasKey of canvases this depends on"],
+      "sharedContext": ["key concepts this canvas should receive from dependencies"]
+    }
+  ]
+}
+
+Rules:
+- 4-6 canvases. No more, no less.
+- canvasKey must be unique snake_case identifiers.
+- dependencies must reference other canvasKeys in the same list.
+- At least 1-2 canvases should have NO dependencies (they generate first).
+- Avoid circular dependencies.
+- Each canvas should be self-contained enough to generate a meaningful thinking tree on its own.
+- sharedContext lists specific concepts/findings from dependency canvases that should inform this one.
+
+Output ONLY the JSON object. No markdown, no explanation.`;
+
+const FOREST_CANVAS_CONTEXT_TEMPLATE = `
+--- INSIGHTS FROM RELATED CANVASES ---
+The following are key findings from already-completed canvases in this multi-canvas analysis. Use these insights to inform and ground your thinking for "{{CANVAS_TITLE}}". Reference specific findings where relevant, and identify any tensions or synergies.
+
+{{SIBLING_SUMMARIES}}
+--- END RELATED CANVAS CONTEXT ---`;
+
+const FOREST_CROSSREF_PROMPT = `You are a cross-domain analyst. Given summaries of multiple thinking canvases that were generated for the same complex idea, identify meaningful cross-references between nodes in different canvases.
+
+Look for:
+1. **Dependencies**: A node in one canvas depends on a conclusion in another
+2. **Contradictions**: Assumptions in one canvas conflict with findings in another
+3. **Support**: Evidence in one canvas strengthens a claim in another
+4. **Related**: Nodes explore the same concept from different angles
+
+Output a JSON array of cross-references:
+[
+  {
+    "sourceCanvasKey": "canvas_key_1",
+    "sourceNodeId": "node_id_from_canvas_1",
+    "targetCanvasKey": "canvas_key_2",
+    "targetNodeId": "node_id_from_canvas_2",
+    "type": "depends_on|contradicts|supports|related",
+    "label": "Brief description of the connection"
+  }
+]
+
+Rules:
+- Focus on the most meaningful connections (5-15 cross-refs, not exhaustive).
+- Contradictions are the most valuable — always flag them.
+- Use exact node IDs from the summaries.
+- Output ONLY the JSON array.`;
+
+const FOREST_CRITIQUE_PROMPT = `You are a Cross-Domain Strategic Analyst. You have access to multiple thinking canvases that were generated for the same complex idea. Your job is to find problems that only become visible when looking ACROSS canvases.
+
+Focus on:
+1. **Cross-canvas contradictions**: Canvas A assumes X but Canvas B concludes Y
+2. **Missing dependencies**: Canvas A needs something Canvas B doesn't address
+3. **Integration gaps**: Two canvases should connect but don't
+4. **Redundancies**: Same analysis duplicated inefficiently
+5. **Systemic risks**: Problems that emerge from the interaction of multiple dimensions
+
+Output JSON:
+{
+  "verdict": "PASS|FAIL",
+  "overallAssessment": "2-3 sentence summary",
+  "critiques": [
+    {
+      "id": "fc_1",
+      "severity": "critical|major|minor",
+      "type": "contradiction|missing_dependency|integration_gap|redundancy|systemic_risk",
+      "challenge": "Punchy one-line description",
+      "reasoning": "Detailed explanation referencing specific canvases and nodes",
+      "sourceCanvasKey": "canvas_key",
+      "sourceNodeId": "node_id or null",
+      "targetCanvasKey": "related_canvas_key",
+      "targetNodeId": "related_node_id or null"
+    }
+  ],
+  "suggestions": ["Actionable improvements"]
+}
+
+Be specific. Reference exact canvas keys and node IDs. Contradictions are highest priority.
+Output ONLY the JSON object.`;
+
 module.exports = {
   SYSTEM_PROMPT,
   RESUME_SYSTEM_PROMPT,
@@ -2114,4 +2211,9 @@ module.exports = {
   PROTOTYPE_SCREEN_PROMPT,
   PROTOTYPE_WIRE_PROMPT,
   PROTOTYPE_POLISH_PROMPT,
+  // Forest-of-Trees prompts
+  FOREST_DECOMPOSE_PROMPT,
+  FOREST_CANVAS_CONTEXT_TEMPLATE,
+  FOREST_CROSSREF_PROMPT,
+  FOREST_CRITIQUE_PROMPT,
 };

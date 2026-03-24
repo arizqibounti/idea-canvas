@@ -63,6 +63,7 @@ const { handleScoreNodes, handleExtractTemplate, handleAnalyzeCodebase, handleRe
 const { handleChat } = require('./engine/chat');
 const { handleMockup, handleResumeChanges, handleExportGithub, handleFetchUrl, handleCrawlSite } = require('./engine/specialty');
 const { handlePrototypeBuild, handlePrototypeRegenScreen } = require('./engine/prototype');
+const { handleForestDecompose, handleForestGenerateAll, handleForestGenerate, handleForestCritique } = require('./engine/forest');
 
 // ── Auto-refine + Portfolio engines ──────────────────────────
 const { handleRefineCritique, handleRefineStrengthen, handleRefineScore } = require('./engine/refine');
@@ -79,6 +80,7 @@ const { handleCanvasGenerate } = require('./canvas/engine');
 const { initWebSocket } = require('./gateway/websocket');
 const { initYjsWebSocket } = require('./yjs/yjsServer');
 const sessions = require('./gateway/sessions');
+const forestsGw = require('./gateway/forests');
 const shares = require('./gateway/shares');
 const users = require('./gateway/users');
 const workspaces = require('./gateway/workspaces');
@@ -209,6 +211,7 @@ app.post('/api/stop-execution',    (req, res) => { const stopped = stopExecution
 // ── Integration System (pattern: openclaw plugin registry) ───
 // Register integrations, init on start, mount routes.
 require('./integrations/gmail'); // Self-registers with registry
+require('./integrations/claude-code'); // Self-registers with registry
 const integrationRegistry = require('./integrations/registry');
 const { mountIntegrationRoutes } = require('./integrations/routes');
 mountIntegrationRoutes(app);
@@ -450,6 +453,94 @@ app.delete('/api/sessions/:id', async (req, res) => {
   }
 });
 
+// ── Session Files endpoints ───────────────────────────────────
+const sessionFiles = require('./engine/sessionFiles');
+
+// Upload files to a session
+app.post('/api/sessions/:sessionId/files', sessionFiles.upload.array('files', 10), async (req, res) => {
+  try {
+    const results = [];
+    for (const file of (req.files || [])) {
+      const record = await sessionFiles.addSessionFile(req.params.sessionId, file);
+      results.push(record);
+    }
+    res.json({ files: results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List files for a session
+app.get('/api/sessions/:sessionId/files', (req, res) => {
+  const files = sessionFiles.getSessionFiles(req.params.sessionId);
+  res.json({ files: files.map(f => ({ id: f.id, name: f.name, size: f.size, type: f.type, textLength: f.extractedText?.length || 0, uploadedAt: f.uploadedAt })) });
+});
+
+// Remove a file from a session
+app.delete('/api/sessions/:sessionId/files/:fileId', (req, res) => {
+  const removed = sessionFiles.removeSessionFile(req.params.sessionId, req.params.fileId);
+  res.json({ ok: removed });
+});
+
+// Get file context for injection
+app.get('/api/sessions/:sessionId/files/context', (req, res) => {
+  const context = sessionFiles.buildFileContext(req.params.sessionId);
+  res.json({ context });
+});
+
+// ── Forest REST endpoints ─────────────────────────────────────
+app.get('/api/forests', async (req, res) => {
+  try {
+    const list = await forestsGw.listForests(req.user?.uid, parseInt(req.query.limit) || 20);
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/forests/:id', async (req, res) => {
+  try {
+    const forest = await forestsGw.loadForest(req.params.id);
+    if (!forest) return res.status(404).json({ error: 'Forest not found' });
+    res.json(forest);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/forest/decompose', async (req, res) => {
+  try {
+    await handleForestDecompose(client, req, res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/forest/generate-all', async (req, res) => {
+  try {
+    await handleForestGenerateAll(client, req, res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/forest/critique', async (req, res) => {
+  try {
+    await handleForestCritique(client, req, res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/forests/:id', async (req, res) => {
+  try {
+    await forestsGw.deleteForest(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Prototype persistence ─────────────────────────────────────
 app.put('/api/sessions/:id/prototype', async (req, res) => {
   try {
@@ -540,6 +631,11 @@ const engineHandlers = {
   handlePortfolioGenerate,
   handlePortfolioScore,
   handleExecuteAction,
+  // Forest-of-Trees
+  handleForestDecompose,
+  handleForestGenerateAll,
+  handleForestGenerate,
+  handleForestCritique,
 };
 
 initWebSocket(server, client, engineHandlers, gemini);

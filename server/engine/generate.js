@@ -154,6 +154,18 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
     }
   }
 
+  // Inject Claude Code context if provided
+  const { claudeCodeContext } = req.body;
+  if (claudeCodeContext && typeof userContent === 'string') {
+    userContent += `\n\n${claudeCodeContext}`;
+  }
+
+  // Inject session file context if provided
+  const { sessionFileContext } = req.body;
+  if (sessionFileContext && typeof userContent === 'string') {
+    userContent += `\n\n${sessionFileContext}`;
+  }
+
   try {
     // When a PDF document block is included, pass the beta header for PDF support
     const requestOptions = resumePdf
@@ -209,6 +221,11 @@ async function handleGenerateMulti(_client, req, res) {
   if (emailThread) {
     baseUserContent += `\n\nEMAIL THREAD CONTEXT (the user connected this email for reference — incorporate relevant details into your analysis):\n\n${emailThread}`;
   }
+
+  // Inject file/claude context
+  const { claudeCodeContext: ccCtx, sessionFileContext: sfCtx } = req.body;
+  if (ccCtx) baseUserContent += `\n\n${ccCtx}`;
+  if (sfCtx) baseUserContent += `\n\n${sfCtx}`;
 
   try {
     // Phase 1: Run 3 lenses in parallel
@@ -340,6 +357,11 @@ async function handleGenerateResearch(_client, req, res) {
     if (emailThread) {
       userContent += `\n\nEMAIL THREAD CONTEXT (the user connected this email for reference — incorporate relevant details into your analysis):\n\n${emailThread}`;
     }
+
+    // Inject Claude Code context if provided
+    const { claudeCodeContext, sessionFileContext } = req.body;
+    if (claudeCodeContext) userContent += `\n\n${claudeCodeContext}`;
+    if (sessionFileContext) userContent += `\n\n${sessionFileContext}`;
 
     // Zettelkasten: inject knowledge context from past sessions
     const userId = req.user?.uid || 'local';

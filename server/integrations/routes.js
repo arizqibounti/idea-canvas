@@ -176,6 +176,53 @@ function mountIntegrationRoutes(app) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ── Claude Code specific routes ──────────────────────────────
+
+  app.get('/api/integrations/claude-code/projects', (req, res) => {
+    const integration = registry.get('claude-code');
+    if (!integration) return res.json([]);
+    try {
+      res.json(integration.api.listProjects());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/integrations/claude-code/sessions', (req, res) => {
+    const integration = registry.get('claude-code');
+    if (!integration) return res.json([]);
+    try {
+      const { project } = req.query;
+      res.json(integration.api.listSessions(project));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/integrations/claude-code/context', (req, res) => {
+    const integration = registry.get('claude-code');
+    if (!integration) return res.status(404).json({ error: 'Claude Code integration not available' });
+    try {
+      const { projectPath, sessionFilePaths, includeMemory, includePlans } = req.body;
+      const context = integration.api.buildContext({ projectPath, sessionFilePaths, includeMemory, includePlans });
+      res.json({ context, sessionCount: sessionFilePaths?.length || 0 });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/integrations/claude-ai/import', (req, res) => {
+    const integration = registry.get('claude-code');
+    if (!integration) return res.status(404).json({ error: 'Claude Code integration not available' });
+    try {
+      const { conversationJson } = req.body;
+      const result = integration.api.parseClaudeAiExport(conversationJson);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 module.exports = { mountIntegrationRoutes };

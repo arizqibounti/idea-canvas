@@ -204,6 +204,19 @@ async function handleMessage(ws, client, raw) {
           ws.send(serverMsg(SERVER_TYPES.ERROR, requestId, { message: 'Canvas engine not available' }));
         }
         break;
+      // ── Forest-of-Trees ──
+      case 'forest:decompose':
+        await engine.handleForestDecompose(client, fakeReq, fakeRes);
+        break;
+      case 'forest:generate-all':
+        await engine.handleForestGenerateAll(client, fakeReq, fakeRes);
+        break;
+      case 'forest:generate':
+        await engine.handleForestGenerate(client, fakeReq, fakeRes);
+        break;
+      case 'forest:critique':
+        await engine.handleForestCritique(client, fakeReq, fakeRes);
+        break;
       default:
         ws.send(serverMsg(SERVER_TYPES.ERROR, requestId, { message: `Unknown type: ${msg.type}` }));
     }
