@@ -14,7 +14,8 @@ import Graph3D from './Graph3D';
 
 import { NODE_TYPES_CONFIG, buildDynamicConfig, getNodeConfig } from './nodeConfig';
 import { MODES, detectMode } from './modeConfig';
-import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions } from './useCanvasMode';
+import { useCanvasMode, buildFlowNode, readSSEStream, appendVersion, readVersions, resolveNodePattern } from './useCanvasMode';
+import { getSubtreeNodeIds } from './treeUtils';
 import { readTemplates, saveTemplate } from './TemplateStore';
 import { useGateway } from './gateway/useGateway';
 
@@ -51,6 +52,11 @@ import InspectorPanel from './InspectorPanel';
 import { YjsProvider, useYjs } from './yjs/YjsContext';
 import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
+import { ForestProvider, useForest } from './ForestContext';
+import ClaudeCodePicker from './ClaudeCodePicker';
+import SessionFilesBar from './SessionFilesBar';
+import ForestSidebar from './ForestSidebar';
+import ForestMetaCanvas from './ForestMetaCanvas';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -302,6 +308,7 @@ function EmptyState({ onNewSession }) {
 function AppRouter() {
   const { user, loading, logout, isConfigured } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
+  const [activeForest, setActiveForest] = useState(null);
   const [showSettings, setShowSettings] = useState(() => window.location.pathname.startsWith('/settings'));
   const [showKnowledge, setShowKnowledge] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
@@ -407,8 +414,9 @@ function AppRouter() {
         onNewSession={() => { setActiveSession({ isNew: true }); setShowSettings(false); setShowKnowledge(false); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
-        onOpenSettings={() => { setShowSettings(true); setShowKnowledge(false); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
-        onOpenKnowledge={() => { setShowKnowledge(true); setShowSettings(false); setActiveSession(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onOpenSettings={() => { setShowSettings(true); setShowKnowledge(false); setActiveSession(null); setActiveForest(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onOpenKnowledge={() => { setShowKnowledge(true); setShowSettings(false); setActiveSession(null); setActiveForest(null); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
+        onOpenForest={(forest) => { setActiveForest(forest); setActiveSession(null); setShowSettings(false); setShowKnowledge(false); if (window.innerWidth <= 768) setSidebarCollapsed(true); }}
       />
       <div className="app-main">
         {/* Mobile: floating toggle to reopen sidebar */}
@@ -424,6 +432,17 @@ function AppRouter() {
           <KnowledgeGraph onClose={() => setShowKnowledge(false)} />
         ) : showSettings ? (
           <SettingsPage onClose={() => { setShowSettings(false); window.history.pushState({}, '', '/'); }} />
+        ) : activeForest ? (
+          <ForestProvider forest={activeForest}>
+            <div className="forest-layout">
+              <ForestSidebar />
+              <ForestCanvasArea
+                forest={activeForest}
+                onSessionSaved={handleSessionSaved}
+                onExit={() => setActiveForest(null)}
+              />
+            </div>
+          </ForestProvider>
         ) : !activeSession ? (
           <EmptyState onNewSession={(modeId) => setActiveSession({ isNew: true, mode: modeId })} />
         ) : (
@@ -432,6 +451,7 @@ function AppRouter() {
             initialSession={activeSession}
             onBackToDashboard={null}
             onSessionSaved={handleSessionSaved}
+            onOpenForest={(forest) => { setActiveForest(forest); setActiveSession(null); }}
           />
         )}
       </div>
@@ -439,8 +459,37 @@ function AppRouter() {
   );
 }
 
+// ── Forest Canvas Area: switches between meta view and individual canvases ──
+function ForestCanvasArea({ forest, onSessionSaved, onExit }) {
+  const ctx = useForest();
+  if (!ctx) return null;
+
+  const { activeCanvasKey, canvasSessions } = ctx;
+
+  if (activeCanvasKey === '__meta__') {
+    return <ForestMetaCanvas />;
+  }
+
+  const canvasRef = forest.canvases?.find(c => c.canvasKey === activeCanvasKey);
+  if (!canvasRef?.sessionId) {
+    return <div className="forest-meta-empty">Select a canvas from the sidebar to view it.</div>;
+  }
+
+  const session = canvasSessions.get(activeCanvasKey);
+  const initialSession = session || { id: canvasRef.sessionId, source: 'cloud' };
+
+  return (
+    <App
+      key={canvasRef.sessionId}
+      initialSession={initialSession}
+      onBackToDashboard={onExit}
+      onSessionSaved={onSessionSaved}
+    />
+  );
+}
+
 export { AppRouter };
-export default function App({ initialSession, onBackToDashboard, onSessionSaved }) {
+export default function App({ initialSession, onBackToDashboard, onSessionSaved, onOpenForest }) {
   // ── Toolbar scroll ──────────────────────────────────────────
   const toolbarScrollRef = useRef(null);
   const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
@@ -457,6 +506,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [steeringText, setSteeringText] = useState('');
   const ideaRef = useRef(null);          // textarea ref for auto-resize
   const fileInputRef = useRef(null);     // hidden file input ref
+  const sessionFileInputRef = useRef(null); // hidden file input for session context files
   const [attachedFile, setAttachedFile] = useState(null); // { name, size }
 
   // ── Codebase mode specific state ──────────────────────────
@@ -564,6 +614,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
 
   // ── Load initial session from dashboard ───────────────────
   const initialSessionLoaded = useRef(false);
+  const [sessionLoading, setSessionLoading] = useState(
+    !!(initialSession && !initialSession.isNew && initialSession.source === 'cloud' && initialSession.id)
+  );
   useEffect(() => {
     if (initialSessionLoaded.current || !initialSession || initialSession.isNew) return;
     initialSessionLoaded.current = true;
@@ -596,6 +649,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       if (normalized.prototype) {
         proto$.setPrototype(normalized.prototype);
       }
+      setSessionLoading(false);
     };
 
     // If session already has rawNodes (local), load immediately
@@ -603,6 +657,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
       loadSession(initialSession);
     } else if (initialSession.source === 'cloud' && initialSession.id) {
       // Fetch full session data from server for cloud sessions
+      setSessionLoading(true);
       authFetch(`${API_URL}/api/sessions/${initialSession.id}`)
         .then(r => r.ok ? r.json() : null)
         .then(fullSession => {
@@ -654,6 +709,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   // ── Thinking Patterns ──────────────────────────────────────
   const [activePattern, setActivePattern] = useState(null);        // pattern definition (from _meta)
   const [patternFramework, setPatternFramework] = useState(null);  // resolved framework metadata
+  const [availablePatterns, setAvailablePatterns] = useState([]);   // all patterns for node-level picker
+
+  // Fetch available patterns on mount
+  useEffect(() => {
+    authFetch(`${API_URL}/api/patterns`).then(r => r.ok ? r.json() : []).then(list => {
+      if (Array.isArray(list)) setAvailablePatterns(list);
+    }).catch(() => {});
+  }, []);
 
   // ── Pattern Executor hook (must be after dynamicConfigRef declaration) ──
   const patternExec$ = usePatternExecutor({
@@ -794,6 +857,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
   const [emailContext, setEmailContext] = useState(null); // { id, subject, messageCount, formatted }
   const [showPlusMenu, setShowPlusMenu] = useState(false); // + attachments popover
   const plusMenuBtnRef = useRef(null);
+  const [claudeCodeContext, setClaudeCodeContext] = useState(null); // { context: string, sessionCount: number }
+  const [showClaudeCodePicker, setShowClaudeCodePicker] = useState(false);
+  const [sessionFiles, setSessionFiles] = useState([]); // attached files for this session
+  const [sessionFileContext, setSessionFileContext] = useState(null); // extracted text context
 
   const gmail = useGmail({
     onThreadSelected: (ctx) => setEmailContext(ctx),
@@ -998,7 +1065,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1134,7 +1201,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1270,7 +1337,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1347,6 +1414,48 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
     setRedirectState('idle');
     setIsCritiquing(false);
   }, [active]);
+
+  // ── Forest decomposition ────────────────────────────────
+  const handleForestDecompose = useCallback(async () => {
+    if (!idea.trim() || !onOpenForest) return;
+    try {
+      const res = await authFetch(`${API_URL}/api/forest/decompose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idea: idea.trim(), mode: displayMode }),
+      });
+      // Read SSE stream for result
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const payload = line.slice(6).trim();
+            if (payload === '[DONE]') break;
+            try {
+              const event = JSON.parse(payload);
+              if (event._forestResult) {
+                // Load the full forest and open it
+                const forestRes = await authFetch(`${API_URL}/api/forests/${event.forestId}`);
+                if (forestRes.ok) {
+                  const forest = await forestRes.json();
+                  onOpenForest(forest);
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Forest decompose error:', err);
+    }
+  }, [idea, displayMode, onOpenForest]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2509,6 +2618,24 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         setFocusedNode(null);
         setPendingChatCards(prev => [...prev, { label: `Deleted branch "${node.data?.label || ''}"`, detail: 'Node and all descendants removed', buttons: [] }]);
       }
+    } else if (btn.actionType === 'assignPattern') {
+      const nodes = active.rawNodesRef.current;
+      const idx = nodes.findIndex(n => n.id === btn.nodeId);
+      if (idx >= 0) {
+        const updated = { ...nodes[idx], data: { ...nodes[idx].data, pattern: btn.patternId } };
+        const newNodes = [...nodes];
+        newNodes[idx] = updated;
+        active.rawNodesRef.current = newNodes;
+        active.applyLayout(newNodes, active.drillStackRef.current);
+        setFocusedNode(prev => prev ? { ...prev, node: updated } : null);
+      }
+    } else if (btn.actionType === 'runPatternOnSubtree') {
+      // Direct "Run on subtree" from NodeFocusCard
+      const allNodes = active.rawNodesRef.current;
+      const subtreeIds = getSubtreeNodeIds(btn.nodeId, allNodes);
+      const scopedNodes = allNodes.filter(n => subtreeIds.has(n.id));
+      patternExec$.execute(btn.patternId, ideaText, scopedNodes, displayMode, { domain: dynamicDomain });
+      setShowChat(true);
     } else if (btn.actionType === 'fixThis') {
       handleExecuteAction(btn.nodeId);
     } else if (btn.actionType === 'dismissNodeFocus') {
@@ -2651,6 +2778,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         chatFilterActive,
         chatFilterMatch,
         childCount: childCountMap[n.id] || 0,
+        // Pattern metadata for badge rendering
+        patternMeta: n.data?.pattern ? availablePatterns.find(p => p.id === n.data.pattern) || null : null,
         // Fractal callbacks
         onFractalExpand: active.handleFractalExpand,
         onToggleCollapse: active.handleToggleCollapse,
@@ -2744,13 +2873,29 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                   if (debateStream || patternExec$.isExecuting) {
                     // Already running — just open chat to show it
                     setShowChat(true);
-                  } else if (activePattern) {
-                    // Use thinking pattern executor
-                    const nodes = active.rawNodesRef.current;
-                    patternExec$.execute(activePattern, ideaText, nodes, displayMode, { domain: dynamicDomain });
-                    setShowChat(true);
                   } else {
-                    startDebateInChat();
+                    // Determine pattern and scope based on focused node
+                    const allNodes = active.rawNodesRef.current;
+                    const focusNode = focusedNode?.node;
+                    let patternId = null;
+                    let scopedNodes = allNodes;
+
+                    if (focusNode) {
+                      // Resolve node-level pattern (walk up ancestors), fall back to tree-level
+                      patternId = resolveNodePattern(focusNode.id, allNodes) || activePattern;
+                      // Scope to focused subtree
+                      const subtreeIds = getSubtreeNodeIds(focusNode.id, allNodes);
+                      scopedNodes = allNodes.filter(n => subtreeIds.has(n.id));
+                    } else {
+                      patternId = activePattern;
+                    }
+
+                    if (patternId) {
+                      patternExec$.execute(patternId, ideaText, scopedNodes, displayMode, { domain: dynamicDomain });
+                      setShowChat(true);
+                    } else {
+                      startDebateInChat();
+                    }
                   }
                 }}
                 title={patternFramework?.debateLabels?.startLabel || (DEBATE_LABELS[displayMode] || DEBATE_LABELS.idea).tooltip}
@@ -2985,6 +3130,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
               )}
               <IdeaEmptyState mode={displayMode} onExampleClick={(text) => { setIdea(text); }} />
             </>
+          ) : sessionLoading ? (
+            <div className="generating-indicator">
+              <div className="generating-spinner" />
+              <div className="generating-text">Loading session...</div>
+            </div>
           ) : idea$.nodes.length === 0 && idea$.isGenerating ? (
             <div className="generating-indicator">
               <div className="generating-spinner" />
@@ -3223,6 +3373,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                           <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); fileInputRef.current?.click(); }}>
                             <span className="plus-menu-item-icon">📎</span> Upload File
                           </button>
+                          <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); sessionFileInputRef.current?.click(); }}>
+                            <span className="plus-menu-item-icon">📁</span> Attach Context Files
+                          </button>
+                          <button className="plus-menu-item" onClick={() => { setShowPlusMenu(false); setShowClaudeCodePicker(true); }}>
+                            <span className="plus-menu-item-icon">⬡</span> Import Claude Context
+                          </button>
                           {gmail.configured && (
                             gmail.connected ? (
                               <>
@@ -3255,6 +3411,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                       <button className="file-badge-x" onClick={() => setEmailContext(null)}>×</button>
                     </span>
                   )}
+                  {claudeCodeContext && (
+                    <span className="file-badge cc-badge" title="Claude Code context loaded">
+                      ⬡ Claude Code ({claudeCodeContext.sessionCount} sessions)
+                      <button className="file-badge-x" onClick={() => setClaudeCodeContext(null)}>×</button>
+                    </span>
+                  )}
                 </div>
                 {(idea$.isGenerating || isCritiquing) ? (
                   <>
@@ -3266,6 +3428,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                     <button className="btn btn-generate" onClick={handleGenerateResearch} disabled={!idea.trim() || idea$.isRegenerating || isFetchingUrl}>
                       {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
                     </button>
+                    {displayMode === 'idea' && onOpenForest && (
+                      <button className="btn btn-forest" onClick={handleForestDecompose} disabled={!idea.trim()} title="Decompose into multi-canvas forest">
+                        ◈ FOREST
+                      </button>
+                    )}
                     <div className="gen-auto-options">
                       <label className="gen-auto-check" title="Auto-run refinement loop after generation">
                         <input type="checkbox" checked={autoRefineOnGen} onChange={e => setAutoRefineOnGen(e.target.checked)} />
@@ -3284,6 +3451,31 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
                 )}
               </>
             )}
+            {/* Hidden file input for session context files */}
+            <input
+              ref={sessionFileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.py"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                if (!e.target.files?.length || !gateway.sessionId) return;
+                const formData = new FormData();
+                for (const file of e.target.files) formData.append('files', file);
+                try {
+                  const res = await authFetch(`${API_URL}/api/sessions/${gateway.sessionId}/files`, { method: 'POST', body: formData });
+                  const data = await res.json();
+                  if (data.files) setSessionFiles(prev => [...prev, ...data.files]);
+                } catch (err) { console.error('Upload failed:', err); }
+                e.target.value = '';
+              }}
+            />
+            <SessionFilesBar
+              sessionId={gateway.sessionId}
+              files={sessionFiles}
+              setFiles={setSessionFiles}
+              onContextUpdate={setSessionFileContext}
+            />
           </div>
         )}
 
@@ -3340,6 +3532,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
           prototype={proto$.prototype}
           onClose={() => setShowPrototypeViewer(false)}
           onRegenScreen={(idx, instruction) => proto$.handleRegenScreen(idx, instruction, gateway.sessionId || initialSession?.id)}
+        />
+      )}
+
+      {/* ── Claude Code Picker ── */}
+      {showClaudeCodePicker && (
+        <ClaudeCodePicker
+          onLoadContext={(context, sessionCount) => setClaudeCodeContext({ context, sessionCount })}
+          onClose={() => setShowClaudeCodePicker(false)}
         />
       )}
 
@@ -3456,6 +3656,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved 
         patternFramework={patternFramework}
         patternExecState={patternExec$.isExecuting ? { stage: patternExec$.currentStage, round: patternExec$.currentRound, checkpoint: patternExec$.checkpoint } : null}
         onStopPattern={() => patternExec$.stop()}
+        availablePatterns={availablePatterns}
+        sessionFileContext={sessionFileContext}
       />
       </div>{/* end app-content-row */}
 

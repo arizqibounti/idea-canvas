@@ -9,6 +9,7 @@ import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
 import DebateCard from './chat/DebateCard';
 import PrototypeCard from './chat/PrototypeCard';
+import { serializeTree, buildFocusedSubtree } from './treeUtils';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -102,55 +103,7 @@ function ChatMarkdown({ content }) {
   );
 }
 
-function serializeTree(nodes) {
-  if (!nodes || !nodes.length) return '';
-  return nodes.map(n => {
-    const d = n.data || n;
-    return `- [${d.type || 'node'}] (id: ${n.id}) ${d.label || n.id}${d.reasoning ? ': ' + d.reasoning : ''}`;
-  }).join('\n');
-}
-
-// Build focused node + its full subtree for scoped chat context
-function buildFocusedSubtree(focusedNode, allNodes) {
-  if (!focusedNode?.node || !allNodes?.length) return null;
-  const fNode = focusedNode.node;
-  const fId = fNode.id;
-
-  // Collect all descendant IDs via BFS
-  const childMap = new Map();
-  for (const n of allNodes) {
-    const d = n.data || n;
-    const parents = d.parentIds || (d.parentId ? [d.parentId] : []);
-    for (const pid of parents) {
-      if (!childMap.has(pid)) childMap.set(pid, []);
-      childMap.get(pid).push(n);
-    }
-  }
-
-  const subtreeIds = new Set([fId]);
-  const queue = [fId];
-  while (queue.length) {
-    const id = queue.shift();
-    for (const child of (childMap.get(id) || [])) {
-      if (!subtreeIds.has(child.id)) {
-        subtreeIds.add(child.id);
-        queue.push(child.id);
-      }
-    }
-  }
-
-  const subtreeNodes = allNodes.filter(n => subtreeIds.has(n.id));
-  const fd = fNode.data || fNode;
-
-  return {
-    id: fId,
-    type: fd.type || 'node',
-    label: fd.label || fId,
-    reasoning: fd.reasoning || '',
-    subtree: serializeTree(subtreeNodes),
-    subtreeCount: subtreeNodes.length,
-  };
-}
+// serializeTree and buildFocusedSubtree imported from treeUtils.js
 
 const ACTION_DELIMITER = '<<<ACTIONS>>>';
 
@@ -210,7 +163,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -237,7 +190,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
   // Focus input when panel opens
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      setTimeout(() => inputRef.current.focus(), 200);
+      setTimeout(() => inputRef.current?.focus(), 200);
     }
   }, [isOpen]);
 
@@ -291,6 +244,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           mode,
           emailThread: emailContext?.formatted || null,
           focusedNode: focusContext,
+          sessionFileContext: sessionFileContext || null,
         }),
         signal: controller.signal,
       });
@@ -649,6 +603,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             mergeTarget={focusedNode.mergeTarget}
             onAction={onCardButtonClick}
             onDismiss={onDismissFocus}
+            availablePatterns={availablePatterns}
           />
         )}
 

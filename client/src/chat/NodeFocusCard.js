@@ -5,11 +5,12 @@
 import React, { useState } from 'react';
 import { getNodeConfig } from '../nodeConfig';
 
-export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isMerging, mergeTarget, onAction, onDismiss }) {
+export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isMerging, mergeTarget, onAction, onDismiss, availablePatterns = [] }) {
   const [showSurgical, setShowSurgical] = useState(surgicalExpanded || false);
   const [editing, setEditing] = useState(false);
   const [editLabel, setEditLabel] = useState('');
   const [editReasoning, setEditReasoning] = useState('');
+  const [showPatternPicker, setShowPatternPicker] = useState(false);
 
   if (!node) return null;
 
@@ -17,6 +18,8 @@ export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isM
   const config = getNodeConfig(data.type, data.dynamicConfig);
   const isSeed = data.type === 'seed';
   const nodeId = node.id;
+  const currentPattern = data.pattern || null;
+  const currentPatternMeta = currentPattern ? availablePatterns.find(p => p.id === currentPattern) : null;
 
   const handleStartEdit = () => {
     setEditLabel(data.label || '');
@@ -31,6 +34,11 @@ export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isM
 
   const handleCancelEdit = () => {
     setEditing(false);
+  };
+
+  const handleSelectPattern = (patternId) => {
+    onAction?.({ actionType: 'assignPattern', nodeId, patternId });
+    setShowPatternPicker(false);
   };
 
   return (
@@ -90,7 +98,54 @@ export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isM
             <button className="nfc-btn" onClick={handleStartEdit} title="Edit label & reasoning">
               ✎ Edit
             </button>
+            {availablePatterns.length > 0 && (
+              <div className="nfc-pattern-row">
+                <button
+                  className={`nfc-btn ${currentPattern ? 'nfc-btn-active' : ''}`}
+                  onClick={() => setShowPatternPicker(!showPatternPicker)}
+                  title={currentPattern ? `Pattern: ${currentPatternMeta?.name || currentPattern}` : 'Assign thinking pattern to this subtree'}
+                  style={currentPatternMeta ? { borderColor: `${currentPatternMeta.color}66` } : undefined}
+                >
+                  {currentPatternMeta?.icon || '◈'} {currentPattern ? (currentPatternMeta?.name || currentPattern) : 'Pattern'}
+                </button>
+                {currentPattern && (
+                  <button
+                    className="nfc-btn nfc-btn-run"
+                    onClick={() => onAction?.({ actionType: 'runPatternOnSubtree', nodeId, patternId: currentPattern })}
+                    title={`Run ${currentPatternMeta?.name || currentPattern} on this subtree (${data.childCount || 0} children)`}
+                    style={{ borderColor: `${currentPatternMeta?.color || '#6c63ff'}66` }}
+                  >
+                    ▶ Run on subtree
+                  </button>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Pattern picker dropdown */}
+          {showPatternPicker && (
+            <div className="nfc-pattern-picker">
+              <button
+                className={`nfc-pattern-option ${!currentPattern ? 'nfc-pattern-active' : ''}`}
+                onClick={() => handleSelectPattern(null)}
+              >
+                <span className="nfc-pattern-icon">↩</span>
+                <span className="nfc-pattern-name">Clear (inherit)</span>
+                {!currentPattern && <span className="nfc-pattern-check">✓</span>}
+              </button>
+              {availablePatterns.map(p => (
+                <button
+                  key={p.id}
+                  className={`nfc-pattern-option ${currentPattern === p.id ? 'nfc-pattern-active' : ''}`}
+                  onClick={() => handleSelectPattern(p.id)}
+                >
+                  <span className="nfc-pattern-icon" style={{ color: p.color }}>{p.icon}</span>
+                  <span className="nfc-pattern-name">{p.name}</span>
+                  {currentPattern === p.id && <span className="nfc-pattern-check">✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Surgical tools toggle */}
           <button
@@ -155,6 +210,7 @@ export default function NodeFocusCard({ node, surgicalExpanded, isSplitting, isM
         {data.depth !== undefined && <span>depth {data.depth}</span>}
         {data.childCount > 0 && <span>{data.childCount} children</span>}
         {data.parentIds?.length > 1 && <span>convergence</span>}
+        {data.patternMeta && <span style={{ color: data.patternMeta.color }}>{data.patternMeta.icon} {data.patternMeta.name}</span>}
       </div>
     </div>
   );

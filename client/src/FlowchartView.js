@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -7,7 +7,6 @@ import {
   BackgroundVariant,
   useReactFlow,
   useNodesState,
-  useEdgesState,
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -113,18 +112,16 @@ export default function FlowchartView({
   }, [displayNodes]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutResult.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  // Sync layout results — set nodes first, defer edges so RF can measure nodes
+  // Sync nodes when displayNodes change
   useEffect(() => {
     setNodes(layoutResult.nodes);
-    // Two-frame delay: first frame renders nodes, second frame RF measures them
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setEdges(layoutResult.edges);
-      });
-    });
-  }, [layoutResult, setNodes, setEdges]);
+  }, [layoutResult, setNodes]);
+
+  // Edges are fully controlled — passed directly from layoutResult.
+  // Using a stable identity via useMemo prevents unnecessary re-renders.
+  const edges = layoutResult.edges;
+  const onEdgesChange = useCallback(() => {}, []);
 
   const miniMapNodeColor = useCallback((node) => {
     return getNodeConfig(node.data?.type).color;

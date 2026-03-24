@@ -81,8 +81,22 @@ export function buildFlowNode(raw, existingIds) {
       lens: raw.lens || null,
       polarity: raw.polarity || null,
       loopId: raw.loopId || null,
+      pattern: raw.pattern || null, // assigned thinking pattern ID (node-level)
     },
   };
+}
+
+// Walk up parent chain to find the first ancestor with an explicit pattern
+export function resolveNodePattern(nodeId, allNodes) {
+  const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+  let current = nodeMap.get(nodeId);
+  while (current) {
+    const d = current.data || current;
+    if (d.pattern) return d.pattern;
+    const parentId = (d.parentIds || [])[0] || d.parentId;
+    current = parentId ? nodeMap.get(parentId) : null;
+  }
+  return null;
 }
 
 // Deduplicate nodes by ID — keeps last occurrence, remaps parentIds

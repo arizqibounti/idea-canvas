@@ -219,6 +219,26 @@ const IdeaNode = memo(({ data }) => {
         </div>
       )}
 
+      {/* Pattern badge */}
+      {data.patternMeta && (
+        <div
+          className="node-pattern-badge"
+          title={`Pattern: ${data.patternMeta.name}`}
+          style={{
+            position: 'absolute', bottom: -10, left: 12,
+            background: '#1e1e2e',
+            border: `1px solid ${data.patternMeta.color || '#6c63ff'}44`,
+            borderRadius: 8, padding: '1px 6px',
+            fontSize: 8, fontWeight: 700,
+            color: data.patternMeta.color || '#6c63ff',
+            fontFamily: 'var(--font-mono)', zIndex: 3,
+            letterSpacing: '0.05em',
+          }}
+        >
+          {data.patternMeta.icon} {data.patternMeta.name}
+        </div>
+      )}
+
       {/* Type badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
         <span style={{ color: config.color, fontSize: '12px' }}>{config.icon}</span>
