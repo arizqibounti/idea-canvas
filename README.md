@@ -125,6 +125,27 @@ An AI-powered structured thinking visualization tool that transforms any input �
 - **AI Pattern Generation**: Describe a thinking pattern in natural language and the AI generates a complete pattern definition
 - **Checkpoint Protocol**: Executor pauses at branch/loop points, emitting checkpoint events for client intervention
 - **Extended _meta Protocol**: Generation step now declares which pattern to use, enabling dynamic pipeline selection per domain
+- **Node-Level Pattern Execution**: Assign different thinking patterns to individual nodes or subtrees. Click a node → Pattern button → select a pattern → "Run on subtree" executes the pattern scoped to that node's descendants. Pattern inheritance walks up the parent chain. Visual badge on nodes shows assigned pattern.
+- **Scoped Critique**: When a node with an assigned pattern is focused, the CRITIQUE button runs that pattern on the focused subtree only, not the full tree.
+
+### Forest (multi-canvas decomposition)
+- **Canvas Decomposition**: Break complex ideas into multiple interconnected canvases, each exploring a different facet
+- **Cross-Canvas Context**: Shared context injection across canvases so each sub-tree is aware of its siblings
+- **Cross-Reference Detection**: AI detects links and dependencies between canvases
+- **Forest Critique**: Run critique across all canvases simultaneously, surfacing cross-canvas blindspots
+- **Forest Sidebar**: Navigate between canvases with dependency visualization
+
+### Session files
+- **File Upload**: Attach files to any session as additional context for AI generation
+- **Format Support**: PDF, DOCX, XLSX, PPTX, TXT, MD, JSON, YAML, and code files (.js, .ts, .jsx, .tsx, .py, .go, .rs, .java, .rb, .html, .css, .sql, .sh)
+- **Text Extraction**: Automatic content extraction from uploaded files, injected into generation context
+- **10MB Limit**: Per-file size limit for uploads
+
+### Claude Code integration
+- **Project Picker**: Select a local Claude Code project via ClaudeCodePicker component
+- **Context Bridge**: Reads Claude Code conversation data from ~/.claude/ and makes it available as generation context
+- **Auto-Connect**: Automatically connects to the most recent Claude Code project
+- **Code Mode**: In codebase mode, node actions can dispatch fixes via Claude Code CLI
 
 ### Authentication and persistence
 - **Firebase Authentication**: Google sign-in with landing page for unauthenticated users
@@ -183,10 +204,17 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │       ├── KnowledgeGraph.js        # Zettelkasten cross-session cluster view
 │       ├── TimelineFilmstrip.js     # Horizontal node thumbnails with transport
 │       ├── CinematicController.js   # AI video-like tree replay
+│       ├── treeUtils.js             # Shared subtree utilities (BFS, serialization)
+│       ├── ClaudeCodePicker.js      # Claude Code project selection UI
+│       ├── ForestContext.js         # React context for multi-canvas forests
+│       ├── ForestMetaCanvas.js      # Forest canvas area with decomposition
+│       ├── ForestSidebar.js         # Forest navigation sidebar
+│       ├── SessionFilesBar.js       # Session file attachment bar
 │       ├── chat/
 │       │   ├── ExperimentCard.js    # AutoIdea experiment loop card
+│       │   ├── ForestCritiqueCard.js # Cross-canvas forest critique card
 │       │   ├── LearnCard.js         # Comprehension loop quiz card
-│       │   ├── NodeFocusCard.js     # Chat-first node interaction card
+│       │   ├── NodeFocusCard.js     # Chat-first node interaction + pattern picker
 │       │   ├── PortfolioCard.js     # Portfolio alternatives card
 │       │   ├── PrototypeCard.js    # Prototype build progress card
 │       │   └── RefineCard.js        # Refine progress/results card
@@ -242,7 +270,9 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │   │   ├── patternLoader.js         # Pattern cache + hot-reload
 │   │   ├── builtinPatterns.js       # 4 built-in pattern definitions
 │   │   ├── promptLoader.js          # Prompt cache + A/B test selection
-│   │   └── promptImprove.js         # AI-powered prompt improvement
+│   │   ├── promptImprove.js         # AI-powered prompt improvement
+│   │   ├── forest.js                # Forest multi-canvas decomposition engine
+│   │   └── sessionFiles.js          # File upload, parse, text extraction
 │   ├── canvas/
 │   │   ├── engine.js                # A2UI canvas generation
 │   │   └── prompts.js               # Canvas system prompts
@@ -257,7 +287,11 @@ An AI-powered structured thinking visualization tool that transforms any input �
 │   │   ├── usage.js                 # Per-user usage tracking
 │   │   ├── promptStore.js           # Prompt Firestore/memory CRUD + versioning
 │   │   ├── patternStore.js          # Pattern Firestore/memory CRUD + versioning
+│   │   ├── forests.js               # Forest session CRUD
 │   │   └── websocket.js             # WebSocket server setup
+│   ├── integrations/
+│   │   ├── routes.js                # Integration API routes
+│   │   └── claude-code/             # Claude Code CLI bridge (reader, parser)
 │   ├── middleware/
 │   │   ├── auth.js                  # Firebase token verification + workspace resolution
 │   │   └── rateLimit.js             # Request rate limiting

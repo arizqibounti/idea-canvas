@@ -253,6 +253,27 @@ Settings > PATTERNS tab — two-pane editor with:
 | `client/src/usePatternExecutor.js` | React hook for SSE-based execution |
 | `client/src/settings/PatternsTab.js` | Admin UI (editor + test runner) |
 | `client/src/settings/PatternGraphView.js` | Visual DAG renderer |
+| `client/src/treeUtils.js` | Shared subtree utilities (BFS, serialization) |
+
+### Node-Level Pattern Execution (v3.1)
+
+Patterns can now be assigned at the node/subtree level, not just the tree level. This enables heterogeneous processing — different branches of the tree can use different thinking strategies (e.g., adversarial for risks, diffusion for opportunities).
+
+**Key concepts:**
+- Each node has an optional `pattern` field storing a pattern ID
+- `resolveNodePattern(nodeId, allNodes)` walks up the parent chain to find the nearest ancestor with an explicit pattern
+- When the CRITIQUE button is clicked with a focused node, the system uses that node's resolved pattern on its subtree only
+- NodeFocusCard includes a pattern picker dropdown + "Run on subtree" button for direct scoped execution
+- Visual badge on nodes shows assigned pattern (icon + name in pattern's color)
+
+**Files:**
+| File | Change |
+|------|--------|
+| `client/src/useCanvasMode.js` | `pattern` field in `buildFlowNode`, `resolveNodePattern` utility |
+| `client/src/chat/NodeFocusCard.js` | Pattern picker dropdown + "Run on subtree" button |
+| `client/src/App.js` | `availablePatterns` fetch, `assignPattern`/`runPatternOnSubtree` actions, scoped critique |
+| `client/src/IdeaNode.js` | Pattern badge rendering |
+| `client/src/treeUtils.js` | `getSubtreeNodeIds`, `buildFocusedSubtree` (extracted from ChatPanel) |
 
 ---
 
