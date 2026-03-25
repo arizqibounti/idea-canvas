@@ -182,16 +182,17 @@ Return ONLY a JSON array of objects: [{"name": "Entity Name", "url": "https://li
 If no entities need research, return []. No explanation, just the JSON array.`;
 
     const response = await gemini.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3.1-flash-lite-preview',
       contents: userMessage,
       config: {
-        maxOutputTokens: 300,
+        maxOutputTokens: 1000,
       },
     });
 
     const text = (response.text || '[]').trim();
     const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-    const entities = JSON.parse(cleaned);
+    let entities;
+    try { entities = JSON.parse(cleaned); } catch { entities = []; }
     if (!Array.isArray(entities)) return [];
     return entities.filter(e => e.url && e.name);
   } catch (err) {

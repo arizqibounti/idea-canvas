@@ -293,7 +293,7 @@ function EmptyState({ onNewSession }) {
         Start a new session or pick one from the sidebar.
       </div>
       <div className="empty-state-modes">
-        {MODES.map(m => (
+        {MODES.filter(m => !m.hidden).map(m => (
           <button
             key={m.id}
             className="empty-state-chip"
@@ -3227,7 +3227,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
 
       {/* ── Mode bar ── */}
       <nav className="mode-bar">
-        {MODES.map(mode => {
+        {MODES.filter(m => !m.hidden).map(mode => {
           const isActive   = displayMode === mode.id;
           const isDetected = detectedMode === mode.id && !manualMode && !isActive;
           const isManual   = manualMode === mode.id;

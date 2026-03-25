@@ -31,6 +31,7 @@ export const MODES = [
     label: 'RESUME',
     icon: '◎',
     color: '#74c0fc',
+    hidden: true,
     placeholder: 'paste a job description or describe the role you\'re applying for...',
     keywords: [
       'resume', 'cv', 'job', 'apply', 'career', 'interview', 'hiring',

@@ -370,14 +370,25 @@ async function handleGenerateResearch(_client, req, res) {
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch (e) { /* non-fatal */ }
 
-    const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
+    let systemPromptR = mode === 'resume' ? RESUME_SYSTEM_PROMPT
       : mode === 'causal' ? CAUSAL_SYSTEM_PROMPT
       : mode === 'learn' ? LEARN_CURRICULUM_PROMPT
       : SYSTEM_PROMPT;
 
+    // Inject thinking patterns into research path too
+    if (systemPromptR === SYSTEM_PROMPT) {
+      const patternHints = patternLoader.getAutoSelectHints();
+      if (patternHints.length > 0) {
+        const patternList = patternHints.map(p =>
+          `- "${p.id}": ${p.name} — ${p.description}. Best for: ${p.keywords.slice(0, 5).join(', ')}`
+        ).join('\n');
+        systemPromptR += `\n\nAVAILABLE THINKING PATTERNS (select the best one for _meta.pattern):\n${patternList}`;
+      }
+    }
+
     const { stream } = await ai.stream({
       model: 'claude:opus',
-      system: systemPrompt,
+      system: systemPromptR,
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 4096,
     });

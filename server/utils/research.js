@@ -35,16 +35,29 @@ async function planResearch(gemini, idea, existingContent) {
     const userMessage = `Idea: "${idea}"${existingContent ? `\n\nExisting context:\n${existingContent}` : ''}\n\nPlan the research. Output ONLY the JSON object.`;
 
     const response = await gemini.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3.1-flash-lite-preview',
       contents: userMessage,
       config: {
         systemInstruction: RESEARCH_PLAN_PROMPT,
-        maxOutputTokens: 1000,
+        maxOutputTokens: 4000,
       },
     });
     const text = (response.text || '{}').trim();
-    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-    const plan = JSON.parse(cleaned);
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    let plan;
+    try {
+      plan = JSON.parse(cleaned);
+    } catch {
+      // Attempt repair of truncated JSON
+      let repaired = cleaned;
+      const opens = (repaired.match(/\[/g) || []).length;
+      const closes = (repaired.match(/\]/g) || []).length;
+      const braceOpens = (repaired.match(/\{/g) || []).length;
+      const braceCloses = (repaired.match(/\}/g) || []).length;
+      for (let i = 0; i < opens - closes; i++) repaired += ']';
+      for (let i = 0; i < braceOpens - braceCloses; i++) repaired += '}';
+      try { plan = JSON.parse(repaired); } catch { plan = {}; }
+    }
     // Validate structure
     for (const dim of ['market', 'technology', 'audience']) {
       if (!plan[dim]) plan[dim] = { urls: [], questions: [] };
@@ -85,17 +98,33 @@ async function runResearchAgent(gemini, agentType, plan, existingContent) {
     const userMessage = `Research questions:\n${agentPlan.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\nWeb content gathered:\n${contentBlock}${existingContent ? `\n\nAdditional context:\n${existingContent}` : ''}\n\nSynthesize your findings. Be specific — cite real names, numbers, and details from the content. Output ONLY the JSON object.`;
 
     const response = await gemini.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3.1-flash-lite-preview',
       contents: userMessage,
       config: {
         systemInstruction: RESEARCH_AGENT_PROMPTS[agentType],
-        maxOutputTokens: 1500,
+        maxOutputTokens: 8000,
       },
     });
 
     const text = (response.text || '{}').trim();
-    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-    return JSON.parse(cleaned);
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    // Try to fix truncated JSON by closing open strings/arrays/objects
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      // Attempt repair: close any unclosed strings, arrays, objects
+      let repaired = cleaned;
+      // Count unmatched brackets
+      const opens = (repaired.match(/\[/g) || []).length;
+      const closes = (repaired.match(/\]/g) || []).length;
+      const braceOpens = (repaired.match(/\{/g) || []).length;
+      const braceCloses = (repaired.match(/\}/g) || []).length;
+      // Close unclosed string if last char looks truncated
+      if (repaired.match(/[^"\\]"[^"]*$/)) repaired += '"';
+      for (let i = 0; i < opens - closes; i++) repaired += ']';
+      for (let i = 0; i < braceOpens - braceCloses; i++) repaired += '}';
+      return JSON.parse(repaired);
+    }
   } catch (err) {
     console.error(`Research agent (${agentType}) error:`, err.message);
     return { dimension: agentType, keyFindings: ['Research could not be completed'], gaps: ['Agent failed: ' + err.message] };

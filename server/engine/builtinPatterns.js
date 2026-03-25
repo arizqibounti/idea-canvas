@@ -1031,4 +1031,243 @@ One JSON per line.`,
   config: { maxRounds: 1, abortable: true },
 };
 
-module.exports = [adversarial, progressiveRefine, portfolioExplore, diffusion, mixtureOfExperts, evolutionary, backpropagation, compression, ragEnrich];
+// ── WRITE MODE PATTERNS ──────────────────────────────────────
+
+const editorialReview = {
+  id: 'editorial-review',
+  name: 'Editorial Review',
+  description: 'Senior editor critiques structure, clarity, audience fit, and argument strength. Writer responds with specific revisions. Iterates until publication-ready.',
+  icon: '✎',
+  color: '#f472b6',
+  builtIn: true,
+
+  autoSelect: {
+    keywords: ['write', 'draft', 'essay', 'article', 'blog', 'copy', 'content', 'narrative', 'prose', 'edit', 'rewrite', 'polish'],
+    domainHints: ['writing', 'content', 'communication'],
+    description: 'Best for written content — essays, articles, blog posts, documentation. Critiques prose quality, structure, and audience alignment.',
+  },
+
+  framework: {
+    criticPersonaTemplate: 'You are a senior editor at a top publication reviewing this {{domain}} writing structure. You spot weak arguments, buried leads, audience misalignment, and structural issues instantly.',
+    responderPersonaTemplate: 'You are an experienced {{domain}} writer addressing editorial feedback with specific rewrites, structural improvements, and stronger evidence.',
+    evaluationDimensions: [
+      { key: 'clarity', label: 'CLARITY' },
+      { key: 'structure', label: 'STRUCTURE' },
+      { key: 'audience', label: 'AUDIENCE FIT' },
+      { key: 'evidence', label: 'EVIDENCE' },
+      { key: 'voice', label: 'VOICE & TONE' },
+      { key: 'hook', label: 'HOOK & LEAD' },
+    ],
+    chatPersonaTemplate: 'You are a developmental editor who helps the writer refine their {{domain}} piece with actionable feedback.',
+    quickActionTemplates: [
+      { label: 'Full Draft', prompt: 'Write a complete first draft based on this writing structure tree. Use the refined nodes as your outline.' },
+      { label: 'Rewrite Lead', prompt: 'Rewrite the opening paragraph/hook to be more compelling. Give 3 alternatives.' },
+      { label: 'Tighten Prose', prompt: 'Take the draft and cut 30% of the words while keeping all meaning. Show before/after.' },
+      { label: 'Audience Check', prompt: 'Is this piece pitched at the right level for the target audience? What should change?' },
+    ],
+    debateLabels: { panelTitle: 'EDITORIAL REVIEW', panelIcon: '✎', startLabel: 'REVIEW', responderLabel: 'WRITER' },
+  },
+
+  stages: {
+    critique: {
+      type: 'transform',
+      model: 'gemini:pro',
+      promptFallback: `You are a senior editor. Evaluate this writing structure tree across these dimensions:
+{{#each framework.evaluationDimensions}}
+- **{{label}}**: Score and explain
+{{/each}}
+
+Generate 6-8 critique points. For each: name the specific node, quote the weak text, explain why it fails, and suggest a concrete fix.
+
+Output JSON: { "verdict": "needs_work|acceptable|strong", "satisfied": false, "round_summary": "1-2 sentence overall assessment", "critiques": [{"category": "CLARITY|STRUCTURE|etc", "nodeId": "...", "issue": "...", "suggestion": "..."}], "suggestions": ["broad improvements"] }`,
+      outputFormat: 'json',
+      stream: false,
+      modelConfig: { maxTokens: 4096, extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } } },
+    },
+    respond: {
+      type: 'generate',
+      model: 'claude:sonnet',
+      promptFallback: `You are an expert writer addressing editorial critiques. For each critique, generate a revised or new node that directly solves the issue. Be specific — rewrite weak passages, restructure sections, strengthen arguments.
+
+Critiques to address:
+{{critique.critiques}}
+
+Generate 4-8 new/revised nodes. Use ids prefixed "rev_r{{round}}_". Each must have parentIds. Output: one JSON per line.`,
+      outputFormat: 'node-stream',
+      stream: true,
+      terminal: true,
+      modelConfig: { maxTokens: 6000 },
+    },
+  },
+
+  graph: {
+    entrypoint: 'critique',
+    edges: [{ from: 'critique', to: 'respond' }],
+  },
+
+  config: { maxRounds: 3, abortable: true },
+};
+
+// ── PLAN MODE PATTERNS ───────────────────────────────────────
+
+const riskCascade = {
+  id: 'risk-cascade',
+  name: 'Risk Cascade',
+  description: 'Identifies risks in a plan, traces their second-order effects, scores likelihood × impact, and generates mitigations. Surfaces the risks that could cascade into project failure.',
+  icon: '⚠',
+  color: '#f59e0b',
+  builtIn: true,
+
+  autoSelect: {
+    keywords: ['plan', 'project', 'timeline', 'milestone', 'sprint', 'roadmap', 'risk', 'schedule', 'deadline', 'resource'],
+    domainHints: ['planning', 'project management', 'operations'],
+    description: 'Best for project plans — surfaces risks, traces cascading failures, generates mitigations with likelihood and impact scoring.',
+  },
+
+  framework: {
+    criticPersonaTemplate: 'You are a risk analyst who has seen dozens of {{domain}} projects fail. You identify the risks that teams systematically underestimate.',
+    responderPersonaTemplate: 'You are a delivery lead who builds concrete mitigation plans for {{domain}} project risks with realistic contingencies.',
+    evaluationDimensions: [
+      { key: 'timeline_risk', label: 'TIMELINE' },
+      { key: 'resource_risk', label: 'RESOURCES' },
+      { key: 'dependency_risk', label: 'DEPENDENCIES' },
+      { key: 'scope_risk', label: 'SCOPE CREEP' },
+      { key: 'external_risk', label: 'EXTERNAL FACTORS' },
+    ],
+    chatPersonaTemplate: 'You are a {{domain}} project advisor who helps identify and mitigate risks before they cascade.',
+    quickActionTemplates: [
+      { label: 'Risk Matrix', prompt: 'Create a likelihood × impact risk matrix from the risks identified in this tree.' },
+      { label: 'Critical Path', prompt: 'What is the critical path in this plan? Which tasks have zero slack?' },
+      { label: 'Contingency Plan', prompt: 'Write a contingency plan for the top 3 highest-impact risks.' },
+      { label: 'Timeline Check', prompt: 'Is this timeline realistic? Flag any milestones that seem too aggressive.' },
+    ],
+    debateLabels: { panelTitle: 'RISK CASCADE', panelIcon: '⚠', startLabel: 'FIND RISKS', responderLabel: 'MITIGATOR' },
+  },
+
+  stages: {
+    identify: {
+      type: 'transform',
+      model: 'gemini:pro',
+      promptFallback: `Analyze this project plan tree and identify ALL risks. For each risk:
+- Name and describe the risk
+- Identify which plan nodes it affects
+- Score likelihood (1-5) and impact (1-5)
+- Trace second-order effects: if this risk materializes, what else breaks?
+
+Output JSON: { "risks": [{"id": "r1", "name": "...", "description": "...", "affectedNodes": ["..."], "likelihood": 3, "impact": 4, "secondOrderEffects": ["if this happens, then..."], "category": "TIMELINE|RESOURCES|DEPENDENCIES|SCOPE|EXTERNAL"}], "overallRiskLevel": "low|medium|high|critical" }`,
+      outputFormat: 'json',
+      stream: false,
+      modelConfig: { maxTokens: 6000, extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } } },
+    },
+    mitigate: {
+      type: 'generate',
+      model: 'claude:sonnet',
+      promptFallback: `For each risk identified, generate mitigation nodes. Each mitigation should be specific, actionable, and include:
+- What to do BEFORE the risk materializes (prevention)
+- What to do IF it materializes (contingency)
+- Who owns the mitigation
+
+Risks to mitigate:
+{{identify.risks}}
+
+Generate 6-10 mitigation nodes. Use ids prefixed "mit_". Link each to the plan nodes it protects via parentIds. Output: one JSON per line.`,
+      outputFormat: 'node-stream',
+      stream: true,
+      terminal: true,
+      modelConfig: { maxTokens: 6000 },
+    },
+  },
+
+  graph: {
+    entrypoint: 'identify',
+    edges: [{ from: 'identify', to: 'mitigate' }],
+  },
+
+  config: { maxRounds: 2, abortable: true },
+};
+
+// ── DECIDE MODE PATTERNS ─────────────────────────────────────
+
+const secondOrder = {
+  id: 'second-order',
+  name: 'Second-Order Effects',
+  description: 'Traces consequences beyond the obvious first-order effects. For each option, asks "and then what?" repeatedly to surface hidden implications, unintended consequences, and long-term dynamics.',
+  icon: '⟫',
+  color: '#06b6d4',
+  builtIn: true,
+
+  autoSelect: {
+    keywords: ['decide', 'choose', 'option', 'tradeoff', 'should I', 'versus', 'compare', 'pros cons', 'which', 'consequence', 'implication'],
+    domainHints: ['decision', 'strategy', 'policy'],
+    description: 'Best for decisions — traces consequences 2-3 levels deep. Surfaces unintended effects, feedback loops, and long-term dynamics.',
+  },
+
+  framework: {
+    criticPersonaTemplate: 'You are a systems thinker who traces the ripple effects of {{domain}} decisions. You ask "and then what?" until the hidden consequences surface.',
+    responderPersonaTemplate: 'You are a strategic advisor who maps the full consequence tree of {{domain}} choices and identifies which second-order effects matter most.',
+    evaluationDimensions: [
+      { key: 'first_order', label: '1ST ORDER' },
+      { key: 'second_order', label: '2ND ORDER' },
+      { key: 'third_order', label: '3RD ORDER' },
+      { key: 'reversibility', label: 'REVERSIBILITY' },
+      { key: 'feedback_loops', label: 'FEEDBACK LOOPS' },
+    ],
+    chatPersonaTemplate: 'You are a {{domain}} decision analyst who specializes in tracing consequences and surfacing what others miss.',
+    quickActionTemplates: [
+      { label: 'Decision Brief', prompt: 'Write a 1-page decision brief with recommendation, key tradeoffs, and the 3 most important second-order effects.' },
+      { label: 'Pre-Mortem', prompt: 'It is 1 year from now and this decision failed. What went wrong? Write the post-mortem.' },
+      { label: 'Reversibility Check', prompt: 'Which aspects of this decision are easily reversible vs. hard to undo? Flag the one-way doors.' },
+      { label: 'Stakeholder Impact', prompt: 'Map how each stakeholder group is affected by the first and second-order effects.' },
+    ],
+    debateLabels: { panelTitle: 'CONSEQUENCE MAPPING', panelIcon: '⟫', startLabel: 'TRACE EFFECTS', responderLabel: 'STRATEGIST' },
+  },
+
+  stages: {
+    trace: {
+      type: 'transform',
+      model: 'gemini:pro',
+      promptFallback: `For each major option/branch in this decision tree, trace the consequences 3 levels deep:
+- **1st order**: Direct, obvious outcomes (happens immediately)
+- **2nd order**: What happens BECAUSE of the 1st order effects (happens next)
+- **3rd order**: What happens because of the 2nd order effects (longer term, often surprising)
+
+Also identify:
+- Feedback loops (consequence X reinforces or dampens cause Y)
+- Reversibility (can this be undone? at what cost?)
+
+Output JSON: { "options": [{"nodeId": "...", "label": "...", "effects": [{"order": 1, "effect": "...", "probability": "high|medium|low"}, {"order": 2, "effect": "...", "probability": "..."}, {"order": 3, "effect": "...", "probability": "..."}], "feedbackLoops": ["..."], "reversibility": "easy|moderate|hard|irreversible"}], "recommendation": "which option looks best when 2nd/3rd order effects are considered" }`,
+      outputFormat: 'json',
+      stream: false,
+      modelConfig: { maxTokens: 6000, extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } } },
+    },
+    expand: {
+      type: 'generate',
+      model: 'claude:sonnet',
+      promptFallback: `Based on the consequence analysis, generate new nodes that make the second and third-order effects explicit in the decision tree. Each node should represent a specific consequence at a specific order.
+
+Consequence analysis:
+{{trace}}
+
+Generate 8-12 consequence nodes. Use ids prefixed "fx_". Group by order:
+- 1st order nodes: parentIds point to the option they follow from
+- 2nd order nodes: parentIds point to the 1st order effects they cascade from
+- 3rd order nodes: parentIds point to the 2nd order effects
+
+Types to use: "first_order_effect", "second_order_effect", "third_order_effect", "feedback_loop", "recommendation"
+Output: one JSON per line.`,
+      outputFormat: 'node-stream',
+      stream: true,
+      terminal: true,
+      modelConfig: { maxTokens: 6000 },
+    },
+  },
+
+  graph: {
+    entrypoint: 'trace',
+    edges: [{ from: 'trace', to: 'expand' }],
+  },
+
+  config: { maxRounds: 1, abortable: true },
+};
+
+module.exports = [adversarial, progressiveRefine, portfolioExplore, diffusion, mixtureOfExperts, evolutionary, backpropagation, compression, ragEnrich, editorialReview, riskCascade, secondOrder];
