@@ -142,6 +142,90 @@ Output JSON: { "recommended": "pattern_id", "alternatives": ["id1", "id2"], "rea
   }
 }
 
+// ── POST /api/pattern/recommend-next ──────────────────────────
+// Context-aware pattern recommendation for pipeline stage transitions.
+// Takes tree state + prior stage outcomes, recommends optimal next pattern.
+
+async function handlePatternRecommendNext(_client, req, res) {
+  const { idea, mode, nodes, priorStage, priorOutcome, pipelinePosition, availableStages } = req.body;
+  if (!idea) return res.status(400).json({ error: 'idea is required' });
+
+  const hints = patternLoader.getAutoSelectHints();
+  const nodeCount = nodes?.length || 0;
+
+  // Build a compact tree summary for the prompt
+  const typeCounts = {};
+  for (const n of (nodes || [])) {
+    const t = n.type || n.data?.type || 'unknown';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  }
+  const treeSummary = `${nodeCount} nodes: ${Object.entries(typeCounts).map(([t, c]) => `${c} ${t}`).join(', ')}`;
+
+  // Format prior outcome
+  const outcomeStr = priorOutcome
+    ? Object.entries(priorOutcome).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(', ')
+    : 'none';
+
+  try {
+    const { text } = await ai.call({
+      model: 'gemini:flash',
+      system: `You are a pipeline orchestrator for an AI thinking canvas. After each pipeline stage completes, you recommend the optimal next action.
+
+PIPELINE STAGES (in typical order):
+- debate: Multi-round adversarial critique. Best when tree needs stress-testing.
+- refine: Iterative strengthen-and-score loop. Best when nodes need improvement.
+- portfolio: Generate 3-5 alternative approaches. Best for exploring options.
+- prototype: Build interactive prototype. Best for product/UX ideas.
+
+AVAILABLE THINKING PATTERNS (can replace any built-in stage):
+${hints.map(h => `- "${h.id}" (${h.name}): ${h.description}. Best for: ${h.keywords.slice(0, 5).join(', ')}`).join('\n')}
+
+DECISION CRITERIA:
+- If tree has contradictions or weak nodes → recommend debate or root-cause pattern
+- If tree scored well but lacks alternatives → recommend portfolio
+- If tree needs deepening, not widening → recommend refine or progressive-refine pattern
+- If prior debate had 4+ rounds with no consensus → try a different pattern (expert-committee, socratic)
+- If scores are already high (8+/10) → recommend skipping to next stage
+- If tree is small (<10 nodes) → skip debate, go straight to refine or portfolio
+
+Output ONLY JSON:
+{
+  "recommended": "pattern-id or stage-name",
+  "stageType": "debate|refine|portfolio|prototype|pattern",
+  "alternatives": [{"id": "...", "name": "...", "reasoning": "..."}],
+  "reasoning": "1-2 sentences explaining why",
+  "shouldSkip": false,
+  "skipReason": null
+}`,
+      messages: [{ role: 'user', content: `Idea: "${idea}"
+Mode: ${mode || 'idea'}
+Tree state: ${treeSummary}
+Prior stage: ${priorStage || 'generate'}
+Prior outcome: ${outcomeStr}
+Pipeline position: ${pipelinePosition || 0}
+Remaining stages: ${(availableStages || []).join(', ') || 'debate, refine, portfolio, prototype'}
+
+What should the next pipeline stage be?` }],
+      maxTokens: 512,
+    });
+
+    const result = ai.parseJSON(text);
+    res.json(result);
+  } catch (err) {
+    // Fallback: recommend the next stage in sequence
+    const fallbackOrder = ['debate', 'refine', 'portfolio', 'prototype'];
+    const priorIdx = fallbackOrder.indexOf(priorStage);
+    const nextStage = fallbackOrder[priorIdx + 1] || 'refine';
+    res.json({
+      recommended: nextStage,
+      stageType: nextStage,
+      alternatives: [],
+      reasoning: 'Default sequence (recommendation failed)',
+      shouldSkip: false,
+    });
+  }
+}
+
 // ── POST /api/pattern/generate (SSE) ─────────────────────────
 // Generate a pattern definition from natural language description.
 
@@ -194,6 +278,73 @@ Output ONLY the JSON pattern definition. No markdown fences, no explanation.`,
   }
 }
 
+// ── POST /api/pattern/auto-generate ───────────────────────────
+// Read all existing patterns, identify gaps, generate novel ones.
+
+async function handlePatternAutoGenerate(_client, req, res) {
+  const { count = 3 } = req.body;
+
+  // Load all existing patterns with full details
+  const allPatterns = patternLoader.getAll();
+  const existingSummary = allPatterns.map(p =>
+    `- "${p.id}" (${p.name}): ${p.description}. Stages: ${Object.keys(p.stages || {}).join(', ')}. Keywords: ${(p.autoSelect?.keywords || []).join(', ')}`
+  ).join('\n');
+
+  try {
+    const { text } = await ai.call({
+      model: 'claude:opus',
+      system: `You are an expert thinking pattern designer for an AI-powered structured thinking canvas.
+
+The system processes ideas through multi-stage pipelines called "thinking patterns." Each pattern has stages (generate, transform, score, branch, merge, filter, enrich, fan_out) connected in a DAG.
+
+EXISTING PATTERNS (do NOT duplicate these):
+${existingSummary}
+
+Your job: Invent ${count} NOVEL thinking patterns that fill gaps in the current set. Think about what reasoning strategies are missing. Consider patterns from:
+- Scientific method (hypothesis → experiment → validate)
+- Design thinking (empathize → define → ideate → prototype → test)
+- Red team / blue team security analysis
+- Socratic questioning chains
+- Constraint satisfaction / backtracking
+- Analogical reasoning (map structure from one domain to another)
+- Counterfactual analysis (what if X didn't happen?)
+- Systems dynamics (feedback loops, stocks & flows)
+- Game theory (strategy, Nash equilibrium)
+- Root cause analysis (5 whys, fishbone)
+
+Each pattern MUST have:
+- id (kebab-case), name, description, icon (single emoji), color (hex)
+- autoSelect: { keywords: [...], domainHints: [...] }
+- stages: object with 3-6 stages using valid types (generate, transform, score, branch, merge, filter, enrich, fan_out)
+- graph: { entrypoint, edges: { stageId: "nextStageId" } }
+- config: { maxRounds, abortable }
+- framework: { criticPersonaTemplate, responderPersonaTemplate, evaluationDimensions, chatPersonaTemplate, quickActionTemplates, debateLabels }
+
+Stage prompts use {{slots}} for interpolation: {{idea}}, {{nodes}}, {{round}}, {{maxRounds}}, {{domain}}, etc.
+
+Output a JSON array of ${count} complete pattern definitions. No markdown fences, no explanation — ONLY the JSON array.`,
+      messages: [{ role: 'user', content: `Generate ${count} novel thinking patterns that complement the existing ${allPatterns.length} patterns. Focus on reasoning strategies NOT yet covered.` }],
+      maxTokens: 12000,
+    });
+
+    const patterns = ai.parseJSON(text);
+    if (!Array.isArray(patterns)) {
+      return res.status(500).json({ error: 'AI did not return an array of patterns' });
+    }
+
+    // Validate and apply defaults to each
+    const results = patterns.map(p => {
+      const withDefaults = applyDefaults(p);
+      const validation = validatePattern(withDefaults);
+      return { pattern: withDefaults, validation };
+    });
+
+    res.json({ patterns: results, existingCount: allPatterns.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // ── Framework resolution ─────────────────────────────────────
 // Resolves pattern framework templates with runtime context.
 
@@ -230,6 +381,8 @@ module.exports = {
   handlePatternResume,
   handlePatternExecuteStage,
   handlePatternRecommend,
+  handlePatternRecommendNext,
   handlePatternGenerate,
+  handlePatternAutoGenerate,
   resolveFramework,
 };

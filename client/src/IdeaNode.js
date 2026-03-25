@@ -367,22 +367,24 @@ const IdeaNode = memo(({ data }) => {
       ) : data.childCount > 0 ? (
         /* Collapse/expand chevron with child count */
         <button
-          className="fractal-collapse-btn"
+          className={`fractal-collapse-btn ${data.isCollapsed && data.descendantCount > 0 ? 'collapsed-deep' : ''}`}
           onClick={(e) => { e.stopPropagation(); data.onToggleCollapse?.(data.nodeId); }}
-          title={data.isCollapsed ? 'Expand children' : 'Collapse children'}
+          title={data.isCollapsed ? `Expand (${data.descendantCount || data.childCount} hidden nodes)` : 'Collapse children'}
           style={{
             position: 'absolute', bottom: -18, left: '50%',
             transform: 'translateX(-50%)',
-            background: config.bg, border: `1px solid ${config.border}`,
+            background: data.isCollapsed ? 'rgba(108,99,255,0.15)' : config.bg,
+            border: `1px solid ${data.isCollapsed ? 'rgba(108,99,255,0.4)' : config.border}`,
             borderRadius: 10, padding: '1px 8px',
-            fontSize: 9, fontWeight: 700, color: config.color,
+            fontSize: 9, fontWeight: 700,
+            color: data.isCollapsed ? '#8b83ff' : config.color,
             cursor: 'pointer', zIndex: 2, fontFamily: 'var(--font-mono)',
             display: 'flex', alignItems: 'center', gap: 3,
             transition: 'all 0.15s ease',
           }}
         >
-          <span style={{ fontSize: 8 }}>{data.isCollapsed ? '▸' : '▾'}</span>
-          {data.childCount}
+          <span style={{ fontSize: 8 }}>{data.isCollapsed ? '+' : '▾'}</span>
+          {data.isCollapsed ? (data.descendantCount || data.childCount) : data.childCount}
         </button>
       ) : null}
 

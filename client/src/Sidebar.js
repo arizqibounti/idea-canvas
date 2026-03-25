@@ -49,13 +49,14 @@ function groupSessionsByDate(sessions) {
 // ── Component ────────────────────────────────────────────────────
 
 const Sidebar = forwardRef(function Sidebar(
-  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse, onOpenSettings, onOpenKnowledge },
+  { activeSessionId, onOpenSession, onNewSession, isCollapsed, onToggleCollapse, onOpenSettings, onOpenKnowledge, onOpenForest },
   ref
 ) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedForests, setExpandedForests] = useState(new Set());
   const { user: authUser, logout: authLogout } = useAuth();
 
   // Fetch & merge sessions from server + localStorage
@@ -212,26 +213,72 @@ const Sidebar = forwardRef(function Sidebar(
                 const mode = getModeConfig(session.mode);
                 const isActive = activeSessionId === session.id;
                 const isConfirming = deleteConfirm === session.id;
+                const isForest = !!session.forestCanvases?.length;
+                const isExpanded = expandedForests.has(session.id);
+
                 return (
-                  <div
-                    key={session.id}
-                    className={`sidebar-row ${isActive ? 'sidebar-row--active' : ''}`}
-                    onClick={() => onOpenSession(session)}
-                  >
-                    <span className="sidebar-row-icon" style={{ color: mode.color }}>
-                      {mode.icon}
-                    </span>
-                    <span className="sidebar-row-title">
-                      {session.idea || 'Untitled session'}
-                    </span>
-                    <button
-                      className={`sidebar-row-delete ${isConfirming ? 'confirming' : ''}`}
-                      onClick={(e) => handleDelete(e, session)}
-                      title={isConfirming ? 'Click again to confirm' : 'Delete'}
+                  <React.Fragment key={session.id}>
+                    <div
+                      className={`sidebar-row ${isActive ? 'sidebar-row--active' : ''} ${isForest ? 'sidebar-row--forest' : ''}`}
+                      onClick={() => {
+                        if (isForest && onOpenForest) {
+                          // Open forest view
+                          onOpenForest({ id: session.forestId, sessionId: session.id, idea: session.idea, plan: session.forestPlan, canvases: session.forestCanvases });
+                        } else {
+                          onOpenSession(session);
+                        }
+                      }}
                     >
-                      {isConfirming ? '?' : '✕'}
-                    </button>
-                  </div>
+                      {isForest && (
+                        <button
+                          className="sidebar-row-expand"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedForests(prev => {
+                              const next = new Set(prev);
+                              if (next.has(session.id)) next.delete(session.id);
+                              else next.add(session.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          {isExpanded ? '▾' : '▸'}
+                        </button>
+                      )}
+                      <span className="sidebar-row-icon" style={{ color: isForest ? '#6c63ff' : mode.color }}>
+                        {isForest ? '◈' : mode.icon}
+                      </span>
+                      <span className="sidebar-row-title">
+                        {session.idea || 'Untitled session'}
+                      </span>
+                      <button
+                        className={`sidebar-row-delete ${isConfirming ? 'confirming' : ''}`}
+                        onClick={(e) => handleDelete(e, session)}
+                        title={isConfirming ? 'Click again to confirm' : 'Delete'}
+                      >
+                        {isConfirming ? '?' : '✕'}
+                      </button>
+                    </div>
+                    {/* Forest sub-canvases (directory listing) */}
+                    {isForest && isExpanded && session.forestCanvases.map(canvas => (
+                      <div
+                        key={canvas.canvasKey}
+                        className="sidebar-row sidebar-row--sub"
+                        onClick={() => {
+                          if (onOpenForest) {
+                            onOpenForest({ id: session.forestId, sessionId: session.id, idea: session.idea, plan: session.forestPlan, canvases: session.forestCanvases, activeCanvasKey: canvas.canvasKey });
+                          }
+                        }}
+                      >
+                        <span className="sidebar-sub-indent" />
+                        <span className={`sidebar-sub-status sidebar-sub-status--${canvas.status || 'pending'}`}>
+                          {canvas.status === 'ready' ? '●' : canvas.status === 'generating' ? '◌' : '○'}
+                        </span>
+                        <span className="sidebar-row-title">{canvas.title}</span>
+                        {canvas.nodeCount > 0 && <span className="sidebar-sub-count">{canvas.nodeCount}</span>}
+                      </div>
+                    ))}
+                  </React.Fragment>
                 );
               })}
             </div>

@@ -1,7 +1,8 @@
-// ── Forest Context: Multi-Canvas State Management ────────────
-// Provides forest state and methods to all forest-mode components.
+// ── Forest Context: Tabbed Multi-Canvas State Management ────────────
+// All canvases live as in-memory arrays within a single session.
+// No separate sessions or network loads per canvas.
 
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -38,50 +39,75 @@ async function readSSE(res, onEvent, signal) {
 
 export function ForestProvider({ forest: initialForest, children }) {
   const [forest, setForest] = useState(initialForest);
-  const [activeCanvasKey, setActiveCanvasKey] = useState('__meta__');
-  const [canvasSessions, setCanvasSessions] = useState(new Map());
+  const [activeCanvasKey, setActiveCanvasKeyRaw] = useState(initialForest?.activeCanvasKey || '__meta__');
   const [crossRefs, setCrossRefs] = useState(initialForest?.crossRefs || []);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [canvasStatuses, setCanvasStatuses] = useState(() => {
-    const statuses = {};
-    (initialForest?.canvases || []).forEach(c => { statuses[c.canvasKey] = c.status; });
-    return statuses;
-  });
   const [critique, setCritique] = useState(null);
   const abortRef = useRef(null);
+
+  // forestCanvases: array of { canvasKey, title, nodes[], status, description, dependencies }
+  const [forestCanvases, setForestCanvases] = useState(() => {
+    // If reopening from sidebar, canvases already have nodes
+    if (initialForest?.canvases?.length) {
+      return initialForest.canvases.map(c => ({
+        canvasKey: c.canvasKey,
+        title: c.title,
+        description: c.description || '',
+        dependencies: c.dependencies || [],
+        nodes: c.nodes || [],
+        status: c.status || (c.nodes?.length ? 'ready' : 'pending'),
+        nodeCount: c.nodeCount || c.nodes?.length || 0,
+      }));
+    }
+    // Fresh decompose — initialize from plan with empty nodes
+    const plan = initialForest?.plan;
+    if (!plan?.canvases) return [];
+    return plan.canvases.map(c => ({
+      canvasKey: c.canvasKey,
+      title: c.title,
+      description: c.description || '',
+      dependencies: c.dependencies || [],
+      nodes: [],
+      status: c.status || 'pending',
+    }));
+  });
 
   const isForestMode = !!forest;
   const plan = forest?.plan;
 
-  // Load a canvas session by key
-  const loadCanvasSession = useCallback(async (canvasKey) => {
-    const canvasRef = forest?.canvases?.find(c => c.canvasKey === canvasKey);
-    if (!canvasRef?.sessionId) return null;
-    try {
-      const res = await authFetch(`${API_URL}/api/sessions/${canvasRef.sessionId}`);
-      if (res.ok) {
-        const session = await res.json();
-        setCanvasSessions(prev => new Map(prev).set(canvasKey, session));
-        return session;
-      }
-    } catch {}
-    return null;
-  }, [forest]);
+  // Derived: nodes for whichever canvas tab is active
+  const activeCanvasNodes = useMemo(() => {
+    return forestCanvases.find(c => c.canvasKey === activeCanvasKey)?.nodes || [];
+  }, [forestCanvases, activeCanvasKey]);
 
-  // Switch to a canvas
+  // Switch canvas — pure state change, no network call
   const setActiveCanvas = useCallback((canvasKey) => {
-    setActiveCanvasKey(canvasKey);
-    if (canvasKey !== '__meta__' && !canvasSessions.has(canvasKey)) {
-      loadCanvasSession(canvasKey);
-    }
-  }, [canvasSessions, loadCanvasSession]);
+    setActiveCanvasKeyRaw(canvasKey);
+  }, []);
 
-  // Generate all canvases
+  // Update a specific canvas's nodes
+  const setCanvasNodes = useCallback((canvasKey, nodes) => {
+    setForestCanvases(prev => prev.map(c =>
+      c.canvasKey === canvasKey ? { ...c, nodes } : c
+    ));
+  }, []);
+
+  // Canvas statuses derived from forestCanvases
+  const canvasStatuses = useMemo(() => {
+    const statuses = {};
+    forestCanvases.forEach(c => { statuses[c.canvasKey] = c.status; });
+    return statuses;
+  }, [forestCanvases]);
+
+  // Generate all canvases via SSE
   const generateAll = useCallback(async () => {
     if (!forest?.id) return;
     setIsGenerating(true);
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Reset all canvases to pending before generation
+    setForestCanvases(prev => prev.map(c => ({ ...c, status: 'pending', nodes: [] })));
 
     try {
       const res = await authFetch(`${API_URL}/api/forest/generate-all`, {
@@ -92,14 +118,29 @@ export function ForestProvider({ forest: initialForest, children }) {
       });
 
       await readSSE(res, (event) => {
+        // Progress updates (status changes)
         if (event._forestProgress) {
-          setCanvasStatuses(prev => ({
-            ...prev,
-            [event.canvasKey]: event.status,
-          }));
+          if (event.canvasKey && event.status) {
+            setForestCanvases(prev => prev.map(c =>
+              c.canvasKey === event.canvasKey
+                ? { ...c, status: event.status }
+                : c
+            ));
+          }
         }
+        // Cross-reference detection results
         if (event._forestCrossRefs) {
           setCrossRefs(event.crossRefs || []);
+        }
+        // Individual node streamed from a canvas (tagged with _canvasKey)
+        if (event._canvasKey && !event._forestProgress && !event._forestCrossRefs && !event._forestComplete && !event._meta && !event._progress) {
+          const canvasKey = event._canvasKey;
+          const { _canvasKey, ...nodeData } = event;
+          setForestCanvases(prev => prev.map(c =>
+            c.canvasKey === canvasKey
+              ? { ...c, nodes: [...c.nodes, nodeData] }
+              : c
+          ));
         }
         if (event._forestComplete) {
           setIsGenerating(false);
@@ -137,14 +178,33 @@ export function ForestProvider({ forest: initialForest, children }) {
     setIsGenerating(false);
   }, []);
 
+  // Initialize from a session that already has forest data
+  const initFromSession = useCallback((session) => {
+    if (session?.forestCanvases && session?.forestPlan) {
+      setForestCanvases(session.forestPlan.canvases.map(c => {
+        const saved = session.forestCanvases.find(fc => fc.canvasKey === c.canvasKey);
+        return {
+          canvasKey: c.canvasKey,
+          title: c.title,
+          description: c.description || '',
+          dependencies: c.dependencies || [],
+          nodes: saved?.nodes || [],
+          status: saved?.status || c.status || 'pending',
+        };
+      }));
+    }
+  }, []);
+
   const value = {
     forest,
     setForest,
     plan,
     activeCanvasKey,
     setActiveCanvas,
-    canvasSessions,
-    loadCanvasSession,
+    activeCanvasNodes,
+    forestCanvases,
+    setForestCanvases,
+    setCanvasNodes,
     crossRefs,
     canvasStatuses,
     isForestMode,
@@ -153,6 +213,7 @@ export function ForestProvider({ forest: initialForest, children }) {
     runCritique,
     critique,
     stopGeneration,
+    initFromSession,
   };
 
   return (

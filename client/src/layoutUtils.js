@@ -23,7 +23,8 @@ let _lastNodeCount = 0;
 
 // Helper: get parentIds array from a node (supports both legacy parentId and new parentIds)
 function getParentIds(n) {
-  return n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+  const d = n.data || n;
+  return d.parentIds || (d.parentId ? [d.parentId] : []);
 }
 
 /**
@@ -471,6 +472,33 @@ export function computeDepths(nodes) {
     children.forEach(childId => queue.push({ id: childId, depth: depth + 1 }));
   }
   return depths;
+}
+
+// Compute descendant count for every node (total nodes below it in the tree)
+export function computeDescendantCounts(nodes) {
+  const childMap = new Map();
+  nodes.forEach((n) => {
+    const pids = getParentIds(n);
+    pids.forEach(pid => {
+      if (!childMap.has(pid)) childMap.set(pid, []);
+      childMap.get(pid).push(n.id);
+    });
+  });
+
+  const counts = new Map();
+  const countDescendants = (nodeId) => {
+    if (counts.has(nodeId)) return counts.get(nodeId);
+    const children = childMap.get(nodeId) || [];
+    let total = children.length;
+    for (const childId of children) {
+      total += countDescendants(childId);
+    }
+    counts.set(nodeId, total);
+    return total;
+  };
+
+  nodes.forEach(n => countDescendants(n.id));
+  return counts;
 }
 
 export function buildEdges(nodes, { showCrossLinks = false, nodeConfigGetter = null } = {}) {

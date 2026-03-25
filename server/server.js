@@ -112,12 +112,14 @@ app.use('/api/prompts', require('./routes/prompts'));
 
 // ── Pattern Admin API + Execution ──────────────────────────────
 app.use('/api/patterns', require('./routes/patterns'));
-const { handlePatternExecute, handlePatternResume, handlePatternExecuteStage, handlePatternRecommend, handlePatternGenerate } = require('./engine/patternHandler');
+const { handlePatternExecute, handlePatternResume, handlePatternExecuteStage, handlePatternRecommend, handlePatternRecommendNext, handlePatternGenerate, handlePatternAutoGenerate } = require('./engine/patternHandler');
 app.post('/api/pattern/execute', generationLimit, (req, res) => handlePatternExecute(client, req, res));
 app.post('/api/pattern/resume', (req, res) => handlePatternResume(client, req, res));
 app.post('/api/pattern/execute-stage', (req, res) => handlePatternExecuteStage(client, req, res));
 app.post('/api/pattern/recommend', (req, res) => handlePatternRecommend(client, req, res));
+app.post('/api/pattern/recommend-next', (req, res) => handlePatternRecommendNext(client, req, res));
 app.post('/api/pattern/generate', generationLimit, (req, res) => handlePatternGenerate(client, req, res));
+app.post('/api/pattern/auto-generate', generationLimit, (req, res) => handlePatternAutoGenerate(client, req, res));
 
 // ── Usage endpoint ──────────────────────────────────────────────
 app.get('/api/usage', async (req, res) => {

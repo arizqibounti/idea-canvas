@@ -2,7 +2,7 @@
 // Extracted Gmail integration logic: status, connect, disconnect,
 // thread search/select, and picker modal state.
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -15,6 +15,8 @@ const ENDPOINTS = {
   thread:     (id, mode) => `${API_URL}/api/integrations/gmail/thread/${id}${mode ? `?mode=${mode}` : ''}`,
 };
 
+const MAX_RESULTS = 25;
+
 export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) {
   const [status, setStatus] = useState({ configured: false, connected: false, account: null });
   const [showPicker, setShowPicker] = useState(false);
@@ -23,6 +25,7 @@ export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) 
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(null);
   const [error, setError] = useState(null);
+  const debounceRef = useRef(null);
 
   // Check integration status on mount
   useEffect(() => {
@@ -77,7 +80,7 @@ export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) 
     setIsSearching(true);
     setError(null);
     try {
-      const res = await authFetch(`${ENDPOINTS.threads}?q=${encodeURIComponent(query || '')}&maxResults=10`);
+      const res = await authFetch(`${ENDPOINTS.threads}?q=${encodeURIComponent(query || '')}&maxResults=${MAX_RESULTS}`);
       if (!res.ok) throw new Error('Failed to fetch threads');
       const data = await res.json();
       setThreads(data.threads || []);
@@ -87,6 +90,15 @@ export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) 
       setIsSearching(false);
     }
   }, []);
+
+  // Debounced auto-search as user types (300ms delay)
+  const handleSearchInput = useCallback((value) => {
+    setSearchQuery(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      searchThreads(value);
+    }, 400);
+  }, [searchThreads]);
 
   const selectThread = useCallback(async (threadId) => {
     setIsLoadingThread(threadId);
@@ -111,6 +123,7 @@ export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) 
 
   const openPicker = useCallback(() => {
     setShowPicker(true);
+    setSearchQuery('');
     searchThreads('');
   }, [searchThreads]);
 
@@ -128,7 +141,7 @@ export default function useGmail({ onThreadSelected, onClearEmail, mode } = {}) 
     showPicker,
     setShowPicker,
     searchQuery,
-    setSearchQuery,
+    setSearchQuery: handleSearchInput, // auto-search on type
     searchThreads,
     selectThread,
     threads,

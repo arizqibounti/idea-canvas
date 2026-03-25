@@ -1,5 +1,6 @@
 // ── Forest Meta Canvas: Topology View ────────────────────────
 // Shows the forest as a graph of canvases with dependency and cross-ref edges.
+// Reads directly from forestCanvases in context (no separate sessions).
 
 import React, { useMemo, useCallback, useEffect } from 'react';
 import {
@@ -56,15 +57,13 @@ function ForestMetaCanvasInner() {
   const ctx = useForest();
 
   const plan = ctx?.plan;
-  const canvasStatuses = ctx?.canvasStatuses || {};
+  const forestCanvases = ctx?.forestCanvases || [];
   const crossRefs = ctx?.crossRefs || [];
-  const forest = ctx?.forest;
   const setActiveCanvas = ctx?.setActiveCanvas;
 
-  // Build layout — always called (no conditional hooks)
+  // Build layout from forestCanvases directly
   const layout = useMemo(() => {
-    const canvases = plan?.canvases || [];
-    if (!canvases.length) return { nodes: [], edges: [] };
+    if (!forestCanvases.length) return { nodes: [], edges: [] };
 
     const nodeWidth = 260;
     const nodeHeight = 140;
@@ -75,16 +74,16 @@ function ForestMetaCanvasInner() {
     const layers = [];
     const assigned = new Set();
 
-    let currentLayer = canvases.filter(c => !c.dependencies?.length);
+    let currentLayer = forestCanvases.filter(c => !c.dependencies?.length);
     while (currentLayer.length > 0) {
       layers.push(currentLayer.map(c => c.canvasKey));
       currentLayer.forEach(c => assigned.add(c.canvasKey));
-      currentLayer = canvases.filter(c =>
+      currentLayer = forestCanvases.filter(c =>
         !assigned.has(c.canvasKey) &&
         (c.dependencies || []).every(d => assigned.has(d))
       );
     }
-    const remaining = canvases.filter(c => !assigned.has(c.canvasKey));
+    const remaining = forestCanvases.filter(c => !assigned.has(c.canvasKey));
     if (remaining.length) layers.push(remaining.map(c => c.canvasKey));
 
     const nodes = [];
@@ -93,17 +92,16 @@ function ForestMetaCanvasInner() {
       const startX = -totalWidth / 2 + nodeWidth / 2;
 
       layer.forEach((key, idx) => {
-        const canvasDef = canvases.find(c => c.canvasKey === key);
-        const canvasRef = forest?.canvases?.find(c => c.canvasKey === key);
+        const canvas = forestCanvases.find(c => c.canvasKey === key);
         nodes.push({
           id: key,
           type: 'canvasNode',
           position: { x: startX + idx * (nodeWidth + gapX), y: layerIdx * (nodeHeight + gapY) },
           data: {
-            title: canvasDef?.title || key,
-            description: canvasDef?.description || '',
-            status: canvasStatuses[key] || 'pending',
-            nodeCount: canvasRef?.nodeCount || 0,
+            title: canvas?.title || key,
+            description: canvas?.description || '',
+            status: canvas?.status || 'pending',
+            nodeCount: canvas?.nodes?.length || 0,
           },
         });
       });
@@ -111,14 +109,14 @@ function ForestMetaCanvasInner() {
 
     // Dependency edges
     const edges = [];
-    canvases.forEach(c => {
+    forestCanvases.forEach(c => {
       (c.dependencies || []).forEach(dep => {
         edges.push({
           id: `dep-${dep}-${c.canvasKey}`,
           source: dep,
           target: c.canvasKey,
           type: 'default',
-          animated: canvasStatuses[dep] === 'generating',
+          animated: c.status === 'generating' || forestCanvases.find(d => d.canvasKey === dep)?.status === 'generating',
           style: { stroke: '#444', strokeWidth: 2 },
         });
       });
@@ -139,7 +137,7 @@ function ForestMetaCanvasInner() {
     });
 
     return { nodes, edges };
-  }, [plan, canvasStatuses, crossRefs, forest]);
+  }, [forestCanvases, crossRefs]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -157,7 +155,7 @@ function ForestMetaCanvasInner() {
     if (setActiveCanvas) setActiveCanvas(node.id);
   }, [setActiveCanvas]);
 
-  if (!plan) {
+  if (!plan && !forestCanvases.length) {
     return <div className="forest-meta-empty">No forest plan loaded.</div>;
   }
 

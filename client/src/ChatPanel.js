@@ -9,6 +9,7 @@ import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
 import DebateCard from './chat/DebateCard';
 import PrototypeCard from './chat/PrototypeCard';
+import PipelineCheckpointCard from './chat/PipelineCheckpointCard';
 import { serializeTree, buildFocusedSubtree } from './treeUtils';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -121,6 +122,14 @@ const ACTION_LABELS = {
   executeAction: 'Executing Fix',
   refineMore: 'Continuing Refine',
   portfolioMore: 'More Alternatives',
+  expandNode: 'Expanding Node',
+  editNode: 'Edited Node',
+  regenerateNode: 'Regenerating Node',
+  starNode: 'Toggled Star',
+  deleteNode: 'Deleted Node',
+  deleteBranch: 'Deleted Branch',
+  executePattern: 'Running Pattern',
+  buildPrototype: 'Building Prototype',
 };
 
 function parseActions(fullText) {
@@ -163,7 +172,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -580,7 +589,13 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
 
         {/* ── Live Learn Stream ── */}
         {learnStream && (
-          <LearnCard state={learnStream} onAction={onCardButtonClick} />
+          <LearnCard
+            state={learnStream}
+            onAction={onCardButtonClick}
+            mnemonicJob={learnStream?.conceptId && mnemonicJobs ? mnemonicJobs[learnStream.conceptId] : null}
+            onGenerateVideo={onGenerateVideo}
+            onPlayVideo={onPlayVideo}
+          />
         )}
 
         {/* ── Live Experiment Stream ── */}
@@ -589,6 +604,9 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         )}
 
         {/* ── Live Prototype Build Stream ── */}
+        {pipelineCheckpoint && (
+          <PipelineCheckpointCard state={pipelineCheckpoint} onAction={onPipelineCheckpointAction} />
+        )}
         {prototypeStream && (
           <PrototypeCard state={prototypeStream} onAction={onCardButtonClick} />
         )}

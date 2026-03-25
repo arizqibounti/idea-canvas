@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { computeForceLayout, buildEdges, getSubtree, filterCollapsed, computeDepths, resetForceLayoutCache } from './layoutUtils';
+import { computeForceLayout, buildEdges, getSubtree, filterCollapsed, computeDepths, computeDescendantCounts, resetForceLayoutCache } from './layoutUtils';
 import { getNodeConfig } from './nodeConfig';
 import { authFetch } from './api';
 
@@ -205,10 +205,14 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
       });
     });
 
+    // Compute descendant counts for collapse badges
+    const descCounts = computeDescendantCounts(rawNodes);
+
     // Annotate nodes with fractal data
     laidOut.forEach(n => {
       n.data.depth = depths.get(n.id) || 0;
       n.data.childCount = childCountMap[n.id] || 0;
+      n.data.descendantCount = descCounts.get(n.id) || 0;
       n.data.isCollapsed = collapsedNodesRef.current.has(n.id);
       n.data.isExpanding = expandingNodeRef.current === n.id;
       n.data.nodeId = n.id;
@@ -606,6 +610,32 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
     applyLayout(rawNodesRef.current, drillStackRef.current);
   }, [applyLayout]);
 
+  // ── Auto-collapse deep branches (for large trees) ─────────
+  const autoCollapseDeep = useCallback((threshold = 15, maxVisibleDepth = 2) => {
+    const nodes = rawNodesRef.current;
+    if (nodes.length <= threshold) return;
+    if (drillStackRef.current.length > 0) return; // don't auto-collapse in drill mode
+
+    const depths = computeDepths(nodes);
+    // Find parent nodes (nodes that have children)
+    const parentIds = new Set();
+    nodes.forEach(n => {
+      const pids = n.data.parentIds || (n.data.parentId ? [n.data.parentId] : []);
+      pids.forEach(pid => parentIds.add(pid));
+    });
+    // Collapse parents at depth >= maxVisibleDepth
+    const toCollapse = new Set();
+    for (const [nodeId, depth] of depths) {
+      if (depth >= maxVisibleDepth && parentIds.has(nodeId)) {
+        toCollapse.add(nodeId);
+      }
+    }
+    if (toCollapse.size > 0) {
+      collapsedNodesRef.current = toCollapse;
+      applyLayout(rawNodesRef.current, drillStackRef.current);
+    }
+  }, [applyLayout]);
+
   // ── Fractal expand (inline ⊕) ─────────────────────────────
   const handleFractalExpand = useCallback(async (nodeId) => {
     if (isGenerating || isRegenerating || expandingNodeRef.current) return;
@@ -858,7 +888,7 @@ export function useCanvasMode({ storageKey, sessionLabel = 'label', yjsSyncRef, 
     handleDrill, handleExitDrill, handleJumpToBreadcrumb,
     handleNodeContextMenu, handleCloseContextMenu, handleToggleStar, setNodeScores,
     // Fractal handlers
-    handleFractalExpand, handleToggleCollapse, handleCollapseAll, handleExpandAll,
+    handleFractalExpand, handleToggleCollapse, handleCollapseAll, handleExpandAll, autoCollapseDeep,
     handleAutoFractal, handleStopAutoFractal,
     deleteNodeBranch,
   };

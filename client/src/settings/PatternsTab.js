@@ -119,7 +119,6 @@ export default function PatternsTab() {
         setSelected(data.pattern.id);
         setShowGenModal(false);
         setGenerateInput('');
-        // Save as new pattern
         await authFetch(`${API_URL}/api/patterns`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -128,6 +127,44 @@ export default function PatternsTab() {
         loadList();
       }
     } catch (err) { alert('Generation failed: ' + err.message); }
+    finally { setGenerating(false); }
+  };
+
+  // Auto-generate novel patterns that fill gaps in existing set
+  const handleAutoGenerate = async () => {
+    setGenerating(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/pattern/auto-generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 3 }),
+      });
+      const data = await res.json();
+      if (data.patterns?.length) {
+        let savedCount = 0;
+        for (const { pattern } of data.patterns) {
+          // Skip if pattern with same id already exists
+          if (patterns.find(p => p.id === pattern.id)) continue;
+          try {
+            await authFetch(`${API_URL}/api/patterns`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ definition: pattern }),
+            });
+            savedCount++;
+          } catch {}
+        }
+        loadList();
+        if (savedCount > 0) {
+          // Select the first new pattern
+          const firstNew = data.patterns[0]?.pattern;
+          if (firstNew) {
+            setSelected(firstNew.id);
+            setEditDef(firstNew);
+          }
+        }
+      }
+    } catch (err) { alert('Auto-generate failed: ' + err.message); }
     finally { setGenerating(false); }
   };
 
@@ -260,7 +297,7 @@ export default function PatternsTab() {
               onChange={e => setFilter(e.target.value)}
             />
             <div className="patterns-sidebar-actions">
-              <button className="patterns-btn patterns-btn--sm" onClick={() => setShowGenModal(true)}>AI GENERATE</button>
+              <button className="patterns-btn patterns-btn--sm" onClick={handleAutoGenerate} disabled={generating}>{generating ? '◌ GENERATING...' : 'AI GENERATE'}</button>
               <button className="patterns-btn patterns-btn--sm" onClick={handleSeed} disabled={seeding}>
                 {seeding ? 'SEEDING...' : 'SEED'}
               </button>

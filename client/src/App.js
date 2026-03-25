@@ -36,6 +36,7 @@ import { useMnemonicVideo } from './useMnemonicVideo';
 import PipelineOverlay from './PipelineOverlay';
 import VideoModal from './VideoModal';
 import FlowchartView from './FlowchartView';
+import LearnJourneyView from './LearnJourneyView';
 import GmailPicker from './GmailConnect';
 import useGmail from './useGmail';
 import InviteAccept from './InviteAccept';
@@ -55,7 +56,7 @@ import SyncStatusBar from './yjs/SyncStatusBar';
 import { ForestProvider, useForest } from './ForestContext';
 import ClaudeCodePicker from './ClaudeCodePicker';
 import SessionFilesBar from './SessionFilesBar';
-import ForestSidebar from './ForestSidebar';
+import ForestTabBar from './ForestTabBar';
 import ForestMetaCanvas from './ForestMetaCanvas';
 import './App.css';
 
@@ -87,6 +88,8 @@ const CHAT_LABELS = {
 
 // Helper: stream generation via WebSocket, with same callback pattern as readSSEStream
 // Returns null if WS send fails (caller should fall back to REST)
+// Stores activeReqId for stop/cancel support
+let activeWsReqId = null;
 function streamViaGateway(gateway, type, params, onNode) {
   return new Promise((resolve) => {
     const reqId = gateway.send(type, params, {
@@ -94,12 +97,13 @@ function streamViaGateway(gateway, type, params, onNode) {
       onMeta: (data) => onNode({ ...data, _meta: true }),
       onProgress: (stage) => onNode({ _progress: true, stage }),
       onText: (data) => onNode(data),
-      onResult: (data) => resolve({ done: true, result: data }),
+      onResult: (data) => { activeWsReqId = null; resolve({ done: true, result: data }); },
       onCanvasArtifact: (data) => onNode({ _canvas: true, ...data }),
-      onDone: () => resolve({ done: true }),
-      onError: (message) => resolve({ error: message }),
+      onDone: () => { activeWsReqId = null; resolve({ done: true }); },
+      onError: (message) => { activeWsReqId = null; resolve({ error: message }); },
     });
-    if (!reqId) resolve(null); // null signals: fall back to REST
+    if (!reqId) { resolve(null); return; }
+    activeWsReqId = reqId;
   });
 }
 
@@ -434,14 +438,11 @@ function AppRouter() {
           <SettingsPage onClose={() => { setShowSettings(false); window.history.pushState({}, '', '/'); }} />
         ) : activeForest ? (
           <ForestProvider forest={activeForest}>
-            <div className="forest-layout">
-              <ForestSidebar />
-              <ForestCanvasArea
-                forest={activeForest}
-                onSessionSaved={handleSessionSaved}
-                onExit={() => setActiveForest(null)}
-              />
-            </div>
+            <ForestCanvasArea
+              forest={activeForest}
+              onSessionSaved={handleSessionSaved}
+              onExit={() => setActiveForest(null)}
+            />
           </ForestProvider>
         ) : !activeSession ? (
           <EmptyState onNewSession={(modeId) => setActiveSession({ isNew: true, mode: modeId })} />
@@ -459,32 +460,48 @@ function AppRouter() {
   );
 }
 
-// ── Forest Canvas Area: switches between meta view and individual canvases ──
+// ── Forest Canvas Area: tab bar + meta view or inline canvas nodes ──
 function ForestCanvasArea({ forest, onSessionSaved, onExit }) {
   const ctx = useForest();
+
+  const activeCanvasKey = ctx?.activeCanvasKey ?? '__meta__';
+  const forestCanvases = ctx?.forestCanvases ?? [];
+
+  // Build a synthetic session for the active canvas tab.
+  // The key on <App> forces React to remount when switching canvases,
+  // which resets the internal useCanvasMode state cleanly.
+  const canvasSession = React.useMemo(() => {
+    if (activeCanvasKey === '__meta__') return null;
+    const canvas = forestCanvases.find(c => c.canvasKey === activeCanvasKey);
+    if (!canvas) return null;
+    return {
+      id: `forest-canvas-${activeCanvasKey}`,
+      label: canvas.title || activeCanvasKey,
+      rawNodes: canvas.nodes || [],
+      mode: 'idea',
+      source: 'forest',
+      _forestCanvasKey: activeCanvasKey,
+    };
+  }, [activeCanvasKey, forestCanvases]);
+
   if (!ctx) return null;
 
-  const { activeCanvasKey, canvasSessions } = ctx;
-
-  if (activeCanvasKey === '__meta__') {
-    return <ForestMetaCanvas />;
-  }
-
-  const canvasRef = forest.canvases?.find(c => c.canvasKey === activeCanvasKey);
-  if (!canvasRef?.sessionId) {
-    return <div className="forest-meta-empty">Select a canvas from the sidebar to view it.</div>;
-  }
-
-  const session = canvasSessions.get(activeCanvasKey);
-  const initialSession = session || { id: canvasRef.sessionId, source: 'cloud' };
-
   return (
-    <App
-      key={canvasRef.sessionId}
-      initialSession={initialSession}
-      onBackToDashboard={onExit}
-      onSessionSaved={onSessionSaved}
-    />
+    <div className="forest-canvas-area" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <ForestTabBar onExit={onExit} />
+      {activeCanvasKey === '__meta__' ? (
+        <ForestMetaCanvas />
+      ) : canvasSession ? (
+        <App
+          key={activeCanvasKey}
+          initialSession={canvasSession}
+          onBackToDashboard={onExit}
+          onSessionSaved={onSessionSaved}
+        />
+      ) : (
+        <div className="forest-meta-empty">Select a canvas tab to view it.</div>
+      )}
+    </div>
   );
 }
 
@@ -628,6 +645,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       if (!normalized.rawNodes && normalized.nodes?.length) {
         normalized.rawNodes = normalized.nodes.map(n => n.id && n.data ? n : buildFlowNode(n));
       }
+      // Ensure all rawNodes have the data wrapper (forest canvas nodes may be raw)
+      if (normalized.rawNodes?.length && normalized.rawNodes[0] && !normalized.rawNodes[0].data) {
+        normalized.rawNodes = normalized.rawNodes.map(n => n.data ? n : buildFlowNode(n));
+      }
 
       if (sessionMode === 'codebase') {
         if (normalized.rawNodes?.length) {
@@ -705,6 +726,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const [dynamicDomain, setDynamicDomain] = useState(null); // domain label for legend
   const [dynamicLegendTypes, setDynamicLegendTypes] = useState([]); // ordered types for legend
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
+  const [isDecomposing, setIsDecomposing] = useState(false);
 
   // ── Thinking Patterns ──────────────────────────────────────
   const [activePattern, setActivePattern] = useState(null);        // pattern definition (from _meta)
@@ -805,6 +827,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const debateAbortRef = useRef(null);
   const debateLoopRef = useRef(false);
   const startDebateInChatRef = useRef(null);
+  const startRefineInChatRef = useRef(null);
+  const startPortfolioInChatRef = useRef(null);
+  const startPrototypeBuildRef = useRef(null);
   const handleConsensusReachedRef = useRef(null);
 
   // ── Chat Companion ────────────────────────────────────────
@@ -854,6 +879,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const [autoPrototypeOnGen, setAutoPrototypeOnGen] = useState(false);
   const [portfolioFocus, setPortfolioFocus] = useState(null); // dynamic focus context from chat (types/nodeIds/userIntent)
   const [pipelineStages, setPipelineStages] = useState(null); // pipeline overlay stages
+  const [pipelineCheckpoint, setPipelineCheckpoint] = useState(null); // { recommended, stageType, alternatives, reasoning, shouldSkip }
+  const [autonomousMode, setAutonomousMode] = useState(false); // skip checkpoints when true
+  const advancePipelineRef = useRef(null); // ref to break circular hook dependency
   const [emailContext, setEmailContext] = useState(null); // { id, subject, messageCount, formatted }
   const [showPlusMenu, setShowPlusMenu] = useState(false); // + attachments popover
   const plusMenuBtnRef = useRef(null);
@@ -891,14 +919,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   // ── Generation mode: single | multi | research ───────────
   const [multiAgentProgress, setMultiAgentProgress] = useState(null);
 
-  // ── Auto-save (skip when Yjs handles persistence) ────────
+  // ── Auto-save (skip when Yjs handles persistence or in forest canvas) ────────
   useEffect(() => {
     if (yjs) return; // Yjs handles persistence via y-indexeddb
+    if (initialSession?.source === 'forest') return; // Forest canvases save via ForestContext
     if (activeMode === 'idea') idea$.triggerAutoSave(idea, displayMode);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idea$.nodeCount, idea, activeMode]);
 
   useEffect(() => {
+    if (initialSession?.source === 'forest') return;
     if (activeMode === 'codebase') cb$.triggerAutoSave(cbFolderName, 'codebase');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cb$.nodeCount, cbFolderName, activeMode]);
@@ -1127,17 +1157,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       idea$.setIsGenerating(false);
       setIsFetchingUrl(false);
       if (yjs) yjs.setLocalGenerating(false);
-      // Auto-open debate/learn panel after generation completes
+      // Auto-collapse deep branches for large trees
+      if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 15) {
+        idea$.autoCollapseDeep();
+      }
+      // After generation: advance pipeline or start learn mode
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         if (displayMode === 'learn') {
           startLearnInChat(7);
-        } else if (activePattern) {
-          // Use thinking pattern executor when a pattern was declared in _meta
-          const nodes = idea$.rawNodesRef.current;
-          patternExec$.execute(activePattern, idea.trim(), nodes, displayMode, { domain: dynamicDomain });
-          setShowChat(true);
         } else {
-          startDebateInChatRef.current?.();
+          // Use dynamic pipeline orchestrator
+          advancePipelineRef.current?.({ priorStage: 'generate', priorOutcome: { nodeCount: idea$.rawNodesRef.current.length, activePattern } });
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
@@ -1257,6 +1287,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       setMultiAgentProgress(null);
       setIsFetchingUrl(false);
       if (yjs) yjs.setLocalGenerating(false);
+      if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 15) idea$.autoCollapseDeep();
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         if (displayMode === 'learn') {
           startLearnInChat(7);
@@ -1397,12 +1428,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         if (displayMode === 'learn') {
           startLearnInChat(7);
         } else {
-          startDebateInChatRef.current?.(() => {
-            setPipelineStages(prev => prev?.map(s =>
-              s.id === 'generate' ? { ...s, status: 'done', detail: `${idea$.rawNodesRef.current.length} nodes` } :
-              s.id === 'debate' ? { ...s, status: 'active', detail: 'Critic vs. architect debate...' } : s
-            ));
-          });
+          // Use dynamic pipeline orchestrator
+          advancePipelineRef.current?.({ priorStage: 'generate', priorOutcome: { nodeCount: idea$.rawNodesRef.current.length } });
         }
         triggerScoring(idea$.rawNodesRef.current, idea.trim());
       }
@@ -1411,13 +1438,139 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
 
   const handleStop = useCallback(() => {
     active.handleStop();
+    // Also stop any in-flight WebSocket stream
+    if (activeWsReqId && gatewayRef.current?.stop) {
+      gatewayRef.current.stop(activeWsReqId);
+      activeWsReqId = null;
+    }
     setRedirectState('idle');
     setIsCritiquing(false);
+    setMultiAgentProgress(null);
+    setPipelineCheckpoint(null);
   }, [active]);
+
+  // ── Pipeline Orchestrator: Dynamic Pattern Selection ─────
+  const advancePipeline = useCallback(async ({ priorStage, priorOutcome }) => {
+    // Determine which stages are still available based on pipeline order
+    const stageOrder = ['generate', 'debate', 'refine', 'portfolio', 'prototype'];
+    const completedStages = new Set();
+    // Mark prior stages as completed
+    const priorIdx = stageOrder.indexOf(priorStage);
+    if (priorIdx >= 0) {
+      for (let i = 0; i <= priorIdx; i++) completedStages.add(stageOrder[i]);
+    }
+    // If prior was a pattern, treat it as completing the debate slot
+    if (priorStage === 'pattern') completedStages.add('generate').add('debate');
+
+    const availableStages = stageOrder.filter(s => !completedStages.has(s) && s !== 'generate');
+
+    // If no stages remain, pipeline is done
+    if (availableStages.length === 0) {
+      setPipelineStages(prev => prev?.map(s => ({ ...s, status: s.status === 'pending' ? 'done' : s.status })));
+      return;
+    }
+
+    // Ask the server for optimal next stage
+    try {
+      const nodes = (active.rawNodesRef.current || []).map(n => ({
+        id: n.id, type: n.data?.type, label: n.data?.label, reasoning: n.data?.reasoning?.slice(0, 100),
+      }));
+      const res = await authFetch(`${API_URL}/api/pattern/recommend-next`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: ideaText, mode: displayMode, nodes,
+          priorStage, priorOutcome,
+          pipelinePosition: priorStage === 'generate' ? 0 : priorStage === 'debate' ? 1 : 2,
+          availableStages,
+        }),
+      });
+      const recommendation = await res.json();
+
+      if (autonomousMode) {
+        // Auto-dispatch without checkpoint
+        dispatchPipelineStage(recommendation.stageType, recommendation.recommended?.id || recommendation.recommended, priorStage);
+      } else {
+        // Show checkpoint card for user decision
+        setPipelineCheckpoint(recommendation);
+        setShowChat(true);
+      }
+    } catch (err) {
+      // Fallback: dispatch the first available stage
+      const fallback = availableStages[0];
+      if (autonomousMode) {
+        dispatchPipelineStage(fallback, null, priorStage);
+      } else {
+        setPipelineCheckpoint({
+          recommended: fallback, stageType: fallback,
+          alternatives: [], reasoning: 'Default sequence', shouldSkip: false,
+        });
+        setShowChat(true);
+      }
+    }
+  }, [active, ideaText, displayMode, autoRefineOnGen, autoPortfolioOnGen, autoPrototypeOnGen, autonomousMode]);
+  advancePipelineRef.current = advancePipeline;
+
+  // Dispatch a pipeline stage (shared by advancePipeline and handlePipelineCheckpointDecision)
+  const dispatchPipelineStage = useCallback((stageType, patternId, priorStage) => {
+    setPipelineCheckpoint(null);
+
+    // Update pipeline overlay
+    setPipelineStages(prev => prev?.map(s =>
+      s.id === priorStage ? { ...s, status: 'done' } :
+      s.id === stageType || s.id === 'pattern' ? { ...s, status: 'active', detail: `Running ${stageType}...` } : s
+    ));
+
+    const pipelineCallback = (progress) => {
+      if (progress.status === 'complete' || progress.done) {
+        // Stage finished — advance to next
+        advancePipeline({ priorStage: stageType, priorOutcome: progress });
+      }
+    };
+
+    // Map pattern IDs that correspond to built-in rich UIs
+    const PATTERN_TO_BUILTIN = {
+      'adversarial': 'debate', 'adversarial-critique': 'debate', 'expert-committee': 'debate',
+      'progressive-refine': 'refine', 'progressive-refinement': 'refine',
+      'portfolio-explore': 'portfolio', 'portfolio-exploration': 'portfolio',
+    };
+    const builtins = ['debate', 'refine', 'portfolio', 'prototype'];
+    const resolvedStage = PATTERN_TO_BUILTIN[patternId] || (builtins.includes(patternId) ? patternId : builtins.includes(stageType) ? stageType : null);
+
+    if (resolvedStage === 'debate') {
+      startDebateInChatRef.current?.(pipelineCallback);
+    } else if (resolvedStage === 'refine') {
+      startRefineInChatRef.current?.(3, pipelineCallback);
+    } else if (resolvedStage === 'portfolio') {
+      startPortfolioInChatRef.current?.(pipelineCallback);
+    } else if (resolvedStage === 'prototype') {
+      startPrototypeBuildRef.current?.();
+    } else if (patternId) {
+      // Execute a custom thinking pattern (no rich UI — generic executor)
+      patternExec$.execute(patternId, ideaText, active.rawNodesRef.current, displayMode, { domain: dynamicDomain }, pipelineCallback);
+      setShowChat(true);
+    } else {
+      // Fallback: start debate with rich UI
+      startDebateInChatRef.current?.(pipelineCallback);
+    }
+  }, [patternExec$, ideaText, active, displayMode, dynamicDomain, advancePipeline]);
+
+  const handlePipelineCheckpointDecision = useCallback((action, payload) => {
+    setPipelineCheckpoint(null);
+    if (action === 'skip') {
+      // Skip this stage, advance to next
+      const skippedStage = pipelineCheckpoint?.stageType || 'unknown';
+      setPipelineStages(prev => prev?.map(s => s.id === skippedStage ? { ...s, status: 'done', detail: 'Skipped' } : s));
+      advancePipeline({ priorStage: skippedStage, priorOutcome: { skipped: true } });
+    } else if (action === 'run') {
+      dispatchPipelineStage(payload?.stageType || pipelineCheckpoint?.stageType, payload?.patternId, pipelineCheckpoint?.stageType);
+    }
+  }, [pipelineCheckpoint, advancePipeline, dispatchPipelineStage]);
 
   // ── Forest decomposition ────────────────────────────────
   const handleForestDecompose = useCallback(async () => {
-    if (!idea.trim() || !onOpenForest) return;
+    if (!idea.trim() || !onOpenForest || isDecomposing) return;
+    setIsDecomposing(true);
     try {
       const res = await authFetch(`${API_URL}/api/forest/decompose`, {
         method: 'POST',
@@ -1454,8 +1607,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       }
     } catch (err) {
       console.error('Forest decompose error:', err);
+    } finally {
+      setIsDecomposing(false);
     }
-  }, [idea, displayMode, onOpenForest]);
+  }, [idea, displayMode, onOpenForest, isDecomposing]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1762,6 +1917,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       }
     });
   }, [handleStartRefine]);
+  startRefineInChatRef.current = startRefineInChat;
 
   // ── Shared: run prototype build inline in chat ────────────
   const startPrototypeBuild = useCallback(() => {
@@ -1807,6 +1963,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       }
     }, gateway.sessionId || initialSession?.id);
   }, [proto$, active.rawNodesRef, ideaText, displayMode, gateway.sessionId, initialSession?.id]);
+  startPrototypeBuildRef.current = startPrototypeBuild;
 
   // ── Debate mode config for inline card ────────────────
   const DEBATE_MODE_CONFIG = useMemo(() => ({
@@ -2095,6 +2252,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       },
     });
   }, [portfolio$, ideaText, displayMode, portfolioFocus]);
+  startPortfolioInChatRef.current = startPortfolioInChat;
 
   const startExperimentInChat = useCallback((iterations = 5) => {
     setExperimentStream({ status: 'scoring_baseline', iteration: 0, maxIterations: iterations, detail: 'Starting experiment loop...' });
@@ -2161,84 +2319,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       console.error('Template extraction failed:', err);
     }
 
-    // Pipeline: debate done
+    // Pipeline: debate done — use dynamic pipeline orchestrator for next stage
     setPipelineStages(prev => prev?.map(s =>
-      s.id === 'debate' ? { ...s, status: 'done', detail: 'Consensus reached' } :
-      s.id === 'refine' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Starting refinement...' } :
-      s.id === 'portfolio' && s.status === 'pending' && !autoRefineOnGen ? { ...s, status: 'active', detail: 'Starting portfolio...' } :
-      s
+      s.id === 'debate' ? { ...s, status: 'done', detail: 'Consensus reached' } : s
     ));
 
-    // Post-debate automation: auto-trigger refine and/or portfolio after consensus
-    if (autoRefineOnGen && !refine$.isRefining) {
-      // Run refine inline in chat with pipeline overlay updates
-      startRefineInChat(3, (progress) => {
-        if (progress.status === 'critiquing' || progress.status === 'strengthening' || progress.status === 'scoring') {
-          setPipelineStages(prev => prev?.map(s =>
-            s.id === 'refine' ? {
-              ...s, status: 'active',
-              detail: progress.detail || progress.status,
-              round: progress.round, maxRounds: progress.maxRounds,
-              substages: [
-                { label: 'Research', status: progress.detail?.includes('research') || progress.detail?.includes('Research') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
-                { label: 'Lenses', status: progress.detail?.includes('lens') || progress.detail?.includes('Lens') ? 'active' : progress.status === 'critiquing' ? 'pending' : 'done' },
-                { label: 'Critique', status: progress.status === 'critiquing' ? 'active' : progress.status === 'strengthening' || progress.status === 'scoring' ? 'done' : 'pending' },
-                { label: 'Strengthen', status: progress.status === 'strengthening' ? 'active' : progress.status === 'scoring' ? 'done' : 'pending' },
-                { label: 'Score', status: progress.status === 'scoring' ? 'active' : 'pending' },
-              ],
-              progress: progress.status === 'critiquing' ? 20 : progress.status === 'strengthening' ? 55 : 85,
-            } : s
-          ));
-        } else if (progress.status === 'round_complete') {
-          setPipelineStages(prev => prev?.map(s =>
-            s.id === 'refine' ? {
-              ...s,
-              detail: `Round ${progress.round}/${progress.maxRounds} — ${progress.oldScore?.toFixed?.(1)} → ${progress.newScore?.toFixed?.(1)}`,
-              progress: Math.round((progress.round / progress.maxRounds) * 100),
-            } : s
-          ));
-        } else if (progress.status === 'complete' || progress.status === 'done') {
-          setPipelineStages(prev => prev?.map(s =>
-            s.id === 'refine' ? { ...s, status: 'done', detail: 'Refinement complete', substages: null, progress: null } :
-            s.id === 'portfolio' && s.status === 'pending' ? { ...s, status: 'active', detail: 'Generating alternatives...' } :
-            s
-          ));
-          // Chain: start portfolio after refine completes
-          if (autoPortfolioOnGen) {
-            startPortfolioInChat((portfolioProgress) => {
-              setPipelineStages(prev => prev?.map(s =>
-                s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
-              ));
-              if ((portfolioProgress.status === 'done' || portfolioProgress.status === 'complete') && autoPrototypeOnGen) {
-                chainPrototype();
-              }
-            });
-          } else if (autoPrototypeOnGen) {
-            chainPrototype();
-          }
-        }
-      });
-    } else if (autoPortfolioOnGen) {
-      // No refine, just portfolio
-      startPortfolioInChat((portfolioProgress) => {
-        setPipelineStages(prev => prev?.map(s =>
-          s.id === 'portfolio' ? { ...s, ...portfolioProgress } : s
-        ));
-        if ((portfolioProgress.status === 'done' || portfolioProgress.status === 'complete') && autoPrototypeOnGen) {
-          chainPrototype();
-        }
-      });
-    } else if (autoPrototypeOnGen) {
-      chainPrototype();
-    }
-
-    function chainPrototype() {
-      setPipelineStages(prev => prev?.map(s =>
-        s.id === 'prototype' ? { ...s, status: 'active', detail: 'Building prototype...' } : s
-      ));
-      startPrototypeBuild();
-    }
-  }, [idea, idea$, autoRefineOnGen, autoPortfolioOnGen, autoPrototypeOnGen, refine$, displayMode, resumeJobLabel, startRefineInChat, startPortfolioInChat, startPrototypeBuild]);
+    // Advance pipeline to next stage (dynamic pattern selection)
+    advancePipelineRef.current?.({ priorStage: 'debate', priorOutcome: { consensus: true, nodeCount: active.rawNodesRef.current?.length } });
+  }, [idea, idea$, displayMode, resumeJobLabel, active]);
   handleConsensusReachedRef.current = handleConsensusReached;
 
   // ── Suggestion expand: add suggestion node + children to tree ─
@@ -2407,6 +2495,89 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         active.handleDrill?.({ id: targetNode.id, data: targetNode.data || targetNode });
       }
     }
+    // Expand Node: fractal expand a specific node
+    if (actions.expandNode?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.expandNode.nodeId);
+      if (targetNode) {
+        active.handleFractalExpand?.(actions.expandNode.nodeId);
+        pushCard('expandNode', 'Expanding Node', `Expanding "${(targetNode.data?.label || targetNode.id).slice(0, 40)}"...`, []);
+      }
+    }
+    // Edit Node: update label, reasoning, or type
+    if (actions.editNode?.nodeId) {
+      const { nodeId, label, reasoning, type } = actions.editNode;
+      const updates = {};
+      if (label !== undefined) updates.label = label;
+      if (reasoning !== undefined) updates.reasoning = reasoning;
+      if (type !== undefined) updates.type = type;
+      if (Object.keys(updates).length > 0) {
+        active.handleSaveNodeEdit?.(nodeId, updates);
+        pushCard('editNode', 'Edited Node', `Updated ${Object.keys(updates).join(', ')}`, []);
+      }
+    }
+    // Regenerate Node
+    if (actions.regenerateNode?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.regenerateNode.nodeId);
+      if (targetNode) {
+        active.handleRegenerate?.(targetNode.id);
+        pushCard('regenerateNode', 'Regenerating', `Re-generating "${(targetNode.data?.label || targetNode.id).slice(0, 40)}"`, []);
+      }
+    }
+    // Star/Favorite Node
+    if (actions.starNode?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.starNode.nodeId);
+      if (targetNode) {
+        active.handleToggleStar?.(actions.starNode.nodeId);
+        pushCard('starNode', 'Toggled Star', `${(targetNode.data?.label || targetNode.id).slice(0, 40)}`, []);
+      }
+    }
+    // Delete Node (reparent children)
+    if (actions.deleteNode?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.deleteNode.nodeId);
+      if (targetNode) {
+        nodeTools.handleRippleDelete(targetNode);
+        pushCard('deleteNode', 'Deleted Node', `Removed node and reparented children`, []);
+      }
+    }
+    // Delete Branch (node + all descendants)
+    if (actions.deleteBranch?.nodeId) {
+      const targetNode = active.rawNodesRef.current.find(n => n.id === actions.deleteBranch.nodeId);
+      if (targetNode) {
+        nodeTools.handleDeleteBranch(targetNode);
+        pushCard('deleteBranch', 'Deleted Branch', `Removed node and all descendants`, []);
+      }
+    }
+    // Execute Thinking Pattern
+    if (actions.executePattern?.patternId) {
+      const { patternId, nodeId } = actions.executePattern;
+      const scopedNodes = nodeId
+        ? active.rawNodesRef.current.filter(n => {
+            // Get the subtree rooted at nodeId
+            const subtreeIds = new Set([nodeId]);
+            const queue = [nodeId];
+            while (queue.length) {
+              const id = queue.shift();
+              for (const node of active.rawNodesRef.current) {
+                const d = node.data || node;
+                const parentIds = d.parentIds || (d.parentId ? [d.parentId] : []);
+                if (parentIds.includes(id) && !subtreeIds.has(node.id)) {
+                  subtreeIds.add(node.id);
+                  queue.push(node.id);
+                }
+              }
+            }
+            return subtreeIds.has(n.id);
+          })
+        : active.rawNodesRef.current;
+      patternExec$.execute(patternId, ideaText, scopedNodes, displayMode, { domain: dynamicDomain });
+      setShowChat(true);
+      pushCard('executePattern', `Running ${patternId}`, `Executing on ${scopedNodes.length} nodes`, []);
+    }
+    // Build Prototype
+    if (actions.buildPrototype) {
+      startPrototypeBuild();
+      pushCard('buildPrototype', 'Building Prototype', 'Generating interactive prototype from tree...', []);
+    }
     // Feed to Idea: bridge CODE tree into IDEA mode as seed context
     if (actions.feedToIdea) {
       const scopedNodes = getScopedNodes(actions.feedToIdea);
@@ -2429,7 +2600,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     if (cards.length > 0) {
       setPendingChatCards(prev => [...prev, ...cards]);
     }
-  }, [active, startRefineInChat, startPortfolioInChat, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea]);
+  }, [active, startRefineInChat, startPortfolioInChat, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea, patternExec$, displayMode, dynamicDomain, startPrototypeBuild, nodeTools]);
 
   const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
 
@@ -3117,6 +3288,26 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       {/* ── Canvas area ── */}
       <main className="canvas-area" style={{}}>
 
+        {/* Portfolio navigation breadcrumb */}
+        {portfolio$.navStack.length > 0 && (
+          <div className="portfolio-breadcrumb-bar">
+            <button className="portfolio-crumb portfolio-crumb--root" onClick={() => portfolio$.handleNavigateBack(0)}>
+              ⬆ Original Tree
+            </button>
+            {portfolio$.navStack.map((entry, i) => (
+              <span key={i} className="portfolio-crumb-segment">
+                <span className="portfolio-crumb-sep">›</span>
+                <button
+                  className={`portfolio-crumb ${i === portfolio$.navStack.length - 1 ? 'portfolio-crumb--active' : ''}`}
+                  onClick={() => portfolio$.handleNavigateBack(i + 1)}
+                >
+                  {entry.title}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {activeMode === 'idea' && (
           /* Resume mode with empty canvas — show the resume input panel */
           displayMode === 'resume' && idea$.nodes.length === 0 && !idea$.isGenerating ? (
@@ -3141,6 +3332,29 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               <div className="generating-text">Research & multi-agent thinking...</div>
               <div className="generating-sub">Building your thinking tree from multiple perspectives</div>
             </div>
+          ) : displayMode === 'learn' && idea$.nodes.length > 0 ? (
+            <LearnJourneyView
+              displayNodes={displayNodes}
+              learnStream={learnStream}
+              masteryMap={learn$.masteryMap}
+              isLearning={learn$.isLearning}
+              onConceptClick={(conceptId) => {
+                const node = idea$.rawNodesRef.current.find(n => n.id === conceptId);
+                if (node) idea$.handleNodeClick(node);
+              }}
+              onStartLearn={(conceptId) => {
+                if (learn$.isLearning) learn$.handleStopLearn();
+                setTimeout(() => startLearnInChat(7, { startConceptId: conceptId }), 100);
+              }}
+              onAction={handleCardButtonClick}
+              mnemonicJobs={mnemonic$.mnemonicJobs}
+              onGenerateVideo={(nodeId, opts) => {
+                const serialized = active.nodes.map(nd => nd.data);
+                mnemonic$.generateMnemonic(nodeId, ideaText, serialized, opts);
+                setVideoModalNodeId(nodeId);
+              }}
+              onPlayVideo={(nodeId) => setVideoModalNodeId(nodeId)}
+            />
           ) : viewMode === '3d' ? (
             <Graph3D
               nodes={idea$.rawNodesRef.current}
@@ -3429,8 +3643,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                       {isFetchingUrl ? '◌ FETCHING URL...' : '▶ GENERATE'}
                     </button>
                     {displayMode === 'idea' && onOpenForest && (
-                      <button className="btn btn-forest" onClick={handleForestDecompose} disabled={!idea.trim()} title="Decompose into multi-canvas forest">
-                        ◈ FOREST
+                      <button className="btn btn-forest" onClick={handleForestDecompose} disabled={!idea.trim() || isDecomposing} title="Decompose into multi-canvas forest">
+                        {isDecomposing ? '◌ DECOMPOSING...' : '◈ FOREST'}
                       </button>
                     )}
                     <div className="gen-auto-options">
@@ -3446,6 +3660,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                         <input type="checkbox" checked={autoPrototypeOnGen} onChange={e => setAutoPrototypeOnGen(e.target.checked)} />
                         <span>◰ Prototype</span>
                       </label>
+                      {(autoRefineOnGen || autoPortfolioOnGen || autoPrototypeOnGen) && (
+                        <label className="gen-auto-check" title="Auto-pilot: skip checkpoints and let AI choose patterns automatically">
+                          <input type="checkbox" checked={autonomousMode} onChange={e => setAutonomousMode(e.target.checked)} />
+                          <span>⚡ Auto-pilot</span>
+                        </label>
+                      )}
                     </div>
                   </>
                 )}
@@ -3658,6 +3878,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         onStopPattern={() => patternExec$.stop()}
         availablePatterns={availablePatterns}
         sessionFileContext={sessionFileContext}
+        pipelineCheckpoint={pipelineCheckpoint}
+        onPipelineCheckpointAction={handlePipelineCheckpointDecision}
+        mnemonicJobs={mnemonic$.mnemonicJobs}
+        onGenerateVideo={(nodeId, opts) => {
+          const serialized = active.nodes.map(nd => nd.data);
+          mnemonic$.generateMnemonic(nodeId, ideaText, serialized, opts);
+          setVideoModalNodeId(nodeId);
+        }}
+        onPlayVideo={(nodeId) => setVideoModalNodeId(nodeId)}
       />
       </div>{/* end app-content-row */}
 

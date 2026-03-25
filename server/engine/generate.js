@@ -370,7 +370,10 @@ async function handleGenerateResearch(_client, req, res) {
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch (e) { /* non-fatal */ }
 
-    const systemPrompt = mode === 'causal' ? CAUSAL_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    const systemPrompt = mode === 'resume' ? RESUME_SYSTEM_PROMPT
+      : mode === 'causal' ? CAUSAL_SYSTEM_PROMPT
+      : mode === 'learn' ? LEARN_CURRICULUM_PROMPT
+      : SYSTEM_PROMPT;
 
     const { stream } = await ai.stream({
       model: 'claude:opus',

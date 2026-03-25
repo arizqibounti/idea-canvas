@@ -173,6 +173,15 @@ async function deleteSession(sessionId) {
   }
 }
 
+async function updateForestCanvas(sessionId, canvasKey, updates) {
+  const session = await loadSession(sessionId);
+  if (!session || !session.forestCanvases) return;
+  const updatedCanvases = session.forestCanvases.map(c =>
+    c.canvasKey === canvasKey ? { ...c, ...updates } : c
+  );
+  await updateSession(sessionId, { forestCanvases: updatedCanvases });
+}
+
 module.exports = {
   createSession,
   loadSession,
@@ -184,4 +193,5 @@ module.exports = {
   appendCanvasArtifact,
   listSessions,
   deleteSession,
+  updateForestCanvas,
 };

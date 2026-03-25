@@ -14,7 +14,7 @@ function MasteryBadge({ mastery }) {
   );
 }
 
-export default function LearnCard({ state, onAction }) {
+export default function LearnCard({ state, onAction, mnemonicJob, onGenerateVideo, onPlayVideo }) {
   const [answer, setAnswer] = useState('');
   // eslint-disable-next-line no-unused-vars
   const [hintIndex, setHintIndex] = useState(0);
@@ -97,6 +97,47 @@ export default function LearnCard({ state, onAction }) {
           {teachContent.analogy && (
             <div className="learn-lesson-analogy">
               <strong>Think of it like:</strong> {teachContent.analogy}
+            </div>
+          )}
+
+          {/* Visual Mnemonic — Veo 3 video generation */}
+          {onGenerateVideo && conceptId && (
+            <div className="learn-lesson-mnemonic">
+              {mnemonicJob?.status === 'complete' && mnemonicJob.videoUrl ? (
+                <div className="learn-mnemonic-player">
+                  <div className="learn-mnemonic-header">
+                    <span className="learn-mnemonic-icon">▶</span>
+                    <strong>Visual Mnemonic</strong>
+                    {mnemonicJob.briefDescription && (
+                      <span className="learn-mnemonic-brief">{mnemonicJob.briefDescription}</span>
+                    )}
+                  </div>
+                  <video
+                    src={mnemonicJob.videoUrl}
+                    controls
+                    autoPlay
+                    loop
+                    playsInline
+                    className="learn-mnemonic-video"
+                  />
+                </div>
+              ) : mnemonicJob?.status === 'generating' || mnemonicJob?.status === 'polling' ? (
+                <div className="learn-mnemonic-generating">
+                  <span className="learn-mnemonic-pulse">●</span>
+                  <span>Generating visual mnemonic...</span>
+                  {mnemonicJob.mnemonicStrategy && (
+                    <span className="learn-mnemonic-strategy">{mnemonicJob.mnemonicStrategy}</span>
+                  )}
+                </div>
+              ) : (
+                <button
+                  className="learn-mnemonic-btn"
+                  onClick={() => onGenerateVideo(conceptId, { example: teachContent?.example, analogy: teachContent?.analogy })}
+                  title="Generate a visual demonstration of this example"
+                >
+                  🎬 Visualize This Example
+                </button>
+              )}
             </div>
           )}
 

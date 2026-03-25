@@ -16,7 +16,9 @@ export function usePortfolio({ rawNodesRef, applyLayout, drillStackRef, setNodeC
   const [stageDetail, setStageDetail] = useState(null);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
-  const previousNodesRef = useRef(null);
+  // Navigation stack: each entry = { nodes, alternatives, scores, recommendation, title, altIndex }
+  const navStackRef = useRef([]);
+  const [navStack, setNavStack] = useState([]); // mirror for rendering breadcrumb
   const [selectedIndex, setSelectedIndex] = useState(null);
 
   const scoreAlternatives = useCallback(async (alts, idea, mode, focus) => {
@@ -129,10 +131,19 @@ export function usePortfolio({ rawNodesRef, applyLayout, drillStackRef, setNodeC
     const alt = alternatives.find(a => a.index === altIndex);
     if (!alt) return;
 
-    if (selectedIndex === null) {
-      previousNodesRef.current = [...rawNodesRef.current];
-    }
+    // Push current state onto the navigation stack
+    const stackEntry = {
+      nodes: [...rawNodesRef.current],
+      alternatives: [...alternatives],
+      scores: scores ? [...scores] : null,
+      recommendation,
+      title: alt.title || `Alternative ${altIndex + 1}`,
+      altIndex,
+    };
+    navStackRef.current = [...navStackRef.current, stackEntry];
+    setNavStack([...navStackRef.current]);
 
+    // Swap canvas to the alternative's nodes
     const flowNodes = alt.nodes.map(n => {
       const flowNode = buildFlowNode(n);
       if (alt.meta) flowNode.data.dynamicConfig = alt.meta;
@@ -143,17 +154,43 @@ export function usePortfolio({ rawNodesRef, applyLayout, drillStackRef, setNodeC
     applyLayout(rawNodesRef.current, drillStackRef?.current);
     setNodeCount?.(rawNodesRef.current.length);
     setSelectedIndex(altIndex);
-  }, [alternatives, rawNodesRef, applyLayout, drillStackRef, setNodeCount, selectedIndex]);
+
+    // Clear portfolio state so user can run a fresh portfolio on this alternative
+    setAlternatives([]);
+    setScores(null);
+    setRecommendation('');
+  }, [alternatives, scores, recommendation, rawNodesRef, applyLayout, drillStackRef, setNodeCount]);
+
+  // Navigate back to a specific level in the stack (0 = root)
+  const handleNavigateBack = useCallback((targetLevel) => {
+    if (navStackRef.current.length === 0) return;
+
+    // Level 0 = root (before any explore), level 1 = first explore, etc.
+    const entry = targetLevel === 0
+      ? navStackRef.current[0]
+      : navStackRef.current[targetLevel];
+
+    if (!entry) return;
+
+    // Restore nodes from that level
+    rawNodesRef.current = [...entry.nodes];
+    applyLayout(rawNodesRef.current, drillStackRef?.current);
+    setNodeCount?.(rawNodesRef.current.length);
+
+    // Restore portfolio state from that level
+    setAlternatives(entry.alternatives || []);
+    setScores(entry.scores);
+    setRecommendation(entry.recommendation || '');
+
+    // Trim the stack to that level
+    navStackRef.current = navStackRef.current.slice(0, targetLevel);
+    setNavStack([...navStackRef.current]);
+    setSelectedIndex(targetLevel === 0 ? null : entry.altIndex);
+  }, [rawNodesRef, applyLayout, drillStackRef, setNodeCount]);
 
   const handleRestoreOriginal = useCallback(() => {
-    if (previousNodesRef.current) {
-      rawNodesRef.current = previousNodesRef.current;
-      applyLayout(rawNodesRef.current, drillStackRef?.current);
-      setNodeCount?.(rawNodesRef.current.length);
-      previousNodesRef.current = null;
-    }
-    setSelectedIndex(null);
-  }, [rawNodesRef, applyLayout, drillStackRef, setNodeCount]);
+    handleNavigateBack(0);
+  }, [handleNavigateBack]);
 
   const stop = useCallback(() => {
     if (abortRef.current) {
@@ -176,6 +213,8 @@ export function usePortfolio({ rawNodesRef, applyLayout, drillStackRef, setNodeC
     reset,
     handleExplore,
     handleRestoreOriginal,
+    handleNavigateBack,
+    navStack,
     isGenerating,
     isScoring,
     alternatives,

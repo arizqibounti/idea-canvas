@@ -65,7 +65,7 @@ export function useMnemonicVideo() {
     }, POLL_INTERVAL);
   }, []);
 
-  const generateMnemonic = useCallback(async (nodeId, topic, nodes) => {
+  const generateMnemonic = useCallback(async (nodeId, topic, nodes, { example, analogy } = {}) => {
     // Set initial generating state
     setMnemonicJobs(prev => ({
       ...prev,
@@ -76,7 +76,7 @@ export function useMnemonicVideo() {
       const res = await authFetch(`${API_URL}/api/learn/mnemonic/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodeId, topic, nodes }),
+        body: JSON.stringify({ nodeId, topic, nodes, example, analogy }),
       });
 
       if (!res.ok) {

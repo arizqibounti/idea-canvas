@@ -83,35 +83,46 @@ async function handleForestDecompose(_client, req, res) {
       return res.end();
     }
 
-    // Create forest
+    // Create forest record for listing
     const userId = req.user?.uid || 'local';
     const forest = await forests.createForest(idea, userId, null);
 
-    // Create a session for each canvas
-    const canvasRefs = [];
-    for (const canvasDef of plan.canvases) {
-      const session = await sessions.createSession(
-        `${idea} — ${canvasDef.title}`,
-        mode || 'idea',
-        userId,
-        null
-      );
-      await sessions.updateSession(session.id, {
-        forestId: forest.id,
-        canvasKey: canvasDef.canvasKey,
-      });
-      canvasRefs.push({
-        canvasKey: canvasDef.canvasKey,
-        sessionId: session.id,
-        status: 'pending',
-        nodeCount: 0,
-      });
-    }
+    // Create ONE parent session with all canvas definitions embedded
+    const forestCanvases = plan.canvases.map(canvasDef => ({
+      canvasKey: canvasDef.canvasKey,
+      title: canvasDef.title,
+      description: canvasDef.description,
+      dependencies: canvasDef.dependencies || [],
+      sharedContext: canvasDef.sharedContext || [],
+      nodes: [],
+      status: 'pending',
+      nodeCount: 0,
+    }));
 
-    // Update forest with plan and canvas refs
+    const parentSession = await sessions.createSession(
+      idea,
+      mode || 'idea',
+      userId,
+      null
+    );
+    await sessions.updateSession(parentSession.id, {
+      forestId: forest.id,
+      forestPlan: plan,
+      forestCanvases,
+    });
+
+    // Canvas refs for the forest record (no separate sessionIds)
+    const canvasRefs = plan.canvases.map(canvasDef => ({
+      canvasKey: canvasDef.canvasKey,
+      status: 'pending',
+      nodeCount: 0,
+    }));
+
+    // Update forest with plan, canvas refs, and parent session ID
     await forests.updateForest(forest.id, {
       plan,
       canvases: canvasRefs,
+      sessionId: parentSession.id,
       status: 'ready',
     });
 
@@ -119,6 +130,7 @@ async function handleForestDecompose(_client, req, res) {
     res.write(`data: ${JSON.stringify({
       _forestResult: true,
       forestId: forest.id,
+      sessionId: parentSession.id,
       plan,
       canvases: canvasRefs,
     })}\n\n`);
@@ -150,6 +162,14 @@ async function handleForestGenerateAll(_client, req, res) {
       return res.end();
     }
 
+    const parentSessionId = forest.sessionId;
+    const parentSession = await sessions.loadSession(parentSessionId);
+    if (!parentSession || !parentSession.forestCanvases) {
+      res.write(`data: ${JSON.stringify({ error: 'Parent session not found or missing forestCanvases' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
     await forests.updateForest(forestId, { status: 'generating' });
 
     const plan = forest.plan;
@@ -161,8 +181,7 @@ async function handleForestGenerateAll(_client, req, res) {
       if (signal?.aborted) break;
 
       const canvasDef = plan.canvases.find(c => c.canvasKey === canvasKey);
-      const canvasRef = forest.canvases.find(c => c.canvasKey === canvasKey);
-      if (!canvasDef || !canvasRef) continue;
+      if (!canvasDef) continue;
 
       // Progress: starting canvas
       res.write(`data: ${JSON.stringify({
@@ -253,9 +272,13 @@ async function handleForestGenerateAll(_client, req, res) {
           });
         });
 
-        // Save nodes to session
+        // Save nodes to parent session's forestCanvases
         if (collectedNodes.length > 0) {
-          await sessions.updateNodes(canvasRef.sessionId, collectedNodes);
+          await sessions.updateForestCanvas(parentSessionId, canvasKey, {
+            nodes: collectedNodes,
+            status: 'ready',
+            nodeCount: collectedNodes.length,
+          });
         }
 
         completedCanvases.set(canvasKey, collectedNodes);
@@ -272,6 +295,7 @@ async function handleForestGenerateAll(_client, req, res) {
       } catch (err) {
         if (err.name === 'AbortError') break;
         await forests.updateCanvasStatus(forestId, canvasKey, 'error');
+        await sessions.updateForestCanvas(parentSessionId, canvasKey, { status: 'error' });
         res.write(`data: ${JSON.stringify({
           _forestProgress: true,
           canvasKey,
@@ -324,12 +348,14 @@ async function handleForestGenerate(_client, req, res) {
   const forest = await forests.loadForest(forestId);
   if (!forest) return res.status(404).json({ error: 'Forest not found' });
 
-  // Load sibling canvases for context
+  // Load sibling canvases for context from parent session
+  const parentSession = await sessions.loadSession(forest.sessionId);
   const siblingNodes = new Map();
-  for (const c of forest.canvases) {
-    if (c.canvasKey !== canvasKey && c.status === 'ready') {
-      const session = await sessions.loadSession(c.sessionId);
-      if (session?.nodes?.length) siblingNodes.set(c.canvasKey, session.nodes);
+  if (parentSession?.forestCanvases) {
+    for (const fc of parentSession.forestCanvases) {
+      if (fc.canvasKey !== canvasKey && fc.status === 'ready' && fc.nodes?.length) {
+        siblingNodes.set(fc.canvasKey, fc.nodes);
+      }
     }
   }
 
@@ -397,14 +423,20 @@ async function handleForestCritique(_client, req, res) {
       return res.end();
     }
 
-    // Load all canvas nodes
+    // Load all canvas nodes from parent session
+    const parentSession = await sessions.loadSession(forest.sessionId);
+    if (!parentSession || !parentSession.forestCanvases) {
+      res.write(`data: ${JSON.stringify({ error: 'Parent session not found or missing forestCanvases' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
     const summaries = [];
-    for (const c of forest.canvases) {
-      if (c.status !== 'ready') continue;
-      const session = await sessions.loadSession(c.sessionId);
-      const def = forest.plan.canvases.find(d => d.canvasKey === c.canvasKey);
-      if (session?.nodes?.length && def) {
-        summaries.push(summarizeCanvas(def, session.nodes));
+    for (const fc of parentSession.forestCanvases) {
+      if (fc.status !== 'ready' || !fc.nodes?.length) continue;
+      const def = forest.plan.canvases.find(d => d.canvasKey === fc.canvasKey);
+      if (def) {
+        summaries.push(summarizeCanvas(def, fc.nodes));
       }
     }
 

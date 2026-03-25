@@ -26,14 +26,16 @@ export function usePatternExecutor({
   const [error, setError] = useState(null);
   const [executionId, setExecutionId] = useState(null);
   const abortRef = useRef(null);
+  const onCompleteRef = useRef(null);
 
-  const execute = useCallback(async (patternId, idea, nodes, mode, config = {}) => {
+  const execute = useCallback(async (patternId, idea, nodes, mode, config = {}, onComplete) => {
     setIsExecuting(true);
     setError(null);
     setStageResults({});
     setCheckpoint(null);
     setCurrentStage(null);
     setCurrentRound(0);
+    onCompleteRef.current = onComplete || null;
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -128,6 +130,11 @@ export function usePatternExecutor({
     // Pattern complete
     if (event._patternComplete) {
       setExecutionId(event.executionId);
+      // Fire onComplete callback for pipeline orchestrator
+      if (onCompleteRef.current) {
+        onCompleteRef.current({ status: 'complete', totalRounds: event.totalRounds, stagesExecuted: event.stagesExecuted });
+        onCompleteRef.current = null;
+      }
       return;
     }
 
