@@ -5415,11 +5415,13 @@
 }
 
 /* Forest directory styles */
-.sidebar-row--forest { font-weight: 500; }
+.sidebar-row--forest { font-weight: 500; border-left: 2px solid #6c63ff; }
 .sidebar-row-expand { background: none; border: none; color: #555; font-size: 10px; cursor: pointer; padding: 0 2px; flex-shrink: 0; width: 14px; }
 .sidebar-row-expand:hover { color: #aaa; }
-.sidebar-row--sub { padding-left: 12px; opacity: 0.8; }
-.sidebar-sub-indent { width: 18px; flex-shrink: 0; border-left: 1px solid #2a2a3a; margin-left: 6px; height: 100%; }
+.sidebar-row--sub { padding-left: 24px; opacity: 0.85; font-size: 11px; min-height: 28px; }
+.sidebar-row--sub:before { content: '├─'; color: #333; font-family: var(--font-mono); font-size: 10px; margin-right: 4px; }
+.sidebar-row--sub:last-child:before { content: '└─'; }
+.sidebar-sub-indent { display: none; }
 .sidebar-sub-status { font-size: 8px; flex-shrink: 0; width: 12px; text-align: center; }
 .sidebar-sub-status--ready { color: #20c997; }
 .sidebar-sub-status--generating { color: #6c63ff; animation: pulse 1.5s infinite; }
@@ -11456,10 +11458,17 @@
 .forest-canvas-area { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; height: 100%; }
 
 /* Horizontal tab bar */
-.forest-tab-bar { display: flex; align-items: center; background: #08081a; border-bottom: 1px solid #252535; padding: 0 8px; flex-shrink: 0; height: 40px; gap: 0; }
-.forest-tab-bar-tabs { display: flex; align-items: stretch; flex: 1; overflow-x: auto; gap: 0; min-width: 0; height: 100%; }
+.forest-tab-bar { display: flex; flex-direction: column; background: #08081a; border-bottom: 1px solid #252535; flex-shrink: 0; }
+.forest-tab-bar-header { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #1a1a2e; }
+.forest-back-btn { background: none; border: 1px solid #333; color: #888; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; flex-shrink: 0; }
+.forest-back-btn:hover { border-color: #6c63ff; color: #ddd; }
+.forest-tab-bar-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.forest-tab-bar-icon { color: #6c63ff; font-size: 14px; }
+.forest-tab-bar-idea { font-size: 12px; color: #ccc; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forest-tab-bar-stats { font-size: 10px; color: #555; font-family: var(--font-mono); flex-shrink: 0; }
+.forest-tab-bar-tabs { display: flex; align-items: stretch; overflow-x: auto; gap: 0; min-width: 0; height: 36px; padding: 0 8px; }
 .forest-tab-bar-tabs::-webkit-scrollbar { display: none; }
-.forest-tab-bar-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 12px; flex-shrink: 0; }
+.forest-tab-bar-actions { display: flex; align-items: center; gap: 6px; padding-left: 12px; flex-shrink: 0; }
 
 /* Individual tab */
 .forest-tab { display: flex; align-items: center; gap: 6px; padding: 0 14px; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; font-family: var(--font-mono); white-space: nowrap; height: 100%; }
@@ -11474,8 +11483,7 @@
 .forest-tab.active .forest-tab-label { color: #6c63ff; }
 .forest-tab-badge { font-size: 9px; background: rgba(108,99,255,0.2); color: #8b83ff; padding: 1px 5px; border-radius: 8px; }
 .forest-tab-count { font-size: 9px; color: #555; flex-shrink: 0; font-family: var(--font-mono); }
-.forest-tab-back { border-right: 1px solid #252535; margin-right: 4px; padding-right: 12px !important; }
-.forest-tab-back:hover { color: #ff4757; border-bottom-color: transparent; }
+/* forest-tab-back moved to forest-back-btn in header */
 
 /* Action buttons */
 .forest-action-btn { border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-mono); letter-spacing: 0.03em; transition: all 0.15s; white-space: nowrap; }

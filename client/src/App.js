@@ -1585,13 +1585,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const handleForestDecompose = useCallback(async () => {
     if (!idea.trim() || !onOpenForest || isDecomposing) return;
     setIsDecomposing(true);
+    setShowChat(true);
+    setPendingChatCards(prev => [...prev, {
+      label: '◈ Decomposing into multi-canvas forest...',
+      detail: `Analyzing "${idea.trim().slice(0, 50)}..." and planning interconnected canvases`,
+      buttons: [],
+    }]);
     try {
       const res = await authFetch(`${API_URL}/api/forest/decompose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idea: idea.trim(), mode: displayMode }),
       });
-      // Read SSE stream for result
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -1607,11 +1612,24 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             if (payload === '[DONE]') break;
             try {
               const event = JSON.parse(payload);
+              if (event._forestProgress) {
+                // Show canvas plan as it's discovered
+                setPendingChatCards(prev => [...prev, {
+                  label: `◈ ${event.stage || 'Planning canvases...'}`,
+                  detail: event.canvasTitles ? `Canvases: ${event.canvasTitles.join(', ')}` : null,
+                  buttons: [],
+                }]);
+              }
               if (event._forestResult) {
-                // Load the full forest and open it
                 const forestRes = await authFetch(`${API_URL}/api/forests/${event.forestId}`);
                 if (forestRes.ok) {
                   const forest = await forestRes.json();
+                  const canvasTitles = (forest.plan?.canvases || []).map(c => c.title).join(', ');
+                  setPendingChatCards(prev => [...prev, {
+                    label: `◈ Forest ready — ${forest.plan?.canvases?.length || 0} canvases`,
+                    detail: canvasTitles,
+                    buttons: [{ label: 'Open Forest', actionType: 'openForest', forest }],
+                  }]);
                   onOpenForest(forest);
                 }
               }
@@ -1621,6 +1639,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       }
     } catch (err) {
       console.error('Forest decompose error:', err);
+      setPendingChatCards(prev => [...prev, { label: '✗ Forest decomposition failed', detail: err.message, buttons: [] }]);
     } finally {
       setIsDecomposing(false);
     }

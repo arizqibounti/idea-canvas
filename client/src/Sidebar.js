@@ -246,7 +246,7 @@ const Sidebar = forwardRef(function Sidebar(
                         </button>
                       )}
                       <span className="sidebar-row-icon" style={{ color: isForest ? '#6c63ff' : mode.color }}>
-                        {isForest ? '◈' : mode.icon}
+                        {isForest ? '📁' : mode.icon}
                       </span>
                       <span className="sidebar-row-title">
                         {session.idea || 'Untitled session'}
