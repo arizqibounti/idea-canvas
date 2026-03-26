@@ -13,7 +13,6 @@ const FEATURES = [
 const MODES = [
   { icon: '◈', label: 'IDEA', desc: 'Product & startup thinking', color: '#6c63ff' },
   { icon: '⟨/⟩', label: 'CODE', desc: 'Codebase reverse-engineering', color: '#20c997' },
-  { icon: '◎', label: 'RESUME', desc: 'Job application analysis', color: '#74c0fc' },
   { icon: '⚖', label: 'DECIDE', desc: 'Decision frameworks', color: '#ffa94d' },
   { icon: '✦', label: 'WRITE', desc: 'Content planning', color: '#f06595' },
   { icon: '◉', label: 'PLAN', desc: 'Project roadmapping', color: '#69db7c' },
@@ -34,6 +33,7 @@ export default function LandingPage({ shareId }) {
             : 'AI-powered structured thinking. Turn any idea into a visual thinking tree with research agents, multi-agent debate, and interactive exploration.'
           }
         </p>
+        <a href="/blog" className="landing-blog-link">Read the manifesto →</a>
         <button className="landing-cta" onClick={login}>
           <svg width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: 8, verticalAlign: 'middle' }}>
             <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
@@ -58,7 +58,7 @@ export default function LandingPage({ shareId }) {
 
       {/* Modes */}
       <section className="landing-modes">
-        <h2 className="landing-section-title">6 THINKING MODES</h2>
+        <h2 className="landing-section-title">5 THINKING MODES</h2>
         <div className="landing-mode-grid">
           {MODES.map((m, i) => (
             <div key={i} className="landing-mode-card" style={{ borderColor: m.color + '40' }}>
@@ -72,7 +72,6 @@ export default function LandingPage({ shareId }) {
 
       {/* Footer */}
       <footer className="landing-footer">
-        <a href="/blog" className="landing-blog-link">Read the manifesto →</a>
         <span style={{ opacity: 0.4 }}>Built with Claude &middot; ThoughtClaw</span>
       </footer>
     </div>
