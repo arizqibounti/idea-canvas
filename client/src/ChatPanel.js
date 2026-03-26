@@ -108,6 +108,26 @@ function ChatMarkdown({ content }) {
 
 const ACTION_DELIMITER = '<<<ACTIONS>>>';
 
+// Compaction: keep last N messages verbatim, summarize older ones
+const COMPACT_THRESHOLD = 16; // start compacting at 16+ messages
+const KEEP_RECENT = 10;       // always keep the most recent 10 messages
+function compactMessages(messages) {
+  if (messages.length <= COMPACT_THRESHOLD) return messages;
+  const older = messages.slice(0, messages.length - KEEP_RECENT);
+  const recent = messages.slice(messages.length - KEEP_RECENT);
+  // Summarize older messages into a single context message
+  const summary = older.map(m => {
+    const label = m.role === 'user' ? 'User' : 'Assistant';
+    const text = (m.content || '').slice(0, 200);
+    return `[${label}]: ${text}`;
+  }).join('\n');
+  return [
+    { role: 'user', content: `[CONVERSATION HISTORY SUMMARY — ${older.length} earlier messages compacted]\n${summary}\n[END SUMMARY — Recent messages follow]` },
+    { role: 'assistant', content: 'Understood, I have the conversation context from the summary above. Continuing from the recent messages.' },
+    ...recent,
+  ];
+}
+
 const ACTION_LABELS = {
   filter: 'Filtered Graph',
   clear: 'Cleared Filters',
@@ -172,7 +192,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo, initialChatMessages, onSaveChatMessages }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -181,6 +201,26 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const execStreamRef = useRef(null);
+  const initializedRef = useRef(false);
+
+  // Load saved chat messages on mount
+  useEffect(() => {
+    if (initialChatMessages?.length && !initializedRef.current) {
+      initializedRef.current = true;
+      setMessages(initialChatMessages);
+    }
+  }, [initialChatMessages]);
+
+  // Save messages when they change (debounced)
+  useEffect(() => {
+    if (!onSaveChatMessages || messages.length === 0) return;
+    const timer = setTimeout(() => {
+      // Only save user/assistant messages (not action cards)
+      const saveable = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+      if (saveable.length > 0) onSaveChatMessages(saveable);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [messages, onSaveChatMessages]);
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -208,6 +248,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     setMessages([]);
     setStreamingText('');
     setInput('');
+    initializedRef.current = false;
   }, [idea]);
 
   // Consume pending action cards from parent
@@ -247,7 +288,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: newMessages.filter(m => m.role === 'user' || m.role === 'assistant'),
+          messages: compactMessages(newMessages.filter(m => m.role === 'user' || m.role === 'assistant')),
           treeContext,
           idea,
           mode,

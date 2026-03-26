@@ -676,6 +676,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       if (normalized.prototype) {
         proto$.setPrototype(normalized.prototype);
       }
+      // Restore chat messages if present
+      if (normalized.chatMessages?.length) {
+        setSavedChatMessages(normalized.chatMessages);
+      }
       setSessionLoading(false);
     };
 
@@ -843,6 +847,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const [chatFilter, setChatFilter] = useState(null);
   // shape: { types?: string[], nodeIds?: string[] } | null
   const [pendingChatCards, setPendingChatCards] = useState([]);
+  const [savedChatMessages, setSavedChatMessages] = useState([]);
   const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
   const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
@@ -3373,6 +3378,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             />
           ) : viewMode === 'flowchart' ? (
             <ReactFlowProvider>
+              {showMemory && (
+                <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 25 }}>
+                  <MemoryInsights onDismiss={() => setShowMemory(false)} />
+                </div>
+              )}
               <FlowchartView
                 displayNodes={displayNodes}
                 onNodeClick={(node) => {
@@ -3893,6 +3903,19 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         pipelineCheckpoint={pipelineCheckpoint}
         onPipelineCheckpointAction={handlePipelineCheckpointDecision}
         mnemonicJobs={{}}
+        initialChatMessages={savedChatMessages}
+        onSaveChatMessages={(msgs) => {
+          setSavedChatMessages(msgs);
+          // Save to cloud session if available
+          const sid = gateway.sessionId || initialSession?.id;
+          if (sid) {
+            authFetch(`${API_URL}/api/sessions/${sid}/chat`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chatMessages: msgs.slice(-30) }), // keep last 30
+            }).catch(() => {});
+          }
+        }}
       />
       </div>{/* end app-content-row */}
 

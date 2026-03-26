@@ -455,6 +455,18 @@ app.delete('/api/sessions/:id', async (req, res) => {
   }
 });
 
+// ── Chat messages persistence ─────────────────────────────────
+app.put('/api/sessions/:id/chat', async (req, res) => {
+  try {
+    const { chatMessages } = req.body;
+    if (!chatMessages) return res.status(400).json({ error: 'chatMessages required' });
+    await sessions.updateSession(req.params.id, { chatMessages });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Session Files endpoints ───────────────────────────────────
 const sessionFiles = require('./engine/sessionFiles');
 
