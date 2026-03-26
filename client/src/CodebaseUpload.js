@@ -14,6 +14,7 @@ const ANALYSIS_GOALS = [
 export default function CodebaseUpload({ onAnalysisReady, isAnalyzing, github }) {
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
+  const [token, setToken] = useState('');
   const [goals, setGoals] = useState(() => new Set(ANALYSIS_GOALS.filter(g => g.defaultChecked).map(g => g.id)));
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -26,8 +27,9 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing, github })
       branch: branch.trim() || 'main',
       analysisGoals: Array.from(goals),
       folderName: repoUrl.split('github.com/')[1]?.replace(/\.git$/, '') || 'repo',
+      githubToken: token.trim() || undefined,
     });
-  }, [repoUrl, branch, goals, isValidUrl, isAnalyzing, onAnalysisReady]);
+  }, [repoUrl, branch, token, goals, isValidUrl, isAnalyzing, onAnalysisReady]);
 
   return (
     <div className="codebase-upload">
@@ -89,6 +91,21 @@ export default function CodebaseUpload({ onAnalysisReady, isAnalyzing, github })
               disabled={isAnalyzing}
             />
           </div>
+
+          {!github?.connected && (
+            <div className="cb-token-row">
+              <label className="cb-branch-label">Token (PAT):</label>
+              <input
+                type="password"
+                className="cb-token-input"
+                value={token}
+                onChange={e => setToken(e.target.value)}
+                placeholder="ghp_... or github_pat_..."
+                disabled={isAnalyzing}
+              />
+              <div className="cb-token-hint">For private repos without OAuth. Generate at github.com/settings/tokens</div>
+            </div>
+          )}
 
           <div className="cb-goals">
             {ANALYSIS_GOALS.map(g => (

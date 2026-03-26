@@ -3613,7 +3613,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
 
         {activeMode === 'codebase' && (
           cbShowUpload ? (
-            <>
+            <div className="codebase-upload-wrapper">
               <CodebaseUpload
                 onAnalysisReady={handleAnalysisReady}
                 isAnalyzing={cb$.isGenerating}
@@ -3625,7 +3625,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                   disconnect: githubDisconnect,
                 }}
               />
-            </>
+            </div>
           ) : viewMode === '3d' ? (
             <Graph3D
               nodes={cb$.rawNodesRef.current}

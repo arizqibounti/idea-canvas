@@ -3,6 +3,8 @@
 // Persists to Firestore with in-memory fallback (same pattern as sessions.js).
 
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+const path = require('path');
 
 // ── Persistence layer ────────────────────────────────────────
 let db = null;
@@ -10,6 +12,7 @@ let useFirestore = false;
 const memoryStore = new Map();
 const activeTimers = new Map();
 const COLLECTION = 'scheduled_tasks';
+const LOCAL_FILE = path.join(__dirname, '..', '.scheduled-tasks.json');
 
 function initFirestore() {
   try {
@@ -23,10 +26,12 @@ function initFirestore() {
         restoreAllTasks();
       })
       .catch(() => {
-        console.log('Scheduler: Firestore unavailable — using in-memory');
+        console.log('Scheduler: Firestore unavailable — using local file');
+        restoreFromFile();
       });
   } catch {
-    console.log('Scheduler: Firestore SDK not configured — using in-memory');
+    console.log('Scheduler: Firestore SDK not configured — using local file');
+    restoreFromFile();
   }
 }
 
@@ -51,6 +56,34 @@ async function restoreAllTasks() {
   }
 }
 
+// File-based persistence for local dev (no Firestore)
+function saveToFile() {
+  if (useFirestore) return;
+  try {
+    const tasks = Array.from(memoryStore.values());
+    fs.writeFileSync(LOCAL_FILE, JSON.stringify(tasks, null, 2));
+  } catch {}
+}
+
+function restoreFromFile() {
+  if (useFirestore) return;
+  try {
+    if (!fs.existsSync(LOCAL_FILE)) return;
+    const tasks = JSON.parse(fs.readFileSync(LOCAL_FILE, 'utf8'));
+    let count = 0;
+    for (const task of tasks) {
+      memoryStore.set(task.id, task);
+      if (task.enabled && task.schedule?.cron) {
+        scheduleTask(task);
+        count++;
+      }
+    }
+    if (count) console.log(`Scheduler: restored ${count} tasks from local file`);
+  } catch (err) {
+    console.warn('Scheduler: failed to restore from file:', err.message);
+  }
+}
+
 async function saveTask(task) {
   memoryStore.set(task.id, task);
   if (useFirestore) {
@@ -60,10 +93,12 @@ async function saveTask(task) {
       console.warn('Scheduler: failed to persist task:', err.message);
     }
   }
+  saveToFile(); // local fallback
 }
 
 async function removeTask(taskId) {
   memoryStore.delete(taskId);
+  saveToFile(); // local fallback
   if (useFirestore) {
     try {
       await db.collection(COLLECTION).doc(taskId).delete();

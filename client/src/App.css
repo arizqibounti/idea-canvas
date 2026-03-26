@@ -1392,6 +1392,10 @@
 .cb-github-badge { font-size: 11px; color: #20c997; font-family: var(--font-mono); }
 .cb-github-disconnect { background: none; border: none; color: #666; font-size: 10px; cursor: pointer; font-family: var(--font-mono); }
 .cb-github-disconnect:hover { color: #ff4757; }
+.cb-token-row { display: flex; flex-direction: column; gap: 4px; }
+.cb-token-input { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 6px 10px; font-size: 11px; color: #ccc; font-family: var(--font-mono); width: 100%; outline: none; }
+.cb-token-input:focus { border-color: #20c997; }
+.cb-token-hint { font-size: 9px; color: #555; font-family: var(--font-mono); }
 
 .upload-header {
   display: flex;
