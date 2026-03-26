@@ -72,6 +72,7 @@ export default function LandingPage({ shareId }) {
 
       {/* Footer */}
       <footer className="landing-footer">
+        <a href="/blog" className="landing-blog-link">Read the manifesto →</a>
         <span style={{ opacity: 0.4 }}>Built with Claude &middot; ThoughtClaw</span>
       </footer>
     </div>

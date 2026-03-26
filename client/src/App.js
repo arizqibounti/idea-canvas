@@ -24,6 +24,7 @@ import ShareViewer from './ShareViewer';
 import { useAuth } from './AuthContext';
 import { setTokenGetter, authFetch } from './api';
 import LandingPage from './LandingPage';
+import BlogPage from './BlogPage';
 import Sidebar from './Sidebar';
 import SettingsPage from './settings/SettingsPage';
 import KnowledgeGraph from './KnowledgeGraph';
@@ -375,6 +376,11 @@ function AppRouter() {
     if (loading) return <LoadingScreen />;
     if (isConfigured && !user) return <LandingPage />;
     return <InviteAccept token={inviteMatch[1]} />;
+  }
+
+  // Blog page (public, no auth required)
+  if (window.location.pathname === '/blog') {
+    return <BlogPage />;
   }
 
   // Show loading while Firebase checks auth state
