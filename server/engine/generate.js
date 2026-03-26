@@ -281,6 +281,11 @@ async function handleGenerateResearch(_client, req, res) {
   let { idea, mode, fetchedUrlContent, templateGuidance, emailThread } = req.body;
   if (!idea) return res.status(400).json({ error: 'idea is required' });
 
+  // Learn mode doesn't need research — route to basic generate
+  if (mode === 'learn') {
+    return handleGenerate(_client, req, res);
+  }
+
   sseHeaders(res);
 
   try {

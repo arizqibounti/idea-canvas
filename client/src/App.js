@@ -1449,11 +1449,19 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       gatewayRef.current.stop(activeWsReqId);
       activeWsReqId = null;
     }
+    // Stop all active streams
+    if (refine$?.abortRef?.current) refine$.abortRef.current.abort();
+    if (proto$?.handleStopBuild) proto$.handleStopBuild();
     setRedirectState('idle');
     setIsCritiquing(false);
     setMultiAgentProgress(null);
     setPipelineCheckpoint(null);
-  }, [active]);
+    setPipelineStages(null);
+    setDebateStream(null);
+    setRefineStream(null);
+    setPortfolioStream(null);
+    setPrototypeStream(null);
+  }, [active, refine$, proto$]);
 
   // ── Pipeline Orchestrator: Dynamic Pattern Selection ─────
   const advancePipeline = useCallback(async ({ priorStage, priorOutcome }) => {
