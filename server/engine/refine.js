@@ -153,9 +153,9 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
 // Now enriched with research agents + multi-agent lenses
 
 async function handleRefineStrengthen(_client, req, res) {
-  const { nodes, idea, mode, weaknesses, dynamicTypes, round } = req.body;
-  if (!nodes?.length || !weaknesses?.length) {
-    return res.status(400).json({ error: 'nodes and weaknesses are required' });
+  const { nodes, idea, mode, weaknesses, gaps, contradictions, dynamicTypes, round } = req.body;
+  if (!nodes?.length || (!weaknesses?.length && !gaps?.length && !contradictions?.length)) {
+    return res.status(400).json({ error: 'nodes and at least one issue type required' });
   }
 
   sseHeaders(res);
@@ -179,8 +179,11 @@ async function handleRefineStrengthen(_client, req, res) {
     let userContent = `Idea: "${idea}"
 Round: ${round || 1}
 
-Weaknesses to fix:
-${JSON.stringify(weaknesses, null, 2)}
+${weaknesses?.length ? `=== WEAKNESSES TO FIX (${weaknesses.length}) ===\n${JSON.stringify(weaknesses, null, 2)}` : ''}
+
+${gaps?.length ? `=== STRUCTURAL GAPS TO FILL (${gaps.length}) ===\n${JSON.stringify(gaps, null, 2)}` : ''}
+
+${contradictions?.length ? `=== CONTRADICTIONS TO RESOLVE (${contradictions.length}) ===\n${JSON.stringify(contradictions, null, 2)}` : ''}
 
 Full tree context (${nodeSummary.length} nodes — do NOT re-output unchanged nodes):
 ${JSON.stringify(nodeSummary, null, 2)}`;

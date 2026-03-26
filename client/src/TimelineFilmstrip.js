@@ -1,36 +1,10 @@
 // ── Timeline Filmstrip ───────────────────────────────────────
-// Horizontal strip of node thumbnails with transport controls.
-// Supports flat mode (single strip) and track mode (grouped by type).
+// Compact navigation bar: transport controls + type-grouped node chips.
+// Click a type group to filter the canvas. Click a node chip to select it.
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { getNodeConfig } from './nodeConfig';
 import './TimelineFilmstrip.css';
-
-// ── Thumbnail component (shared between flat & track modes) ──
-function Thumb({ node, index, isActive, isPast, isMuted, onClick, activeRef }) {
-  const nodeType = node.data?.type || node.type || 'unknown';
-  const config = getNodeConfig(nodeType, node.data?.dynamicConfig);
-  const label = node.data?.label || node.label || '?';
-
-  return (
-    <div
-      ref={isActive ? activeRef : null}
-      className={`filmstrip-thumb ${isActive ? 'active' : ''} ${isMuted ? 'muted-thumb' : ''}`}
-      style={{
-        '--thumb-color': config.color,
-        '--thumb-glow': config.glow,
-      }}
-      onClick={() => onClick(index)}
-      title={`${label} (${nodeType})`}
-    >
-      <span className="filmstrip-dot" style={{ background: config.color }} />
-      <span className="filmstrip-label">
-        {label.length > 12 ? label.slice(0, 11) + '…' : label}
-      </span>
-      <span className="filmstrip-type">{nodeType}</span>
-    </div>
-  );
-}
 
 export default function TimelineFilmstrip({
   topoOrder,
@@ -42,224 +16,113 @@ export default function TimelineFilmstrip({
   onGoPrev,
   onFilterChange,
 }) {
-  const [trackMode, setTrackMode] = useState(false);
-  const [soloTypes, setSoloTypes] = useState(new Set());
-  const [muteTypes, setMuteTypes] = useState(new Set());
+  const [expandedType, setExpandedType] = useState(null);
   const activeRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  // Auto-scroll to keep active thumbnail visible
+  // Auto-scroll to keep active item visible
   useEffect(() => {
     if (activeRef.current) {
-      activeRef.current.scrollIntoView({
-        behavior: 'smooth',
-        inline: 'center',
-        block: 'nearest',
-      });
+      activeRef.current.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
   }, [currentIndex]);
 
-  // Group nodes by type for track mode
-  const tracks = useMemo(() => {
-    if (!topoOrder || topoOrder.length === 0) return [];
-    const typeMap = new Map(); // type -> { config, nodes: [{node, topoIndex}] }
-    topoOrder.forEach((node, topoIndex) => {
-      const nodeType = node.data?.type || node.type || 'unknown';
-      if (!typeMap.has(nodeType)) {
-        const config = getNodeConfig(nodeType, node.data?.dynamicConfig);
-        typeMap.set(nodeType, { type: nodeType, config, nodes: [] });
+  // Group nodes by type
+  const typeGroups = useMemo(() => {
+    if (!topoOrder?.length) return [];
+    const map = new Map();
+    topoOrder.forEach((node, idx) => {
+      const t = node.data?.type || node.type || 'unknown';
+      if (!map.has(t)) {
+        const config = getNodeConfig(t, node.data?.dynamicConfig);
+        map.set(t, { type: t, config, nodes: [], indices: [] });
       }
-      typeMap.get(nodeType).nodes.push({ node, topoIndex });
+      map.get(t).nodes.push(node);
+      map.get(t).indices.push(idx);
     });
-    // Sort tracks by first appearance in topo order
-    return [...typeMap.values()].sort(
-      (a, b) => a.nodes[0].topoIndex - b.nodes[0].topoIndex
-    );
+    return [...map.values()].sort((a, b) => a.indices[0] - b.indices[0]);
   }, [topoOrder]);
 
-  // Compute visible types based on solo/mute
-  const getVisibleTypes = useCallback(() => {
-    const allTypes = tracks.map(t => t.type);
-    if (soloTypes.size > 0) {
-      return allTypes.filter(t => soloTypes.has(t));
-    }
-    return allTypes.filter(t => !muteTypes.has(t));
-  }, [tracks, soloTypes, muteTypes]);
-
-  // Stable ref for callback to avoid infinite loops
-  const filterChangeRef = useRef(onFilterChange);
-  filterChangeRef.current = onFilterChange;
-
-  // Notify parent of filter changes
-  useEffect(() => {
-    if (!filterChangeRef.current) return;
-    const hasFilter = soloTypes.size > 0 || muteTypes.size > 0;
-    if (hasFilter) {
-      filterChangeRef.current({ visibleTypes: getVisibleTypes() });
+  const handleTypeClick = useCallback((type) => {
+    if (expandedType === type) {
+      setExpandedType(null);
+      onFilterChange?.(null);
     } else {
-      filterChangeRef.current(null);
+      setExpandedType(type);
+      onFilterChange?.({ visibleTypes: [type] });
+      // Jump to first node of this type
+      const group = typeGroups.find(g => g.type === type);
+      if (group?.indices[0] !== undefined) onGoToIndex(group.indices[0]);
     }
-  }, [soloTypes, muteTypes, getVisibleTypes]);
+  }, [expandedType, typeGroups, onGoToIndex, onFilterChange]);
 
-  // Clear filters when leaving track mode
-  const handleToggleTrackMode = useCallback(() => {
-    setTrackMode(prev => {
-      if (prev) {
-        // Leaving track mode — clear filters
-        setSoloTypes(new Set());
-        setMuteTypes(new Set());
-      }
-      return !prev;
-    });
-  }, []);
+  const handleNodeClick = useCallback((topoIdx) => {
+    onGoToIndex(topoIdx);
+  }, [onGoToIndex]);
 
-  const handleSolo = useCallback((type) => {
-    setSoloTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) {
-        next.delete(type);
-      } else {
-        next.add(type);
-      }
-      return next;
-    });
-  }, []);
-
-  const handleMute = useCallback((type) => {
-    setMuteTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) {
-        next.delete(type);
-      } else {
-        next.add(type);
-      }
-      return next;
-    });
-  }, []);
-
-  // Is a given type muted (either explicitly muted, or not in solo set when solo is active)
-  const isTypeMuted = useCallback((type) => {
-    if (soloTypes.size > 0) return !soloTypes.has(type);
-    return muteTypes.has(type);
-  }, [soloTypes, muteTypes]);
-
-  if (!topoOrder || topoOrder.length <= 1) return null;
+  if (!topoOrder?.length) return null;
 
   return (
-    <div className={`timeline-filmstrip ${trackMode ? 'track-mode' : 'flat-mode'}`}>
-      {/* Left controls column */}
-      <div className="filmstrip-controls" style={trackMode ? { alignSelf: 'flex-start', paddingTop: 4 } : {}}>
-        <div style={{ textAlign: 'center' }}>
-          <button className="filmstrip-btn" onClick={onGoPrev} title="Previous (J)">◀</button>
-          <div className="filmstrip-key-hint">J</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <button
-            className={`filmstrip-btn ${isPlaying ? 'playing' : ''}`}
-            onClick={onTogglePlay}
-            title={isPlaying ? 'Pause (K)' : 'Play (K)'}
-          >
-            {isPlaying ? '❚❚' : '▶'}
-          </button>
-          <div className="filmstrip-key-hint">K</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <button className="filmstrip-btn" onClick={onGoNext} title="Next (L)">▶</button>
-          <div className="filmstrip-key-hint">L</div>
-        </div>
-        {/* Track mode toggle */}
-        <button
-          className={`filmstrip-mode-toggle ${trackMode ? 'active' : ''}`}
-          onClick={handleToggleTrackMode}
-          title={trackMode ? 'Flat view' : 'Track view'}
-        >
-          ≡
+    <div className="filmstrip">
+      {/* Transport controls */}
+      <div className="filmstrip-transport">
+        <button className="filmstrip-btn" onClick={onGoPrev} title="Previous (J)">◄</button>
+        <button className="filmstrip-btn" onClick={onTogglePlay} title="Play/Pause (K)">
+          {isPlaying ? '■' : '►'}
         </button>
+        <button className="filmstrip-btn" onClick={onGoNext} title="Next (L)">►</button>
+        <button
+          className="filmstrip-btn filmstrip-btn-list"
+          onClick={() => { setExpandedType(null); onFilterChange?.(null); }}
+          title="Show all"
+        >
+          ☰
+        </button>
+        <span className="filmstrip-counter">
+          {currentIndex >= 0 ? currentIndex + 1 : '–'}/{topoOrder.length}
+        </span>
       </div>
 
-      {/* Position indicator */}
-      <div className="filmstrip-position" style={trackMode ? { alignSelf: 'flex-start', paddingTop: 10 } : {}}>
-        {currentIndex >= 0 ? currentIndex + 1 : '–'}/{topoOrder.length}
-      </div>
+      {/* Type chips */}
+      <div className="filmstrip-types" ref={scrollRef}>
+        {typeGroups.map(group => (
+          <div key={group.type} className="filmstrip-type-group">
+            <button
+              className={`filmstrip-type-chip ${expandedType === group.type ? 'expanded' : ''}`}
+              style={{ '--chip-color': group.config.color }}
+              onClick={() => handleTypeClick(group.type)}
+              title={`${group.type} (${group.nodes.length})`}
+            >
+              <span className="filmstrip-chip-dot" style={{ background: group.config.color }} />
+              <span className="filmstrip-chip-label">{group.type.replace(/_/g, ' ')}</span>
+              <span className="filmstrip-chip-count">{group.nodes.length}</span>
+            </button>
 
-      {/* ── Flat mode: single scrollable strip ── */}
-      {!trackMode && (
-        <div className="filmstrip-track">
-          {topoOrder.map((node, i) => {
-            const isPast = currentIndex >= 0 && i < currentIndex;
-            return (
-              <React.Fragment key={node.id}>
-                {i > 0 && (
-                  <div className={`filmstrip-connector ${isPast ? 'done' : ''}`} />
-                )}
-                <Thumb
-                  node={node}
-                  index={i}
-                  isActive={i === currentIndex}
-                  isPast={isPast}
-                  isMuted={false}
-                  onClick={onGoToIndex}
-                  activeRef={activeRef}
-                />
-              </React.Fragment>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Track mode: grouped by type ── */}
-      {trackMode && (
-        <div className="filmstrip-tracks-container">
-          {tracks.map(track => {
-            const muted = isTypeMuted(track.type);
-            const soloed = soloTypes.has(track.type);
-            const mutedExplicit = muteTypes.has(track.type);
-            return (
-              <div
-                key={track.type}
-                className={`filmstrip-track-row ${muted ? 'muted' : ''}`}
-              >
-                <div className="filmstrip-track-header">
-                  <button
-                    className={`track-sm-btn ${soloed ? 'solo-active' : ''}`}
-                    onClick={() => handleSolo(track.type)}
-                    title={`Solo ${track.config.label || track.type}`}
-                  >
-                    S
-                  </button>
-                  <button
-                    className={`track-sm-btn ${mutedExplicit ? 'mute-active' : ''}`}
-                    onClick={() => handleMute(track.type)}
-                    title={`Mute ${track.config.label || track.type}`}
-                  >
-                    M
-                  </button>
-                  <span className="track-type-dot" style={{ background: track.config.color }} />
-                  <span className="track-type-label" style={{ color: track.config.color }}>
-                    {track.config.label || track.type}
-                  </span>
-                  <span className="track-type-count">{track.nodes.length}</span>
-                </div>
-                <div className="filmstrip-track-thumbs">
-                  {track.nodes.map(({ node, topoIndex }, j) => (
-                    <React.Fragment key={node.id}>
-                      {j > 0 && <div className="filmstrip-connector" />}
-                      <Thumb
-                        node={node}
-                        index={topoIndex}
-                        isActive={topoIndex === currentIndex}
-                        isPast={currentIndex >= 0 && topoIndex < currentIndex}
-                        isMuted={muted}
-                        onClick={onGoToIndex}
-                        activeRef={activeRef}
-                      />
-                    </React.Fragment>
-                  ))}
-                </div>
+            {/* Expanded: show individual nodes */}
+            {expandedType === group.type && (
+              <div className="filmstrip-expanded-nodes">
+                {group.nodes.map((node, i) => {
+                  const topoIdx = group.indices[i];
+                  const isActive = topoIdx === currentIndex;
+                  const label = node.data?.label || node.label || '?';
+                  return (
+                    <button
+                      key={node.id}
+                      ref={isActive ? activeRef : null}
+                      className={`filmstrip-node-chip ${isActive ? 'active' : ''}`}
+                      style={{ '--chip-color': group.config.color }}
+                      onClick={() => handleNodeClick(topoIdx)}
+                      title={label}
+                    >
+                      {label.length > 18 ? label.slice(0, 17) + '…' : label}
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

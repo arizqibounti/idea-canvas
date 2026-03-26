@@ -153,6 +153,8 @@ app.post('/api/fractal-select',    (req, res) => handleFractalSelect(client, req
 app.post('/api/score-nodes',       (req, res) => handleScoreNodes(client, req, res));
 app.post('/api/extract-template',  (req, res) => handleExtractTemplate(client, req, res));
 app.post('/api/analyze-codebase',  generationLimit, (req, res) => handleAnalyzeCodebase(client, req, res));
+const { handleAnalyzeGithub } = require('./engine/github');
+app.post('/api/analyze-github',   generationLimit, (req, res) => handleAnalyzeGithub(client, req, res));
 app.post('/api/reflect',           (req, res) => handleReflect(client, req, res));
 app.post('/api/critique',          (req, res) => handleCritique(client, req, res));
 
@@ -214,9 +216,12 @@ app.post('/api/stop-execution',    (req, res) => { const stopped = stopExecution
 // Register integrations, init on start, mount routes.
 require('./integrations/gmail'); // Self-registers with registry
 require('./integrations/claude-code'); // Self-registers with registry
+require('./integrations/github'); // Self-registers with registry
 const integrationRegistry = require('./integrations/registry');
 const { mountIntegrationRoutes } = require('./integrations/routes');
 mountIntegrationRoutes(app);
+const { mountSchedulerRoutes } = require('./engine/scheduler');
+mountSchedulerRoutes(app);
 
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));

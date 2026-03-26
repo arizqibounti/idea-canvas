@@ -1,606 +1,135 @@
-import React, { useState, useRef, useCallback } from 'react';
+// ── GitHub Repo Analyzer ─────────────────────────────────────
+// Input a GitHub repo URL to analyze the codebase and generate
+// a thinking tree of product features, architecture, and user flows.
+// Supports private repos via GitHub OAuth.
 
-// ── File filtering constants ──────────────────────────────────
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', 'dist', 'build', 'out',
-  '__pycache__', '.cache', 'coverage', '.nyc_output',
-  'vendor', 'venv', '.venv', 'env', '.env',
-  '.idea', '.vscode', 'target', 'bin', 'obj',
-]);
+import React, { useState, useCallback } from 'react';
 
-const SKIP_EXTENSIONS = new Set([
-  '.lock', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
-  '.woff', '.woff2', '.ttf', '.eot', '.otf', '.pdf',
-  '.zip', '.tar', '.gz', '.rar', '.7z',
-  '.map', '.min.js', '.min.css',
-  '.pyc', '.pyo', '.class', '.o', '.a', '.so', '.dll', '.exe',
-  '.DS_Store', '.log',
-]);
-
-// ── Application signal patterns ──────────────────────────────
-// Directories whose presence signals "this is application code, not a library".
-// Files under these paths get a significant boost.
-const APP_SIGNAL_DIRS = [
-  /\/routes?\//i, /\/handlers?\//i, /\/controllers?\//i, /\/endpoints?\//i,
-  /\/db\//i, /\/migrations?\//i, /\/queries\//i,
-  /\/agent_?tools?\//i, /\/tool_?params?\//i,
-  /\/auth\//i, /\/middleware\//i,
-  /\/api\//i, /\/services?\//i,
+const ANALYSIS_GOALS = [
+  { id: 'features', label: 'Product Features', desc: 'What the app does — routes, components, handlers', defaultChecked: true },
+  { id: 'architecture', label: 'Architecture & Constraints', desc: 'Tech debt, coupling, bottlenecks, patterns', defaultChecked: true },
+  { id: 'users', label: 'User Segments & Flows', desc: 'Inferred user types from auth, roles, data models', defaultChecked: true },
 ];
 
-// Detect if a module tree looks like an app (has routes, db, handlers, etc.)
-// vs a library (just src/lib.rs + generic modules).
-function detectAppDirs(allPaths) {
-  const dirSignals = new Map(); // module dir → signal count
-
-  for (const p of allPaths) {
-    const hasSignal = APP_SIGNAL_DIRS.some(re => re.test(p));
-    if (!hasSignal) continue;
-
-    // Attribute signal to multiple granularity levels so both
-    // "crates/narrativ" and "crates/narrativ/backend" get credit
-    // Start at depth 2 to avoid overly broad matches like "crates" or "src"
-    const parts = p.split('/');
-    for (let depth = 2; depth <= Math.min(4, parts.length - 1); depth++) {
-      const key = parts.slice(0, depth).join('/');
-      dirSignals.set(key, (dirSignals.get(key) || 0) + 1);
-    }
-  }
-
-  // Modules with 3+ signal hits are "application" modules
-  // Use the shortest prefix that qualifies (so "crates/narrativ" covers both backend & frontend)
-  const candidates = [...dirSignals.entries()]
-    .filter(([, count]) => count >= 3)
-    .map(([dir]) => dir)
-    .sort((a, b) => a.length - b.length);
-
-  // Remove redundant longer prefixes already covered by shorter ones
-  const appModules = new Set();
-  for (const dir of candidates) {
-    const alreadyCovered = [...appModules].some(m => dir.startsWith(m + '/'));
-    if (!alreadyCovered) appModules.add(dir);
-  }
-  return appModules;
-}
-
-// Filename-only patterns (tested against the basename)
-const FILENAME_PATTERNS = [
-  { re: /^(index|main|app|server)\.(js|ts|jsx|tsx|py|go|rb|java|rs)$/i, score: 10 },
-  { re: /^(lib|mod)\.rs$/i, score: 8 },
-  { re: /^Cargo\.toml$/i, score: 7 },
-  { re: /^package\.json$/i, score: 7 },
-  { re: /^go\.(mod|sum)$/i, score: 6 },
-  { re: /^README\.md$/i, score: 5 },
-  { re: /\.(routes?|controller|handler|endpoint|api)\.(js|ts|py|go|rb|rs)$/i, score: 9 },
-  { re: /\.(model|schema|entity|migration)\.(js|ts|py|go|rb|rs)$/i, score: 9 },
-  { re: /\.(component|page|view|screen|container)\.(jsx|tsx|js|ts)$/i, score: 7 },
-  { re: /\.(service|store|context|hook|util|helper)\.(js|ts)$/i, score: 5 },
-  { re: /\.(config|settings|constants)\.(js|ts|py|json|toml|yaml)$/i, score: 4 },
-  { re: /\.rs$/i, score: 3 },
-  { re: /\.(tsx|jsx)$/i, score: 3 },
-  { re: /\.(ts|js)$/i, score: 2 },
-  { re: /\.md$/i, score: 2 },
-  { re: /\.sql$/i, score: 5 },
-];
-
-// Full-path patterns (tested against the entire relative path)
-const PATH_PATTERNS = [
-  // Route/handler/API directories — strong product signals
-  { re: /\/routes?\//i, score: 9 },
-  { re: /\/handlers?\//i, score: 9 },
-  { re: /\/controllers?\//i, score: 9 },
-  { re: /\/endpoints?\//i, score: 9 },
-  { re: /\/api\//i, score: 8 },
-  // Data layer directories
-  { re: /\/db\//i, score: 8 },
-  { re: /\/models?\//i, score: 8 },
-  { re: /\/schemas?\//i, score: 8 },
-  { re: /\/queries\//i, score: 8 },
-  { re: /\/migrations?\//i, score: 7 },
-  // Services & middleware & auth
-  { re: /\/services?\//i, score: 7 },
-  { re: /\/middleware\//i, score: 7 },
-  { re: /\/auth\//i, score: 7 },
-  // Agent/tool systems
-  { re: /\/agent_?tools?\//i, score: 9 },
-  { re: /\/tool_?params?\//i, score: 8 },
-  // Frontend routes & pages
-  { re: /\/routes\/.*\.(tsx|ts|jsx|js)$/i, score: 8 },
-  { re: /\/pages\/.*\.(tsx|ts|jsx|js)$/i, score: 8 },
-  // Feature directories
-  { re: /\/features?\//i, score: 7 },
-  { re: /\/components?\//i, score: 6 },
-  // Types & interfaces
-  { re: /\/types?\//i, score: 6 },
-  // Source entry points in nested crates/packages
-  { re: /\/src\/(main|lib)\.(rs|ts|js)$/i, score: 7 },
-];
-
-const MAX_FILES = 400;
-const MAX_TOTAL_CHARS = 180000;
-const MAX_FILE_CHARS = 6000;
-
-// Score a file by filename + path patterns, then boost if it belongs to an app module
-function getFilePriority(fullPath, appModules) {
-  const filename = fullPath.split('/').pop();
-  let best = 1;
-
-  // Check filename patterns
-  for (const { re, score } of FILENAME_PATTERNS) {
-    if (re.test(filename) && score > best) best = score;
-  }
-  // Check full-path patterns
-  for (const { re, score } of PATH_PATTERNS) {
-    if (re.test(fullPath) && score > best) best = score;
-  }
-
-  // App module boost: files inside detected application modules get +3
-  // Library/framework files stay at base score, so app code always wins
-  if (appModules && appModules.size > 0) {
-    const isApp = [...appModules].some(mod => fullPath.startsWith(mod));
-    if (isApp) {
-      best += 3;
-    }
-  }
-
-  return best;
-}
-
-function shouldSkipFile(path) {
-  const parts = path.split('/');
-  if (parts.some((p) => SKIP_DIRS.has(p))) return true;
-  const lower = path.toLowerCase();
-  return SKIP_EXTENSIONS.has(
-    [...SKIP_EXTENSIONS].find((ext) => lower.endsWith(ext)) || ''
-  );
-}
-
-// ── Recursive directory reader ────────────────────────────────
-async function readDirectoryEntry(dirEntry, basePath = '') {
-  return new Promise((resolve) => {
-    const reader = dirEntry.createReader();
-    const allEntries = [];
-
-    const readBatch = () => {
-      reader.readEntries((entries) => {
-        if (!entries.length) return resolve(allEntries);
-        allEntries.push(...entries);
-        readBatch();
-      }, () => resolve(allEntries));
-    };
-    readBatch();
-  });
-}
-
-async function collectFilesFromEntry(entry, path = '') {
-  const fullPath = path ? `${path}/${entry.name}` : entry.name;
-
-  if (entry.isFile) {
-    if (shouldSkipFile(fullPath)) return [];
-    return [{ entry, path: fullPath }];
-  }
-
-  if (entry.isDirectory) {
-    if (SKIP_DIRS.has(entry.name)) return [];
-    const children = await readDirectoryEntry(entry, fullPath);
-    const results = await Promise.all(
-      children.map((child) => collectFilesFromEntry(child, fullPath))
-    );
-    return results.flat();
-  }
-
-  return [];
-}
-
-function readFileAsText(fileEntry) {
-  return new Promise((resolve, reject) => {
-    fileEntry.file((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = () => reject(new Error(`Failed to read ${fileEntry.fullPath}`));
-      reader.readAsText(file);
-    }, reject);
-  });
-}
-
-// ── File System Access API directory reader ──────────────────
-async function collectFilesFromHandle(dirHandle, path = '') {
-  const files = [];
-  for await (const entry of dirHandle.values()) {
-    const fullPath = path ? `${path}/${entry.name}` : entry.name;
-    if (entry.kind === 'directory') {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      const children = await collectFilesFromHandle(entry, fullPath);
-      files.push(...children);
-    } else if (entry.kind === 'file') {
-      if (shouldSkipFile(fullPath)) continue;
-      files.push({ handle: entry, path: fullPath });
-    }
-  }
-  return files;
-}
-
-// ── Main component ────────────────────────────────────────────
-const GOALS = [
-  { key: 'features', label: 'Product Features', desc: 'What the app does — routes, components, handlers' },
-  { key: 'architecture', label: 'Architecture & Constraints', desc: 'Tech debt, coupling, bottlenecks, patterns' },
-  { key: 'users', label: 'User Segments & Flows', desc: 'Inferred user types from auth, roles, data models' },
-];
-
-export default function CodebaseUpload({ onAnalysisReady, isAnalyzing }) {
-  const [goals, setGoals] = useState({ features: true, architecture: true, users: true });
-  const [phase, setPhase] = useState('idle'); // idle | reading | ready | error
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [summary, setSummary] = useState(null); // { fileCount, folderName, filesOmitted }
-  const [errorMsg, setErrorMsg] = useState('');
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef(null);
-  const payloadRef = useRef(null);
-
-  const processEntries = useCallback(async (entries, folderName) => {
-    setPhase('reading');
-    setErrorMsg('');
-
-    try {
-      // Collect all candidate file entries
-      const allCandidates = (
-        await Promise.all(entries.map((e) => collectFilesFromEntry(e)))
-      ).flat();
-
-      // Detect which modules are apps vs libraries, then score
-      const appModules = detectAppDirs(allCandidates.map(c => c.path));
-      const scored = allCandidates.map((c) => ({
-        ...c,
-        score: getFilePriority(c.path, appModules),
-      })).sort((a, b) => b.score - a.score);
-
-      const selected = scored.slice(0, MAX_FILES);
-      const filesOmitted = Math.max(0, scored.length - MAX_FILES);
-
-      setProgress({ done: 0, total: selected.length });
-
-      // Read files with budget enforcement
-      const files = [];
-      let totalChars = 0;
-
-      for (let i = 0; i < selected.length; i++) {
-        const { entry, path } = selected[i];
-        setProgress({ done: i + 1, total: selected.length });
-
-        try {
-          let content = await readFileAsText(entry);
-
-          // Truncate large files
-          if (content.length > MAX_FILE_CHARS) {
-            const omitted = content.length - MAX_FILE_CHARS;
-            content = content.slice(0, MAX_FILE_CHARS) + `\n// [truncated — ${omitted} chars omitted]`;
-          }
-
-          // Budget check
-          if (totalChars + content.length > MAX_TOTAL_CHARS) break;
-          totalChars += content.length;
-          files.push({ path, content });
-        } catch {
-          // skip unreadable files silently
-        }
-      }
-
-      const activeGoals = Object.entries(goals)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-
-      payloadRef.current = { files, analysisGoals: activeGoals, folderName, filesOmitted };
-      setSummary({ fileCount: files.length, folderName, filesOmitted });
-      setPhase('ready');
-    } catch (err) {
-      setErrorMsg(err.message || 'Failed to read files');
-      setPhase('error');
-    }
-  }, [goals]);
-
-  // Handle modern File System Access API (no browser popup)
-  const handleDirectoryPicker = useCallback(async () => {
-    try {
-      const dirHandle = await window.showDirectoryPicker();
-      const folderName = dirHandle.name || 'project';
-
-      setPhase('reading');
-      setErrorMsg('');
-
-      // Recursively collect files (skips excluded dirs/extensions during traversal)
-      const allCandidates = await collectFilesFromHandle(dirHandle);
-
-      // Detect which modules are apps vs libraries, then score
-      const appModules = detectAppDirs(allCandidates.map(c => c.path));
-      const scored = allCandidates.map((c) => ({
-        ...c,
-        score: getFilePriority(c.path, appModules),
-      })).sort((a, b) => b.score - a.score);
-
-      const selected = scored.slice(0, MAX_FILES);
-      const filesOmitted = Math.max(0, scored.length - MAX_FILES);
-
-      setProgress({ done: 0, total: selected.length });
-
-      // Read files with budget enforcement
-      const files = [];
-      let totalChars = 0;
-
-      for (let i = 0; i < selected.length; i++) {
-        const { handle, path } = selected[i];
-        setProgress({ done: i + 1, total: selected.length });
-
-        try {
-          const file = await handle.getFile();
-          let content = await file.text();
-
-          if (content.length > MAX_FILE_CHARS) {
-            const omitted = content.length - MAX_FILE_CHARS;
-            content = content.slice(0, MAX_FILE_CHARS) + `\n// [truncated — ${omitted} chars omitted]`;
-          }
-
-          if (totalChars + content.length > MAX_TOTAL_CHARS) break;
-          totalChars += content.length;
-          files.push({ path, content });
-        } catch {
-          // skip unreadable files silently
-        }
-      }
-
-      const activeGoals = Object.entries(goals)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-
-      payloadRef.current = { files, analysisGoals: activeGoals, folderName, filesOmitted };
-      setSummary({ fileCount: files.length, folderName, filesOmitted });
-      setPhase('ready');
-    } catch (err) {
-      if (err.name === 'AbortError') return; // user cancelled picker
-      setErrorMsg(err.message || 'Failed to read directory');
-      setPhase('error');
-    }
-  }, [goals]);
-
-  // Handle <input webkitdirectory> change
-  const handleInputChange = useCallback((e) => {
-    const fileList = e.target.files;
-    if (!fileList || !fileList.length) return;
-
-    // Get folder name from first file path
-    const firstPath = fileList[0].webkitRelativePath || fileList[0].name;
-    const folderName = firstPath.split('/')[0] || 'project';
-
-    // Use webkitGetAsEntry if available for better filtering, else fallback
-    // For input[webkitdirectory], we get File objects directly
-    const candidates = [];
-    let totalChars = 0;
-
-    const filtered = Array.from(fileList)
-      .filter((f) => !shouldSkipFile(f.webkitRelativePath || f.name));
-    const allPaths = filtered.map(f => f.webkitRelativePath || f.name);
-    const appModules = detectAppDirs(allPaths);
-
-    const scored = filtered
-      .map((f) => ({
-        file: f,
-        path: f.webkitRelativePath || f.name,
-        score: getFilePriority(f.webkitRelativePath || f.name, appModules),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MAX_FILES);
-
-    const filesOmitted = Math.max(0, fileList.length - scored.length);
-
-    setPhase('reading');
-    setProgress({ done: 0, total: scored.length });
-
-    const readNext = (index) => {
-      if (index >= scored.length) {
-        const activeGoals = Object.entries(goals)
-          .filter(([, v]) => v)
-          .map(([k]) => k);
-        payloadRef.current = { files: candidates, analysisGoals: activeGoals, folderName, filesOmitted };
-        setSummary({ fileCount: candidates.length, folderName, filesOmitted });
-        setPhase('ready');
-        return;
-      }
-
-      setProgress({ done: index + 1, total: scored.length });
-      const { file, path } = scored[index];
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        let content = ev.target.result || '';
-        if (content.length > MAX_FILE_CHARS) {
-          const omitted = content.length - MAX_FILE_CHARS;
-          content = content.slice(0, MAX_FILE_CHARS) + `\n// [truncated — ${omitted} chars omitted]`;
-        }
-        if (totalChars + content.length <= MAX_TOTAL_CHARS) {
-          totalChars += content.length;
-          candidates.push({ path, content });
-        }
-        readNext(index + 1);
-      };
-      reader.onerror = () => readNext(index + 1);
-      reader.readAsText(file);
-    };
-
-    readNext(0);
-  }, [goals]);
-
-  // Handle drag-and-drop
-  const handleDrop = useCallback(async (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-
-    const items = e.dataTransfer?.items;
-    if (!items) return;
-
-    const entries = [];
-    let folderName = 'project';
-
-    for (const item of items) {
-      const entry = item.webkitGetAsEntry?.();
-      if (!entry) continue;
-      if (entry.isDirectory && !folderName) folderName = entry.name;
-      if (entry.isDirectory) folderName = entry.name;
-      entries.push(entry);
-    }
-
-    if (!entries.length) return;
-    processEntries(entries, folderName);
-  }, [processEntries]);
-
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  }, []);
-
-  const handleDragLeave = useCallback(() => {
-    setIsDragOver(false);
-  }, []);
+export default function CodebaseUpload({ onAnalysisReady, isAnalyzing, github }) {
+  const [repoUrl, setRepoUrl] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [goals, setGoals] = useState(() => new Set(ANALYSIS_GOALS.filter(g => g.defaultChecked).map(g => g.id)));
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const isValidUrl = repoUrl.includes('github.com/') && repoUrl.split('github.com/')[1]?.includes('/');
 
   const handleAnalyze = useCallback(() => {
-    if (!payloadRef.current) return;
-    onAnalysisReady(payloadRef.current);
-  }, [onAnalysisReady]);
-
-  const handleReset = useCallback(() => {
-    payloadRef.current = null;
-    setSummary(null);
-    setPhase('idle');
-    setProgress({ done: 0, total: 0 });
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
-
-  const toggleGoal = (key) => {
-    setGoals((prev) => ({ ...prev, [key]: !prev[key] }));
-    // Reset ready state if goals change after files loaded
-    if (phase === 'ready') {
-      setPhase('idle');
-      payloadRef.current = null;
-      setSummary(null);
-    }
-  };
+    if (!isValidUrl || isAnalyzing) return;
+    onAnalysisReady({
+      repoUrl: repoUrl.trim(),
+      branch: branch.trim() || 'main',
+      analysisGoals: Array.from(goals),
+      folderName: repoUrl.split('github.com/')[1]?.replace(/\.git$/, '') || 'repo',
+    });
+  }, [repoUrl, branch, goals, isValidUrl, isAnalyzing, onAnalysisReady]);
 
   return (
-    <div className="codebase-upload-wrapper">
     <div className="codebase-upload">
-      <div className="upload-header">
-        <span className="upload-icon">⟨/⟩</span>
-        <div className="upload-title">ANALYZE CODEBASE</div>
-        <div className="upload-subtitle">bottom-up product thinking from real code</div>
+      <div className="cb-upload-header">
+        <span className="cb-upload-icon">⟨/⟩</span>
+        <span className="cb-upload-title">ANALYZE GITHUB REPO</span>
       </div>
 
-      {/* Analysis goals */}
-      <div className="upload-goals">
-        {GOALS.map(({ key, label, desc }) => (
-          <label key={key} className={`upload-goal-item ${goals[key] ? 'checked' : ''}`}>
+      <div className="cb-upload-desc">
+        Paste a GitHub repository URL to analyze the codebase and generate a product thinking tree.
+      </div>
+
+      {/* GitHub connection status */}
+      {github?.configured && (
+        <div className="cb-github-auth">
+          {github.connected ? (
+            <div className="cb-github-connected">
+              <span className="cb-github-badge">✓ Connected as @{github.account}</span>
+              <button className="cb-github-disconnect" onClick={github.disconnect}>Disconnect</button>
+            </div>
+          ) : (
+            <button className="cb-github-connect-btn" onClick={github.connect}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{ marginRight: 6 }}>
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+              </svg>
+              Connect GitHub for private repos
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="cb-github-input-row">
+        <input
+          type="text"
+          className="cb-github-url-input"
+          placeholder="https://github.com/owner/repo"
+          value={repoUrl}
+          onChange={e => setRepoUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && isValidUrl) handleAnalyze(); }}
+          disabled={isAnalyzing}
+          autoFocus
+        />
+      </div>
+
+      <button className="cb-advanced-toggle" onClick={() => setShowAdvanced(v => !v)}>
+        {showAdvanced ? '▾' : '▸'} Options
+      </button>
+
+      {showAdvanced && (
+        <div className="cb-advanced-panel">
+          <div className="cb-branch-row">
+            <label className="cb-branch-label">Branch:</label>
             <input
-              type="checkbox"
-              checked={goals[key]}
-              onChange={() => toggleGoal(key)}
-            />
-            <div className="upload-goal-text">
-              <span className="upload-goal-label">{label}</span>
-              <span className="upload-goal-desc">{desc}</span>
-            </div>
-          </label>
-        ))}
-      </div>
-
-      {/* Drop zone */}
-      {phase === 'idle' && (
-        <div
-          className={`upload-drop-zone ${isDragOver ? 'drag-over' : ''}`}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onClick={async () => {
-            // File System Access API is blocked in iframes (e.g. preview);
-            // detect iframe or missing API and fall back to <input webkitdirectory>
-            const inIframe = window.self !== window.top;
-            if (!inIframe && window.showDirectoryPicker) {
-              try {
-                await handleDirectoryPicker();
-              } catch {
-                // Fallback if blocked by permissions policy
-                fileInputRef.current?.click();
-              }
-            } else {
-              fileInputRef.current?.click();
-            }
-          }}
-        >
-          <div className="upload-drop-icon">⬇</div>
-          <div className="upload-drop-label">Drop a project folder here</div>
-          <div className="upload-drop-sub">or click to select folder</div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            webkitdirectory="true"
-            multiple
-            style={{ display: 'none' }}
-            onChange={handleInputChange}
-          />
-        </div>
-      )}
-
-      {/* Reading progress */}
-      {phase === 'reading' && (
-        <div className="upload-progress-wrap">
-          <div className="upload-progress-label">
-            Reading files… {progress.done} / {progress.total}
-          </div>
-          <div className="upload-progress-bar">
-            <div
-              className="upload-progress-fill"
-              style={{ width: progress.total ? `${(progress.done / progress.total) * 100}%` : '0%' }}
+              type="text"
+              className="cb-branch-input"
+              value={branch}
+              onChange={e => setBranch(e.target.value)}
+              placeholder="main"
+              disabled={isAnalyzing}
             />
           </div>
-        </div>
-      )}
 
-      {/* Ready state */}
-      {phase === 'ready' && summary && (
-        <div className="upload-ready">
-          <div className="upload-ready-info">
-            <span className="upload-ready-icon">✓</span>
-            <div>
-              <div className="upload-ready-name">{summary.folderName}</div>
-              <div className="upload-ready-meta">
-                {summary.fileCount} files indexed
-                {summary.filesOmitted > 0 && ` · ${summary.filesOmitted} skipped`}
-              </div>
-            </div>
-          </div>
-          <div className="upload-ready-actions">
-            <button
-              className="btn btn-generate"
-              onClick={handleAnalyze}
-              disabled={isAnalyzing || !Object.values(goals).some(Boolean)}
-            >
-              {isAnalyzing ? '⟳ ANALYZING…' : '▶ ANALYZE'}
-            </button>
-            <button className="btn btn-stop" onClick={handleReset}>
-              ✕
-            </button>
+          <div className="cb-goals">
+            {ANALYSIS_GOALS.map(g => (
+              <label key={g.id} className="cb-goal-check">
+                <input
+                  type="checkbox"
+                  checked={goals.has(g.id)}
+                  onChange={e => {
+                    setGoals(prev => {
+                      const next = new Set(prev);
+                      e.target.checked ? next.add(g.id) : next.delete(g.id);
+                      return next;
+                    });
+                  }}
+                  disabled={isAnalyzing}
+                />
+                <div>
+                  <div className="cb-goal-label">{g.label}</div>
+                  <div className="cb-goal-desc">{g.desc}</div>
+                </div>
+              </label>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Error */}
-      {phase === 'error' && (
-        <div className="upload-error">
-          <span>⚠ {errorMsg}</span>
-          <button onClick={handleReset}>Try again</button>
-        </div>
+      <button
+        className="cb-analyze-btn"
+        onClick={handleAnalyze}
+        disabled={!isValidUrl || isAnalyzing || goals.size === 0}
+      >
+        {isAnalyzing ? '◌ Analyzing...' : '▶ ANALYZE REPO'}
+      </button>
+
+      {repoUrl && !isValidUrl && (
+        <div className="cb-url-hint">Enter a valid GitHub URL: https://github.com/owner/repo</div>
       )}
 
-      <div className="upload-hint">
-        Supports Rust, JavaScript, TypeScript, Python, Go, Ruby, Java, and more.
-        node_modules, target/, and build artifacts are automatically excluded.
-      </div>
-    </div>
+      {!github?.connected && isValidUrl && repoUrl.includes('github.com') && (
+        <div className="cb-private-hint">For private repos, connect your GitHub account above.</div>
+      )}
     </div>
   );
 }

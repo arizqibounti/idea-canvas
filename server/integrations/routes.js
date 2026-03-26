@@ -223,6 +223,36 @@ function mountIntegrationRoutes(app) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ── GitHub specific routes ───────────────────────────────────
+
+  app.get('/api/integrations/github/callback', async (req, res) => {
+    const integration = registry.get('github');
+    if (!integration) return res.status(404).send('GitHub integration not available');
+    try {
+      const { code, state } = req.query;
+      const result = await integration.handleCallback(code, state);
+      res.send(`<html><body><script>
+        window.opener?.postMessage({ type: 'github-connected', login: '${(result.login || '').replace(/'/g, "\\'")}' }, '*');
+        window.close();
+      </script></body></html>`);
+    } catch (err) {
+      res.status(400).send(`<html><body><p>GitHub connection failed: ${err.message}</p></body></html>`);
+    }
+  });
+
+  app.get('/api/integrations/github/repos', async (req, res) => {
+    const integration = registry.get('github');
+    if (!integration) return res.json([]);
+    try {
+      const { q, perPage } = req.query;
+      const repos = await integration.api.listRepos(q || '', parseInt(perPage) || 20);
+      res.json({ repos });
+    } catch (err) {
+      if (err.message.includes('Not connected')) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 module.exports = { mountIntegrationRoutes };

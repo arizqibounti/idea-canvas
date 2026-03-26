@@ -305,14 +305,17 @@ async function handleGenerateResearch(_client, req, res) {
 
     // Phase 1: Research planning
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Planning research strategy...' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_start', id: 'research-plan', label: 'Research Planning', model: 'gemini:flash' })}\n\n`);
     const existingContentStr = (fetchedUrlContent || [])
       .map(u => `${u.url}: ${u.text?.slice(0, 500)}`)
       .join('\n');
     const researchPlan = await planResearch(gemini, idea, existingContentStr);
     console.log('Research plan:', JSON.stringify(researchPlan, null, 2).slice(0, 500));
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_done', id: 'research-plan' })}\n\n`);
 
     // Phase 2: Parallel research agents
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Researching market, technology & audience...' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_start', id: 'research-exec', label: 'Deep Research', model: 'gemini:flash', parallel: true })}\n\n`);
 
     const agentTypes = ['market', 'technology', 'audience'];
     const agentLabels = {
@@ -327,13 +330,16 @@ async function handleGenerateResearch(_client, req, res) {
         runResearchAgent(gemini, agentType, researchPlan, existingContentStr).then(result => {
           completedCount++;
           res.write(`data: ${JSON.stringify({ _progress: true, stage: `${agentLabels[agentType]} (${completedCount}/3)...` })}\n\n`);
+          res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'agent_done', id: `research-${agentType}`, parentId: 'research-exec', label: agentLabels[agentType] })}\n\n`);
           return result;
         })
       )
     );
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_done', id: 'research-exec' })}\n\n`);
 
     // Phase 3: Build research brief
     res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Synthesizing research into thinking tree...' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_start', id: 'tree-gen', label: 'Tree Generation', model: 'claude:opus' })}\n\n`);
     const researchBrief = buildResearchBrief(agentResults);
 
     // Phase 4: Generate tree with research context (streaming)
@@ -402,8 +408,10 @@ async function handleGenerateResearch(_client, req, res) {
     const collectedNodes = await streamToSSECollect(res, stream);
 
     // Phase 6: GoT Aggregate — find convergence points across the tree
+    res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_done', id: 'tree-gen', nodeCount: collectedNodes.length })}\n\n`);
     if (collectedNodes.length >= 10) {
       res.write(`data: ${JSON.stringify({ _progress: true, stage: 'Graph of Thoughts: finding convergence points...' })}\n\n`);
+      res.write(`data: ${JSON.stringify({ _agentFlow: true, event: 'stage_start', id: 'got', label: 'Graph of Thoughts', model: 'claude:sonnet' })}\n\n`);
 
       const nodesSummary = collectedNodes.map(n => {
         const pids = n.parentIds || (n.parentId ? [n.parentId] : []);

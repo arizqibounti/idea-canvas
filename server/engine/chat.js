@@ -56,9 +56,9 @@ AVAILABLE ACTIONS (can combine multiple in one JSON object):
 
 === MULTI-NODE TOOLS (support optional scoping by types/nodeIds) ===
 5. DEBATE:          {"debate":true}  — or scoped: {"debate":{"types":["feature"]}} or {"debate":{"nodeIds":["id1","id2"]}}
-6. REFINE:          {"refine":true}  — or scoped: {"refine":{"types":["tech_debt"]}}
+6. REFINE:          {"refine":true}  — 5-pass deep refine (completeness, logic, evidence, actionability, so-what). Scoped: {"refine":{"types":["tech_debt"]}}
 7. PORTFOLIO:       {"portfolio":true} — or scoped: {"portfolio":{"types":["feature"]}} or {"portfolio":{"nodeIds":["id1"]}}
-8. REFINE MORE:     {"refineMore":true}  — continue refining (another 2 rounds)
+8. REFINE MORE:     {"refineMore":true}  — run another refine pass (2 more rounds)
 9. PORTFOLIO MORE:  {"portfolioMore":true} — generate more portfolio alternatives
 10. FRACTAL EXPAND: {"fractalExpand":{"rounds":3}}
 11. SCORE NODES:    {"scoreNodes":true} — or scoped: {"scoreNodes":{"types":["feature"]}}
@@ -80,6 +80,11 @@ AVAILABLE ACTIONS (can combine multiple in one JSON object):
 20. PROTOTYPE:       {"buildPrototype":true} — build interactive prototype from the tree
 21. FEED TO IDEA:    {"feedToIdea":true} — or scoped: {"feedToIdea":{"types":["feature"]}}
 
+=== SCHEDULING ===
+22. SCHEDULE TASK:   {"scheduleTask":{"name":"Daily research update","type":"research","prompt":"Research latest AI developments","schedule":{"cron":"0 9 * * 1-5"}}} — types: generate, research, debate, refine, custom. Cron: minute hour day month weekday
+23. LIST TASKS:      {"listTasks":true} — show all scheduled tasks
+24. RUN TASK NOW:    {"runTask":{"taskId":"..."}} — execute a task immediately
+
 Rules for addNodes: id MUST start with "chat_", parentId must reference an existing node, type must be one of: seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight, component, api_endpoint, data_model, tech_debt, requirement, skill_match, skill_gap, achievement, keyword, story, positioning, critique, variable, synthesis, aggregation
 
 ${focusedNode ? `\n** FOCUSED NODE ACTIONS — The user has node "${focusedNode.label}" selected. When they say:
@@ -98,7 +103,7 @@ WHEN TO USE ACTIONS (you MUST use them — these are TOOLS, not documents):
 - "add these to canvas" / "brainstorm features" → addNodes
 - "clear filters" / "show all" / "reset" → clear
 - "run a debate" / "critique this" / "stress test" → debate
-- "refine this" / "auto-refine" / "strengthen" → refine
+- "refine this" / "audit this" / "ralph wiggum" / "deep audit" / "strengthen" → refine
 - "generate portfolio" / "show alternatives" → portfolio
 - "expand more" / "go deeper" / "fractal expand" → fractalExpand
 - "score the nodes" / "rank these" → scoreNodes
@@ -110,6 +115,9 @@ WHEN TO USE ACTIONS (you MUST use them — these are TOOLS, not documents):
 - "run adversarial" / "run portfolio exploration" → executePattern
 - "build a prototype" → buildPrototype
 - "feed to idea mode" → feedToIdea
+- "schedule a task" / "every morning" / "daily at 9am" → scheduleTask
+- "show my tasks" / "what's scheduled" → listTasks
+- "run that task now" → runTask
 
 WHEN NOT TO USE ACTIONS:
 - Regular questions or explanations

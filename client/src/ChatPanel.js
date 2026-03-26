@@ -8,6 +8,7 @@ import LearnCard from './chat/LearnCard';
 import ExperimentCard from './chat/ExperimentCard';
 import NodeFocusCard from './chat/NodeFocusCard';
 import DebateCard from './chat/DebateCard';
+import GenerationFlowCard from './chat/GenerationFlowCard';
 import PrototypeCard from './chat/PrototypeCard';
 import PipelineCheckpointCard from './chat/PipelineCheckpointCard';
 import { serializeTree, buildFocusedSubtree } from './treeUtils';
@@ -192,14 +193,16 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo, initialChatMessages, onSaveChatMessages }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo, initialChatMessages, onSaveChatMessages, generationFlow }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [chatAttachedFiles, setChatAttachedFiles] = useState([]);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const chatFileRef = useRef(null);
   const execStreamRef = useRef(null);
   const initializedRef = useRef(false);
 
@@ -266,7 +269,14 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
   const sendMessage = useCallback(async (content) => {
     if (!content.trim() || isStreaming) return;
 
-    const userMsg = { role: 'user', content: content.trim() };
+    // Append attached file content to the user message
+    let fullContent = content.trim();
+    if (chatAttachedFiles.length > 0) {
+      const fileBlock = chatAttachedFiles.map(f => `[Attached: ${f.name}]\n${f.text}`).join('\n\n');
+      fullContent += `\n\n--- ATTACHED FILES ---\n${fileBlock}`;
+      setChatAttachedFiles([]); // clear after sending
+    }
+    const userMsg = { role: 'user', content: fullContent };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput('');
@@ -363,6 +373,30 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
     }
     setIsStreaming(false);
   }, [streamingText]);
+
+  // File attachment handler — reads files and extracts text client-side
+  const handleChatFileAttach = useCallback((e) => {
+    const fileList = Array.from(e.target.files || []);
+    if (!fileList.length) return;
+    const readers = fileList.map(file => {
+      return new Promise((resolve) => {
+        // For text-based files, read content. For others, just store name.
+        const textTypes = ['.txt', '.md', '.json', '.yaml', '.yml', '.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.rs', '.rb', '.csv', '.sql', '.sh'];
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (textTypes.includes(ext) && file.size < 100000) {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve({ name: file.name, size: file.size, text: ev.target.result?.slice(0, 50000) });
+          reader.readAsText(file);
+        } else {
+          resolve({ name: file.name, size: file.size, text: `[Binary file: ${file.name} (${(file.size / 1024).toFixed(1)}KB)]` });
+        }
+      });
+    });
+    Promise.all(readers).then(files => {
+      setChatAttachedFiles(prev => [...prev, ...files]);
+    });
+    e.target.value = ''; // reset input
+  }, []);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -632,8 +666,19 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           <LearnCard state={learnStream} onAction={onCardButtonClick} mnemonicJob={null} />
         )}
         {experimentStream && <ExperimentCard state={experimentStream} onAction={onCardButtonClick} />}
-        {pipelineCheckpoint && <PipelineCheckpointCard state={pipelineCheckpoint} onAction={onPipelineCheckpointAction} />}
         {prototypeStream && <PrototypeCard state={prototypeStream} onAction={onCardButtonClick} />}
+
+        {/* Generation Flow — chain-of-thought visualization (before pipeline checkpoint) */}
+        {generationFlow?.length > 0 && (
+          <GenerationFlowCard
+            stages={generationFlow}
+            isComplete={generationFlow.every(s => s.status === 'done' || s.status === 'pending')}
+            nodeCount={generationFlow.find(s => s.id === 'tree-gen')?.nodeCount || 0}
+          />
+        )}
+
+        {/* Pipeline checkpoint — shows AFTER generation flow */}
+        {pipelineCheckpoint && <PipelineCheckpointCard state={pipelineCheckpoint} onAction={onPipelineCheckpointAction} />}
 
         {/* ── Node Focus Card ── */}
         {focusedNode && (
@@ -675,8 +720,35 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
         </div>
       )}
 
+      {/* Attached files preview */}
+      {chatAttachedFiles.length > 0 && (
+        <div className="chat-attached-files">
+          {chatAttachedFiles.map((f, i) => (
+            <span key={i} className="chat-attached-chip">
+              📎 {f.name} <button className="chat-attached-x" onClick={() => setChatAttachedFiles(prev => prev.filter((_, j) => j !== i))}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Input area */}
       <div className="chat-input-area">
+        <button
+          className="chat-attach-btn"
+          onClick={() => chatFileRef.current?.click()}
+          title="Attach files"
+          disabled={isStreaming}
+        >
+          📎
+        </button>
+        <input
+          ref={chatFileRef}
+          type="file"
+          multiple
+          accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx,.txt,.md,.json,.yaml,.yml,.js,.ts,.jsx,.tsx,.py,.go,.rs,.rb"
+          style={{ display: 'none' }}
+          onChange={handleChatFileAttach}
+        />
         <textarea
           ref={inputRef}
           className="chat-input"

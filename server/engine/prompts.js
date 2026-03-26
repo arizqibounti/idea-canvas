@@ -1537,13 +1537,42 @@ Output rules: one JSON object per line. No markdown, no explanations, no array w
 
 // ── Auto-Refine prompts ──────────────────────────────────────
 
-const REFINE_CRITIQUE_PROMPT_IDEA = `You are a product strategist evaluating a thinking tree. Identify the 2-3 weakest nodes.
+const REFINE_CRITIQUE_PROMPT_IDEA = `You are a senior consultant running a deep audit on a thinking tree. Run ALL 5 audit passes on every node:
 
-Evaluate every node against these criteria:
-1. Market signal: Is the market need grounded in real data or just assumed?
-2. Moat depth: Could a competitor replicate this in weeks? Is defensibility specific?
-3. Execution feasibility: Are the steps actionable or hand-wavy?
-4. Innovation specificity: Is this genuinely novel or a generic idea dressed up?
+=== PASS 1: COMPLETENESS SCAN ===
+What's MISSING from this tree? Look for:
+- Obvious strategic areas with zero coverage (pricing? distribution? team? timeline?)
+- User segments mentioned but not explored
+- Competitive threats identified but not addressed
+- Dependencies that have no plan
+
+=== PASS 2: LOGIC AUDIT ===
+Check the reasoning chain:
+- Do child nodes actually follow from their parents?
+- Are there circular arguments (A supports B which supports A)?
+- Are there contradictions between branches?
+- Are cause-effect claims justified?
+
+=== PASS 3: EVIDENCE GROUNDING ===
+Which nodes are unsubstantiated assertions?
+- "Large market opportunity" — where's the data?
+- "Users want X" — based on what research?
+- "Competitive advantage because Y" — prove it
+- Flag every node that makes a claim without evidence
+
+=== PASS 4: ACTIONABILITY CHECK ===
+Could someone act on this node TODAY?
+- "Improve user experience" → FAIL (vague)
+- "Reduce onboarding from 7 steps to 3 using progressive disclosure" → PASS (specific)
+- "Build partnerships" → FAIL (with whom? how? by when?)
+- Flag every hand-wavy node
+
+=== PASS 5: SO-WHAT TEST ===
+For each node, ask "so what?" If the answer isn't obvious:
+- Why does this insight matter?
+- What decision does it inform?
+- What would change if we removed this node?
+- Flag nodes that don't earn their place
 
 Output ONLY a single JSON object (no markdown, no explanation):
 {
@@ -1553,7 +1582,23 @@ Output ONLY a single JSON object (no markdown, no explanation):
       "nodeLabel": "string",
       "severity": 1-10,
       "reason": "string (1 sentence — be specific)",
-      "approach": "expand" | "deepen" | "rewrite" | "add_evidence"
+      "approach": "expand" | "deepen" | "rewrite" | "add_evidence",
+      "auditPass": "completeness" | "logic" | "evidence" | "actionability" | "so_what"
+    }
+  ],
+  "gaps": [
+    {
+      "area": "string (what's missing — e.g. 'Pricing Strategy')",
+      "severity": 1-10,
+      "suggestedParentId": "string (which existing node should be the parent)",
+      "approach": "expand"
+    }
+  ],
+  "contradictions": [
+    {
+      "nodeIdA": "string",
+      "nodeIdB": "string",
+      "description": "string (1 sentence explaining the contradiction)"
     }
   ],
   "overallScore": 1-10,
@@ -1561,11 +1606,13 @@ Output ONLY a single JSON object (no markdown, no explanation):
 }
 
 Rules:
-- Return 2-3 weaknesses maximum (the most impactful ones)
+- Return 5-10 weaknesses across all 5 passes (not just 2-3)
+- Return 1-3 gaps (structural holes — areas with zero coverage)
+- Return 0-3 contradictions (if any exist)
 - severity 8-10 = critical flaw, 5-7 = significant gap, 1-4 = minor improvement
-- approach meanings: "expand" = add 3-5 child nodes, "deepen" = rewrite reasoning with specifics, "rewrite" = replace label+reasoning, "add_evidence" = add metric/insight children with concrete data
-- If the tree is strong (all nodes score 7+), set "stopReason" to a brief explanation and return empty weaknesses
-- Be surgical and specific — vague critiques are useless`;
+- approach: "expand" = add 3-5 child nodes, "deepen" = rewrite with specifics, "rewrite" = replace entirely, "add_evidence" = add concrete data/metrics
+- If ALL nodes score 7+ across ALL 5 passes, set "stopReason" and return empty arrays
+- Be brutal and specific — this is a deep audit, not a gentle review`;
 
 const REFINE_CRITIQUE_PROMPT_RESUME = `You are an ATS scanner and senior recruiter evaluating a resume strategy tree. Identify the 2-3 weakest nodes.
 
@@ -1705,22 +1752,35 @@ const REFINE_CRITIQUE_PROMPT_MAP = {
   learn:    REFINE_CRITIQUE_PROMPT_LEARN,
 };
 
-const REFINE_STRENGTHEN_PROMPT = `You are a surgical tree improver. You receive a thinking tree and a list of weaknesses. Your job is to generate ONLY the nodes needed to fix those weaknesses.
+const REFINE_STRENGTHEN_PROMPT = `You are a deep audit fixer. You receive a thinking tree with weaknesses, structural gaps, and contradictions identified by a 5-pass audit. Fix ALL of them.
 
-For each weakness, the "approach" field tells you what to do:
+You will receive three types of issues:
+
+=== WEAKNESSES (existing nodes that need improvement) ===
+The "approach" field tells you what to do:
 - "expand": Generate 3-5 NEW child nodes under the weak node that address the gap
 - "deepen": Output the weak node with "_update": true and improved reasoning (specific details, examples, data)
 - "rewrite": Output the weak node with "_update": true and a rewritten label + reasoning
 - "add_evidence": Generate 2-4 NEW child nodes of type "metric", "insight", or "achievement" with concrete data
 
+=== GAPS (structural holes — entire areas missing from the tree) ===
+Generate 3-8 NEW nodes to fill each gap. Create a parent node for the missing area, then child nodes with specific content. Use the suggestedParentId as the parent for the area's root node.
+
+=== CONTRADICTIONS (conflicting nodes) ===
+For each contradiction, either:
+- Rewrite one or both nodes to resolve the conflict (output with "_update": true)
+- Add a "synthesis" or "tradeoff" node that acknowledges and reconciles the tension
+
 Node output format — one JSON per line:
-For NEW nodes: {"id": "ref_r{round}_{n}", "parentIds": ["weakNodeId"], "type": "appropriate_type", "label": "max 8 words", "reasoning": "1-2 sentences with specifics"}
+For NEW nodes: {"id": "ref_r{round}_{n}", "parentIds": ["parentId"], "type": "appropriate_type", "label": "max 8 words", "reasoning": "1-2 sentences with specifics"}
 For UPDATED nodes: {"_update": true, "id": "existingId", "label": "improved label", "reasoning": "improved reasoning with concrete details"}
 
 Rules:
-- Output ONLY nodes that fix the listed weaknesses. Do not re-output unchanged nodes.
-- New node ids MUST use prefix "ref_r{round}_" to avoid collisions
-- Be specific and concrete. Replace vague claims with numbers, examples, or named entities.
+- Fix ALL weaknesses, fill ALL gaps, resolve ALL contradictions. Be thorough.
+- New node ids MUST use prefix "ref_r{round}_" to avoid collisions.
+- When filling gaps, create realistic, specific content — not placeholders.
+- When adding evidence, use real company names, real numbers, real market data.
+- When rewriting for actionability, include WHO does WHAT by WHEN with WHAT metric.
 - One JSON object per line. No markdown, no explanations, no array wrappers.`;
 
 const REFINE_SCORE_PROMPT = `You are a tree quality evaluator. Score the overall quality of this thinking tree.

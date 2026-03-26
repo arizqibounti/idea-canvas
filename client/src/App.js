@@ -37,6 +37,7 @@ import { useMnemonicVideo } from './useMnemonicVideo';
 import PipelineOverlay from './PipelineOverlay';
 import VideoModal from './VideoModal';
 import FlowchartView from './FlowchartView';
+import AgentFlowView from './AgentFlowView';
 import LearnJourneyView from './LearnJourneyView';
 import GmailPicker from './GmailConnect';
 import useGmail from './useGmail';
@@ -848,6 +849,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   // shape: { types?: string[], nodeIds?: string[] } | null
   const [pendingChatCards, setPendingChatCards] = useState([]);
   const [savedChatMessages, setSavedChatMessages] = useState([]);
+  const [generationFlow, setGenerationFlow] = useState(null); // array of { id, label, status, startedAt, completedAt, nodeCount, detail }
+  const [agentFlowLog, setAgentFlowLog] = useState([]); // execution events for agent flow view
   const [executionStream, setExecutionStream] = useState(null); // { nodeLabel, text, done, error }
   const [refineStream, setRefineStream] = useState(null); // live refine progress for inline chat card
   const [portfolioStream, setPortfolioStream] = useState(null); // live portfolio progress for inline chat card
@@ -906,6 +909,34 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     onClearEmail: () => setEmailContext(null),
     mode: displayMode,
   });
+
+  // ── GitHub integration status ──────────────────────────────
+  const [githubStatus, setGithubStatus] = useState({ configured: false, connected: false, account: null });
+  useEffect(() => {
+    authFetch(`${API_URL}/api/integrations/github/status`).then(r => r.ok ? r.json() : null).then(d => { if (d) setGithubStatus(d); }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.data?.type === 'github-connected') {
+        setGithubStatus(prev => ({ ...prev, connected: true, account: e.data.login }));
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+  const githubConnect = useCallback(async () => {
+    try {
+      const res = await authFetch(`${API_URL}/api/integrations/github/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!res.ok) return;
+      const { authUrl } = await res.json();
+      const w = 600, h = 700, left = window.screenX + (window.innerWidth - w) / 2, top = window.screenY + (window.innerHeight - h) / 2;
+      window.open(authUrl, 'github-oauth', `width=${w},height=${h},left=${left},top=${top}`);
+    } catch {}
+  }, []);
+  const githubDisconnect = useCallback(async () => {
+    await authFetch(`${API_URL}/api/integrations/github/disconnect`, { method: 'POST' }).catch(() => {});
+    setGithubStatus(prev => ({ ...prev, connected: false, account: null }));
+  }, []);
 
   // ── View Mode ──────────────────────────────────────────────
   const [viewMode, setViewMode] = useState('flowchart'); // 'flowchart' | 'tree' | '3d'
@@ -1318,6 +1349,19 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     setMultiAgentProgress('Planning research strategy...');
     setRedirectState('idle');
 
+    // Initialize generation flow visualization
+    setGenerationFlow([
+      { id: 'research-plan', label: 'Research Planning', status: 'active', startedAt: new Date().toISOString() },
+      { id: 'research-exec', label: 'Deep Research', status: 'pending' },
+      { id: 'tree-gen', label: 'Generating Tree', status: 'pending', nodeCount: 0 },
+      { id: 'got', label: 'Graph of Thoughts', status: 'pending' },
+    ]);
+    // Initialize agent flow log with root node
+    setAgentFlowLog([
+      { _agentFlow: true, event: 'stage_start', id: 'root', label: 'Claude (Agent Core)', timestamp: Date.now() },
+      { _agentFlow: true, event: 'stage_start', id: 'research-plan', label: 'Research Planning', parentId: 'root', model: 'gemini:flash', timestamp: Date.now() },
+    ]);
+
     dynamicConfigRef.current = null;
     dynamicTypesRef.current = null;
     setDynamicDomain(null);
@@ -1381,10 +1425,39 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
 
       const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
       const seenTypes = [];
+      let genNodeCount = 0;
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
+        if (nodeData._agentFlow) {
+          setAgentFlowLog(prev => [...prev, { ...nodeData, timestamp: Date.now() }]);
+          return;
+        }
         if (nodeData._progress) {
           setMultiAgentProgress(nodeData.stage);
+          // Also log to agent flow for the FLOW view
+          setAgentFlowLog(prev => [...prev, { _agentFlow: true, event: 'progress', id: `prog_${Date.now()}`, label: nodeData.stage, timestamp: Date.now() }]);
+          // Map progress to generation flow stages
+          const stage = nodeData.stage || '';
+          setGenerationFlow(prev => {
+            if (!prev) return prev;
+            const markDone = (id) => prev.map(s => s.id === id ? { ...s, status: 'done', completedAt: new Date().toISOString() } : s);
+            const markActive = (id, detail) => prev.map(s => s.id === id ? { ...s, status: 'active', detail, startedAt: s.startedAt || new Date().toISOString() } : s);
+            if (stage.includes('Researching market') || stage.includes('Research agent')) {
+              setAgentFlowLog(p => [...p, { _agentFlow: true, event: 'stage_done', id: 'research-plan', timestamp: Date.now() }, { _agentFlow: true, event: 'stage_start', id: 'research-exec', label: 'Deep Research', parentId: 'root', model: 'gemini:flash', parallel: true, timestamp: Date.now() }]);
+              return markDone('research-plan').map(s => s.id === 'research-exec' ? { ...s, status: 'active', detail: stage, startedAt: s.startedAt || new Date().toISOString() } : s);
+            }
+            if (stage.includes('Synthesizing') || stage.includes('thinking tree')) {
+              setAgentFlowLog(p => [...p, { _agentFlow: true, event: 'stage_done', id: 'research-exec', timestamp: Date.now() }, { _agentFlow: true, event: 'stage_start', id: 'tree-gen', label: 'Tree Generation', parentId: 'root', model: 'claude:opus', timestamp: Date.now() }]);
+              return markDone('research-exec').map(s => s.id === 'tree-gen' ? { ...s, status: 'active', startedAt: s.startedAt || new Date().toISOString() } : s);
+            }
+            if (stage.includes('Graph of Thoughts') || stage.includes('convergence')) {
+              setAgentFlowLog(p => [...p, { _agentFlow: true, event: 'stage_done', id: 'tree-gen', nodeCount: genNodeCount, timestamp: Date.now() }, { _agentFlow: true, event: 'stage_start', id: 'got', label: 'Graph of Thoughts', parentId: 'root', model: 'claude:sonnet', timestamp: Date.now() }]);
+              return markDone('tree-gen').map(s => s.id === 'got' ? { ...s, status: 'active', startedAt: s.startedAt || new Date().toISOString() } : s);
+            }
+            if (stage.includes('Refining synthesis'))
+              return markActive('got', 'Refining synthesis...');
+            return prev.map(s => s.status === 'active' ? { ...s, detail: stage } : s);
+          });
           return;
         }
         if (nodeData._meta) {
@@ -1397,6 +1470,9 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           if (yjs) yjs.writeMetaToYjs({ types: nodeData.types, domain: nodeData.domain, idea: idea.trim(), mode: displayMode });
           return;
         }
+        // Regular node — update flow card count
+        genNodeCount++;
+        setGenerationFlow(prev => prev?.map(s => s.id === 'tree-gen' && s.status === 'active' ? { ...s, nodeCount: genNodeCount } : s));
         const flowNode = buildFlowNode(nodeData);
         if (dynamicConfigRef.current) flowNode.data.dynamicConfig = dynamicConfigRef.current;
         if (yjs) {
@@ -1434,6 +1510,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       idea$.setIsGenerating(false);
       setMultiAgentProgress(null);
       setIsFetchingUrl(false);
+      // Mark all generation flow stages as done
+      setGenerationFlow(prev => prev?.map(s => ({ ...s, status: s.status === 'pending' ? 'pending' : 'done', completedAt: s.completedAt || new Date().toISOString() })));
       if (yjs) yjs.setLocalGenerating(false);
       if (!controller.signal.aborted && idea$.rawNodesRef.current.length > 0) {
         if (displayMode === 'learn') {
@@ -1775,13 +1853,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     if (!payload || cb$.isGenerating) return;
     cb$.resetCanvas();
     cb$.setIsGenerating(true);
+    setShowChat(true);
+    setMultiAgentProgress('Analyzing codebase...');
 
     if (cb$.abortRef.current) cb$.abortRef.current.abort();
     const controller = new AbortController();
     cb$.abortRef.current = controller;
 
+    // Route to GitHub endpoint if repoUrl is present, else local codebase
+    const endpoint = payload.repoUrl ? '/api/analyze-github' : '/api/analyze-codebase';
+
     try {
-      const res = await authFetch(`${API_URL}/api/analyze-codebase`, {
+      const res = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1790,6 +1873,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
 
       const result = await readSSEStream(res, (nodeData) => {
+        if (nodeData._progress) {
+          setMultiAgentProgress(nodeData.stage);
+          return;
+        }
+        if (nodeData._meta) {
+          const config = buildDynamicConfig(nodeData.types || []);
+          cb$.dynamicTypesRef.current = nodeData.types || [];
+          return;
+        }
         const flowNode = buildFlowNode(nodeData);
         cb$.rawNodesRef.current = [...cb$.rawNodesRef.current, flowNode];
         cb$.applyLayout(cb$.rawNodesRef.current, cb$.drillStackRef.current);
@@ -1800,6 +1892,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       if (err.name !== 'AbortError') cb$.setError(err.message);
     } finally {
       cb$.setIsGenerating(false);
+      setMultiAgentProgress(null);
     }
   }, [cb$]);
 
@@ -2634,11 +2727,63 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       setIdea(seedText);
       pushCard('feedToIdea', 'Bridged to Idea Mode', `${scopedNodes.length} nodes fed into idea mode`, []);
     }
+    // Schedule task
+    if (actions.scheduleTask) {
+      const st = actions.scheduleTask;
+      authFetch(`${API_URL}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: st.name || 'Scheduled task',
+          type: st.type || 'custom',
+          prompt: st.prompt || ideaText,
+          mode: st.mode || displayMode,
+          schedule: st.schedule || null,
+          sessionId: gateway.sessionId || initialSession?.id,
+        }),
+      })
+        .then(r => r.json())
+        .then(task => {
+          const desc = task.schedule?.cron ? ` (${task.schedule.cron})` : ' (manual)';
+          pushCard('scheduleTask', `Scheduled: ${task.name}${desc}`, `Task type: ${task.type}`, []);
+        })
+        .catch(err => pushCard('scheduleTask', 'Failed to schedule', err.message, []));
+    }
+    // List tasks
+    if (actions.listTasks) {
+      authFetch(`${API_URL}/api/tasks`)
+        .then(r => r.json())
+        .then(taskList => {
+          if (!taskList?.length) {
+            pushCard('listTasks', 'No scheduled tasks', 'Create one via chat: "schedule a daily research task"', []);
+          } else {
+            const detail = taskList.map(t => `• ${t.name} — ${t.scheduleDescription || 'manual'} (${t.lastRunStatus || 'never run'})`).join('\n');
+            pushCard('listTasks', `${taskList.length} Scheduled Tasks`, detail, []);
+          }
+          setPendingChatCards(prev => [...prev, ...cards]);
+        })
+        .catch(() => {});
+      return; // cards handled async
+    }
+    // Run task
+    if (actions.runTask) {
+      authFetch(`${API_URL}/api/tasks/${actions.runTask.taskId}/run`, { method: 'POST' })
+        .then(r => r.json())
+        .then(result => {
+          pushCard('runTask', 'Task Executed', result.summary || result.error || 'Done', []);
+          setPendingChatCards(prev => [...prev, ...cards]);
+        })
+        .catch(err => {
+          pushCard('runTask', 'Task Failed', err.message, []);
+          setPendingChatCards(prev => [...prev, ...cards]);
+        });
+      return; // cards handled async
+    }
     // Inject action cards into chat
     if (cards.length > 0) {
       setPendingChatCards(prev => [...prev, ...cards]);
     }
-  }, [active, startRefineInChat, startPortfolioInChat, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea, patternExec$, displayMode, dynamicDomain, startPrototypeBuild, nodeTools]);
+  }, [active, startRefineInChat, startPortfolioInChat, handleGoDeeper, handleStartAutoFractal, ideaText, triggerScoring, setManualMode, setIdea, patternExec$, displayMode, dynamicDomain, startPrototypeBuild, nodeTools, gateway.sessionId, initialSession?.id]);
 
   const handleClearChatFilter = useCallback(() => setChatFilter(null), []);
 
@@ -3120,7 +3265,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               <button
                 className={`btn btn-icon ${refine$.isRefining ? 'active-icon' : ''}`}
                 onClick={() => startRefineInChat(3)}
-                title="Auto-refine — recursive critique and strengthen loop"
+                title="Refine — 5-pass deep analysis and strengthening"
                 disabled={refine$.isRefining}
               >
                 ⟲ REFINE
@@ -3203,7 +3348,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             </div>
           )}
           {/* View mode toggles — shown when canvas has nodes */}
-          {/* RADIAL and 3D view buttons hidden — not adding value */}
+          {/* Agent Flow view toggle */}
+          {agentFlowLog.length > 0 && (
+            <button
+              className={`btn btn-icon ${viewMode === 'agent-flow' ? 'active-icon' : ''}`}
+              onClick={() => setViewMode(viewMode === 'agent-flow' ? 'flowchart' : 'agent-flow')}
+              title="Agent execution flow"
+            >
+              ◉ FLOW
+            </button>
+          )}
           {/* Cross-links toggle — in tree or flowchart view */}
           {active.rawNodesRef.current.length > 0 && (viewMode === 'tree' || viewMode === 'flowchart') && (
             <button
@@ -3362,6 +3516,20 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               onAction={handleCardButtonClick}
               mnemonicJobs={{}}
             />
+          ) : viewMode === 'agent-flow' ? (
+            <ReactFlowProvider>
+              <AgentFlowView
+                agentFlowLog={agentFlowLog}
+                onNodeClick={(node) => {
+                  setShowChat(true);
+                  setPendingChatCards(prev => [...prev, {
+                    label: `Execution: ${node.data?.label || node.id}`,
+                    detail: node.data?.model ? `Model: ${node.data.model}` : null,
+                    buttons: [],
+                  }]);
+                }}
+              />
+            </ReactFlowProvider>
           ) : viewMode === '3d' ? (
             <Graph3D
               nodes={idea$.rawNodesRef.current}
@@ -3446,7 +3614,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         {activeMode === 'codebase' && (
           cbShowUpload ? (
             <>
-              <CodebaseUpload onAnalysisReady={handleAnalysisReady} isAnalyzing={cb$.isGenerating} />
+              <CodebaseUpload
+                onAnalysisReady={handleAnalysisReady}
+                isAnalyzing={cb$.isGenerating}
+                github={{
+                  configured: githubStatus.configured,
+                  connected: githubStatus.connected,
+                  account: githubStatus.account,
+                  connect: githubConnect,
+                  disconnect: githubDisconnect,
+                }}
+              />
             </>
           ) : viewMode === '3d' ? (
             <Graph3D
@@ -3500,27 +3678,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         {/* TimelineBar2D removed — not useful for users */}
       </main>
 
-      {/* ── Timeline Filmstrip ── */}
-      {(active.rawNodesRef.current?.length || 0) > 1 && (
-        <div style={{}}>
-        <TimelineFilmstrip
-          topoOrder={timeline.topoOrder}
-          currentIndex={timeline.currentIndex}
-          isPlaying={timeline.isPlaying}
-          onGoToIndex={timeline.goToIndex}
-          onTogglePlay={timeline.togglePlay}
-          onGoNext={timeline.goNext}
-          onGoPrev={timeline.goPrev}
-          onFilterChange={(filter) => {
-            if (filter) {
-              setChatFilter({ types: filter.visibleTypes });
-            } else {
-              setChatFilter(null);
-            }
-          }}
-        />
-        </div>
-      )}
+      {/* Timeline filmstrip removed — replaced by MiniMap in FlowchartView */}
 
       {/* ── Bottom input bar ── */}
       <footer className="bottom-bar" style={{}}>
@@ -3903,6 +4061,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         pipelineCheckpoint={pipelineCheckpoint}
         onPipelineCheckpointAction={handlePipelineCheckpointDecision}
         mnemonicJobs={{}}
+        generationFlow={generationFlow}
         initialChatMessages={savedChatMessages}
         onSaveChatMessages={(msgs) => {
           setSavedChatMessages(msgs);

@@ -31,8 +31,9 @@ export default function RefineCard({ state, onAction }) {
 
   if (!state) return null;
 
-  const { status, round, maxRounds, weaknesses, overallScore, oldScore, newScore,
+  const { status, round, maxRounds, weaknesses, gaps, contradictions, overallScore, oldScore, newScore,
     summary, detail, stopReason, error, history } = state;
+  const totalIssues = (weaknesses?.length || 0) + (gaps?.length || 0) + (contradictions?.length || 0);
 
   const isActive = status === 'critiquing' || status === 'strengthening' || status === 'scoring';
   const isDone = status === 'done' || status === 'complete';
@@ -63,8 +64,8 @@ export default function RefineCard({ state, onAction }) {
       {/* Active status */}
       {isActive && (
         <div className="refine-card-status">
-          {status === 'critiquing' && 'Evaluating tree quality...'}
-          {status === 'strengthening' && `Strengthening ${weaknesses?.length || 0} weak areas...`}
+          {status === 'critiquing' && 'Running 5-pass audit (completeness, logic, evidence, actionability, so-what)...'}
+          {status === 'strengthening' && `Fixing ${totalIssues} issues...`}
           {status === 'scoring' && 'Measuring improvement...'}
           {detail && status === 'strengthening' && detail !== `Fixing ${weaknesses?.length || 0} weak areas...` && (
             <div className="refine-card-detail">{detail}</div>
@@ -72,16 +73,29 @@ export default function RefineCard({ state, onAction }) {
         </div>
       )}
 
-      {/* Weaknesses during strengthening */}
-      {isActive && status === 'strengthening' && weaknesses?.length > 0 && (
+      {/* Audit findings during strengthening */}
+      {isActive && status === 'strengthening' && totalIssues > 0 && (
         <div className="refine-card-weaknesses">
-          {weaknesses.slice(0, 3).map((w, i) => (
-            <div key={i} className="refine-card-weakness">
+          {weaknesses?.slice(0, 4).map((w, i) => (
+            <div key={`w-${i}`} className="refine-card-weakness">
               <SeverityBadge severity={w.severity} />
               <span className="refine-card-weakness-label">{w.nodeLabel}</span>
+              {w.auditPass && <span className="refine-card-pass-tag">{w.auditPass}</span>}
             </div>
           ))}
-          {weaknesses.length > 3 && <span className="refine-card-more">+{weaknesses.length - 3} more</span>}
+          {gaps?.slice(0, 2).map((g, i) => (
+            <div key={`g-${i}`} className="refine-card-weakness">
+              <span className="refine-card-gap-tag">GAP</span>
+              <span className="refine-card-weakness-label">{g.area}</span>
+            </div>
+          ))}
+          {contradictions?.slice(0, 2).map((c, i) => (
+            <div key={`c-${i}`} className="refine-card-weakness">
+              <span className="refine-card-contradiction-tag">⚡</span>
+              <span className="refine-card-weakness-label">{c.description?.slice(0, 60)}</span>
+            </div>
+          ))}
+          {totalIssues > 6 && <span className="refine-card-more">+{totalIssues - 6} more</span>}
         </div>
       )}
 

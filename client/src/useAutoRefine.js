@@ -59,10 +59,11 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
 
         if (!critiqueRes.ok) throw new Error(`Critique error: ${critiqueRes.status}`);
         const critiqueResult = await critiqueRes.json();
-        const { weaknesses, overallScore, stopReason } = critiqueResult;
+        const { weaknesses, gaps, contradictions, overallScore, stopReason } = critiqueResult;
+        const totalIssues = (weaknesses?.length || 0) + (gaps?.length || 0) + (contradictions?.length || 0);
 
-        // If AI says stop or no weaknesses found → tree is strong enough
-        if (stopReason || !weaknesses?.length) {
+        // If AI says stop or no issues found → tree is strong enough
+        if (stopReason || totalIssues === 0) {
           const doneStatus = {
             round, maxRounds, status: 'complete',
             overallScore, stopReason: stopReason || 'No significant weaknesses found',
@@ -81,8 +82,8 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
         // ── Step 2: Strengthen ────────────────────────────────
         const strengthenStatus = {
           round, maxRounds, status: 'strengthening',
-          weaknesses, overallScore,
-          detail: `Fixing ${weaknesses.length} weak areas...`,
+          weaknesses, gaps, contradictions, overallScore,
+          detail: `Fixing ${totalIssues} issues (${weaknesses?.length || 0} weaknesses, ${gaps?.length || 0} gaps, ${contradictions?.length || 0} contradictions)...`,
         };
         setRefineProgress(strengthenStatus);
         onProgress?.(strengthenStatus);
@@ -96,7 +97,9 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             nodes: serializeNodes(),
             idea,
             mode: mode || 'idea',
-            weaknesses,
+            weaknesses: weaknesses || [],
+            gaps: gaps || [],
+            contradictions: contradictions || [],
             dynamicTypes: dynamicTypesRef?.current || undefined,
             round,
           }),
