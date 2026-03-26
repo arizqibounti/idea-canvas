@@ -2962,16 +2962,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         onToggleCollapse: active.handleToggleCollapse,
         // Learn mode mastery
         ...(displayMode === 'learn' && learn$.masteryMap[n.id] ? { mastery: learn$.masteryMap[n.id].score } : {}),
-        // Mnemonic video (learn mode only)
-        ...(displayMode === 'learn' ? {
-          onGenerateMnemonic: (nodeId) => {
-            const serialized = active.nodes.map(nd => nd.data);
-            mnemonic$.generateMnemonic(nodeId, ideaText, serialized);
-            setVideoModalNodeId(nodeId);
-          },
-          onPlayMnemonic: (nodeId) => setVideoModalNodeId(nodeId),
-          mnemonicStatus: mnemonic$.mnemonicJobs[n.id]?.status || null,
-        } : {}),
+        // Mnemonic video disabled
+
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3179,24 +3171,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             </div>
           )}
           {/* View mode toggles — shown when canvas has nodes */}
-          {active.rawNodesRef.current.length > 0 && (
-            <>
-              <button
-                className={`btn btn-icon ${viewMode === 'tree' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === 'tree' ? 'flowchart' : 'tree')}
-                title="Radial tree view"
-              >
-                ◎ RADIAL
-              </button>
-              <button
-                className={`btn btn-icon ${viewMode === '3d' ? 'active-icon' : ''}`}
-                onClick={() => setViewMode(v => v === '3d' ? 'flowchart' : '3d')}
-                title="Toggle 3D view"
-              >
-                ◈ 3D
-              </button>
-            </>
-          )}
+          {/* RADIAL and 3D view buttons hidden — not adding value */}
           {/* Cross-links toggle — in tree or flowchart view */}
           {active.rawNodesRef.current.length > 0 && (viewMode === 'tree' || viewMode === 'flowchart') && (
             <button
@@ -3353,13 +3328,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                 setTimeout(() => startLearnInChat(7, { startConceptId: conceptId }), 100);
               }}
               onAction={handleCardButtonClick}
-              mnemonicJobs={mnemonic$.mnemonicJobs}
-              onGenerateVideo={(nodeId, opts) => {
-                const serialized = active.nodes.map(nd => nd.data);
-                mnemonic$.generateMnemonic(nodeId, ideaText, serialized, opts);
-                setVideoModalNodeId(nodeId);
-              }}
-              onPlayVideo={(nodeId) => setVideoModalNodeId(nodeId)}
+              mnemonicJobs={{}}
             />
           ) : viewMode === '3d' ? (
             <Graph3D
@@ -3840,6 +3809,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         />
       )}
 
+      {/* Floating chat toggle */}
+      {!showChat && active.rawNodesRef.current.length > 0 && (
+        <button
+          className="chat-toggle-fab"
+          onClick={() => setShowChat(true)}
+          title="Open chat"
+        >
+          💬
+        </button>
+      )}
       </div>{/* end canvas-column */}
       {/* ── Chat Companion Panel ── */}
       <ChatPanel
@@ -3886,13 +3865,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         sessionFileContext={sessionFileContext}
         pipelineCheckpoint={pipelineCheckpoint}
         onPipelineCheckpointAction={handlePipelineCheckpointDecision}
-        mnemonicJobs={mnemonic$.mnemonicJobs}
-        onGenerateVideo={(nodeId, opts) => {
-          const serialized = active.nodes.map(nd => nd.data);
-          mnemonic$.generateMnemonic(nodeId, ideaText, serialized, opts);
-          setVideoModalNodeId(nodeId);
-        }}
-        onPlayVideo={(nodeId) => setVideoModalNodeId(nodeId)}
+        mnemonicJobs={{}}
       />
       </div>{/* end app-content-row */}
 

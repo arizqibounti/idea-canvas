@@ -553,78 +553,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           </div>
         )}
 
-        {/* ── Live Pattern Execution ── */}
-        {patternExecState && (
-          <div className="chat-card" style={{ borderColor: '#6c63ff' }}>
-            <div className="chat-card-header" style={{ color: '#6c63ff' }}>
-              <span>◈ PATTERN EXECUTING</span>
-              <button className="chat-card-stop" onClick={onStopPattern}>STOP</button>
-            </div>
-            <div className="chat-card-body" style={{ fontSize: 12, color: '#888' }}>
-              <div>Stage: <strong style={{ color: '#e2e2f0' }}>{patternExecState.stage || '...'}</strong></div>
-              {patternExecState.round > 0 && <div>Round: {patternExecState.round}</div>}
-              {patternExecState.checkpoint && (
-                <div style={{ marginTop: 8, color: '#f59e0b' }}>
-                  ⑂ Checkpoint reached — {patternExecState.checkpoint.options?.join(' / ')}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Live Debate Stream ── */}
-        {debateStream && (
-          <DebateCard state={debateStream} onAction={onCardButtonClick} />
-        )}
-
-        {/* ── Live Refine Stream ── */}
-        {refineStream && (
-          <RefineCard state={refineStream} onAction={onCardButtonClick} />
-        )}
-
-        {/* ── Live Portfolio Stream ── */}
-        {portfolioStream && (
-          <PortfolioCard state={portfolioStream} onAction={onCardButtonClick} />
-        )}
-
-        {/* ── Live Learn Stream ── */}
-        {learnStream && (
-          <LearnCard
-            state={learnStream}
-            onAction={onCardButtonClick}
-            mnemonicJob={learnStream?.conceptId && mnemonicJobs ? mnemonicJobs[learnStream.conceptId] : null}
-            onGenerateVideo={onGenerateVideo}
-            onPlayVideo={onPlayVideo}
-          />
-        )}
-
-        {/* ── Live Experiment Stream ── */}
-        {experimentStream && (
-          <ExperimentCard state={experimentStream} onAction={onCardButtonClick} />
-        )}
-
-        {/* ── Live Prototype Build Stream ── */}
-        {pipelineCheckpoint && (
-          <PipelineCheckpointCard state={pipelineCheckpoint} onAction={onPipelineCheckpointAction} />
-        )}
-        {prototypeStream && (
-          <PrototypeCard state={prototypeStream} onAction={onCardButtonClick} />
-        )}
-
-        {/* ── Node Focus Card (sticky) ── */}
-        {focusedNode && (
-          <NodeFocusCard
-            node={focusedNode.node}
-            surgicalExpanded={focusedNode.surgicalExpanded}
-            isSplitting={focusedNode.isSplitting}
-            isMerging={focusedNode.isMerging}
-            mergeTarget={focusedNode.mergeTarget}
-            onAction={onCardButtonClick}
-            onDismiss={onDismissFocus}
-            availablePatterns={availablePatterns}
-          />
-        )}
-
+        {/* ── Streaming AI response ── */}
         {streamingText && (() => {
           let visibleStream = streamingText.indexOf(ACTION_DELIMITER) > -1
             ? streamingText.slice(0, streamingText.indexOf(ACTION_DELIMITER))
@@ -641,6 +570,43 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             </div>
           ) : null;
         })()}
+
+        {/* ── Live stream cards (inline with chat flow) ── */}
+        {patternExecState && (
+          <div className="chat-card" style={{ borderColor: '#6c63ff' }}>
+            <div className="chat-card-header" style={{ color: '#6c63ff' }}>
+              <span>◈ PATTERN EXECUTING</span>
+              <button className="chat-card-stop" onClick={onStopPattern}>STOP</button>
+            </div>
+            <div className="chat-card-body" style={{ fontSize: 12, color: '#888' }}>
+              <div>Stage: <strong style={{ color: '#e2e2f0' }}>{patternExecState.stage || '...'}</strong></div>
+              {patternExecState.round > 0 && <div>Round: {patternExecState.round}</div>}
+            </div>
+          </div>
+        )}
+        {debateStream && <DebateCard state={debateStream} onAction={onCardButtonClick} />}
+        {refineStream && <RefineCard state={refineStream} onAction={onCardButtonClick} />}
+        {portfolioStream && <PortfolioCard state={portfolioStream} onAction={onCardButtonClick} />}
+        {learnStream && (
+          <LearnCard state={learnStream} onAction={onCardButtonClick} mnemonicJob={null} />
+        )}
+        {experimentStream && <ExperimentCard state={experimentStream} onAction={onCardButtonClick} />}
+        {pipelineCheckpoint && <PipelineCheckpointCard state={pipelineCheckpoint} onAction={onPipelineCheckpointAction} />}
+        {prototypeStream && <PrototypeCard state={prototypeStream} onAction={onCardButtonClick} />}
+
+        {/* ── Node Focus Card ── */}
+        {focusedNode && (
+          <NodeFocusCard
+            node={focusedNode.node}
+            surgicalExpanded={focusedNode.surgicalExpanded}
+            isSplitting={focusedNode.isSplitting}
+            isMerging={focusedNode.isMerging}
+            mergeTarget={focusedNode.mergeTarget}
+            onAction={onCardButtonClick}
+            onDismiss={onDismissFocus}
+            availablePatterns={availablePatterns}
+          />
+        )}
       </div>
 
       {/* Quick actions — shown after first exchange too */}
