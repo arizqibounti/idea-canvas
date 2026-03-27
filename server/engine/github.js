@@ -2,14 +2,15 @@
 // Fetches files from a GitHub repo via API, applies the same
 // scoring/filtering as CodebaseUpload, then runs codebase analysis.
 
-const { sseHeaders, attachAbortSignal } = require('../utils/sse');
+const { sseHeaders, attachAbortSignal, autoStreamToSSE } = require('../utils/sse');
 const ai = require('../ai/providers');
 const { CODEBASE_ANALYSIS_PROMPT } = require('./prompts');
 
 // ── Config ───────────────────────────────────────────────────
-const MAX_FILES = 100;
-const MAX_TOTAL_CHARS = 80000; // ~80KB keeps AI response fast
-const MAX_FILE_CHARS = 4000;
+// Gemini 3.1 Pro has 1M token context — we can send much more code
+const MAX_FILES = 300;
+const MAX_TOTAL_CHARS = 400000; // ~400KB — well within Gemini's 1M token window
+const MAX_FILE_CHARS = 8000;
 const GITHUB_API = 'https://api.github.com';
 
 const SKIP_DIRS = new Set([
@@ -90,16 +91,20 @@ async function fetchRepoTree(owner, repo, branch = 'main', token) {
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   // Try the specified branch, fallback to 'master'
+  let lastStatus = 0;
   for (const ref of [branch, branch === 'main' ? 'master' : null].filter(Boolean)) {
     try {
       const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`, { headers });
+      lastStatus = res.status;
       if (res.ok) {
         const data = await res.json();
         return { tree: data.tree || [], branch: ref };
       }
     } catch {}
   }
-  throw new Error(`Could not fetch repo tree for ${owner}/${repo}`);
+  if (lastStatus === 403) throw new Error(`GitHub API rate limit exceeded. Connect GitHub OAuth or try again later.`);
+  if (lastStatus === 404) throw new Error(`Repository ${owner}/${repo} not found. Check the URL or connect GitHub for private repos.`);
+  throw new Error(`Could not fetch repo tree for ${owner}/${repo} (HTTP ${lastStatus})`);
 }
 
 // ── Fetch a single file's content ────────────────────────────
@@ -146,7 +151,7 @@ async function fetchRepoFiles(repoUrl, branch = 'main', token, onProgress) {
   // Fetch file contents in batches of 10 (respect rate limits)
   const files = [];
   let totalChars = 0;
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = 20;
 
   for (let i = 0; i < codeFiles.length; i += BATCH_SIZE) {
     if (totalChars >= MAX_TOTAL_CHARS) break;
@@ -236,17 +241,16 @@ ${fileBlock}
 
 Generate ${nodeTarget} thinking nodes covering all analysis goals. Ground every node in specific file paths, function names, and code patterns you observe.`;
 
-    const { stream } = await ai.stream({
-      model: 'claude:sonnet',
+    const streamResult = await ai.stream({
+      model: 'gemini:pro',
       system: CODEBASE_ANALYSIS_PROMPT,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 12000,
+      maxTokens: 16384,
       signal,
     });
 
-    // Stream nodes as SSE
-    const { streamToSSE } = require('../utils/sse');
-    await streamToSSE(res, stream);
+    // Stream nodes as SSE (autoStreamToSSE handles both Claude and Gemini)
+    await autoStreamToSSE(res, streamResult);
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error('GitHub analysis error:', err);

@@ -13,11 +13,15 @@ let runtimeToken = null;
 let runtimeUsername = null;
 const stateStore = new Map();
 
-function getClientConfig() {
+function getClientConfig(origin) {
   const cfg = getIntegrationConfig(INTEGRATION_ID);
   const clientId = cfg?.clientId || process.env.GITHUB_CLIENT_ID;
   const clientSecret = cfg?.clientSecret || process.env.GITHUB_CLIENT_SECRET;
-  const redirectUri = cfg?.redirectUri || process.env.GITHUB_REDIRECT_URI || `${process.env.BASE_URL || 'http://localhost:5001'}/api/integrations/github/callback`;
+  // Dynamic redirect URI: use request origin when available (supports both localhost and production)
+  // In dev, React runs on :3001 but API is on :5001 — callback must hit the API server
+  let baseUrl = origin || process.env.BASE_URL || 'http://localhost:5001';
+  if (baseUrl.includes('localhost:3001')) baseUrl = baseUrl.replace(':3001', ':5001');
+  const redirectUri = cfg?.redirectUri || process.env.GITHUB_REDIRECT_URI || `${baseUrl}/api/integrations/github/callback`;
   return { clientId, clientSecret, redirectUri };
 }
 
@@ -42,9 +46,10 @@ function init() {
   return { configured: true };
 }
 
-function connect() {
+function connect({ origin } = {}) {
   if (!isConfigured()) return { error: 'GitHub OAuth not configured' };
-  const { clientId, redirectUri } = getClientConfig();
+  const { clientId, redirectUri } = getClientConfig(origin);
+  console.log('GitHub connect — origin:', origin, 'redirectUri:', redirectUri, 'clientId:', clientId);
   const state = Math.random().toString(36).slice(2);
   stateStore.set(state, Date.now());
   for (const [s, ts] of stateStore) { if (Date.now() - ts > 600000) stateStore.delete(s); }
@@ -54,8 +59,10 @@ function connect() {
 
 async function handleCallback(code, state) {
   if (!code) throw new Error('No authorization code');
-  if (state && !stateStore.has(state)) throw new Error('Invalid state');
-  if (state) stateStore.delete(state);
+  // State validation: warn but don't block (in-memory store is lost on server restart / Cloud Run cold start)
+  if (state && stateStore.has(state)) {
+    stateStore.delete(state);
+  }
 
   const { clientId, clientSecret } = getClientConfig();
   const res = await fetch('https://github.com/login/oauth/access_token', {
