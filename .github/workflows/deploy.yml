@@ -1,0 +1,52 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: lasttouchashar
+  SERVICE: thoughtclaw
+  REGION: us-central1
+  IMAGE: gcr.io/lasttouchashar/thoughtclaw
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push Docker image
+        run: |
+          gcloud builds submit \
+            --project $PROJECT_ID \
+            --config cloudbuild.yaml \
+            --substitutions="_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }},_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }},_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}" \
+            .
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy $SERVICE \
+            --image $IMAGE \
+            --region $REGION \
+            --platform managed \
+            --project $PROJECT_ID
+
+      - name: Show URL
+        run: |
+          gcloud run services describe $SERVICE \
+            --region $REGION \
+            --project $PROJECT_ID \
+            --format 'value(status.url)'
