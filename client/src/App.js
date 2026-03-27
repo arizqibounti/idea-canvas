@@ -522,7 +522,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
 
   // ── Mode ──────────────────────────────────────────────────
-  const [manualMode, setManualMode]   = useState(null); // null = follow auto-detect
+  const [manualMode, setManualMode]   = useState(() => {
+    // For new sessions with a specific mode, set it immediately
+    if (initialSession?.isNew && initialSession.mode && initialSession.mode !== 'idea') {
+      return initialSession.mode;
+    }
+    return null; // null = follow auto-detect
+  });
   const [detectedMode, setDetectedMode] = useState(null);
   const detectTimerRef = useRef(null);
 
@@ -1850,12 +1856,6 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   }, [handleSteeringSubmit, handleCancelRedirect]);
 
   // ── Codebase mode ─────────────────────────────────────────
-  const handleAnalysisReady = useCallback((payload) => {
-    setCbFolderName(payload.folderName || 'project');
-    handleAnalyzeCodebase(payload);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleAnalyzeCodebase = useCallback(async (payload) => {
     if (!payload || cb$.isGenerating) return;
     cb$.resetCanvas();
@@ -1902,6 +1902,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       setMultiAgentProgress(null);
     }
   }, [cb$]);
+
+  const handleAnalysisReady = useCallback((payload) => {
+    setCbFolderName(payload.folderName || 'project');
+    handleAnalyzeCodebase(payload);
+  }, [handleAnalyzeCodebase]);
 
   const handleNewCbAnalysis = useCallback(() => {
     cb$.resetCanvas();

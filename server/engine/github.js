@@ -7,9 +7,9 @@ const ai = require('../ai/providers');
 const { CODEBASE_ANALYSIS_PROMPT } = require('./prompts');
 
 // ── Config ───────────────────────────────────────────────────
-const MAX_FILES = 200;
-const MAX_TOTAL_CHARS = 150000;
-const MAX_FILE_CHARS = 6000;
+const MAX_FILES = 100;
+const MAX_TOTAL_CHARS = 80000; // ~80KB keeps AI response fast
+const MAX_FILE_CHARS = 4000;
 const GITHUB_API = 'https://api.github.com';
 
 const SKIP_DIRS = new Set([
@@ -194,7 +194,8 @@ async function handleAnalyzeGithub(_client, req, res) {
   }
 
   sseHeaders(res);
-  const signal = attachAbortSignal(req, res);
+  attachAbortSignal(req, res);
+  const signal = req.signal;
 
   try {
     // Phase 1: Fetch repo files
@@ -236,10 +237,10 @@ ${fileBlock}
 Generate ${nodeTarget} thinking nodes covering all analysis goals. Ground every node in specific file paths, function names, and code patterns you observe.`;
 
     const { stream } = await ai.stream({
-      model: 'claude:opus',
+      model: 'claude:sonnet',
       system: CODEBASE_ANALYSIS_PROMPT,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 16384,
+      maxTokens: 12000,
       signal,
     });
 

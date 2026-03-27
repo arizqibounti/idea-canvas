@@ -5,6 +5,15 @@
 // Load .env if present
 require('fs').existsSync(__dirname + '/.env') && require('fs').readFileSync(__dirname + '/.env', 'utf8').split('\n').forEach(line => { const [k, ...v] = line.split('='); if (k && v.length) process.env[k.trim()] = v.join('=').trim(); });
 
+// Prevent unhandled rejections from crashing the server
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err?.message || err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err?.message || err);
+  // Don't exit — keep serving other requests
+});
+
 // Polyfill fetch + Headers for Node 16
 const nodeFetch = require('node-fetch');
 if (!globalThis.fetch) globalThis.fetch = nodeFetch;
