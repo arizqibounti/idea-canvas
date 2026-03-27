@@ -490,6 +490,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             <ExperimentCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'debate_card' ? (
             <DebateCard key={i} state={msg.state} onAction={onCardButtonClick} />
+          ) : msg.type === 'pipeline_checkpoint' ? (
+            <PipelineCheckpointCard key={i} state={msg.checkpoint} onAction={onPipelineCheckpointAction} />
           ) : msg.type === 'action_card' ? (
             <div key={i} className="chat-action-card">
               <div className="chat-action-card-header">

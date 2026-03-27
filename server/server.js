@@ -255,6 +255,36 @@ mountIntegrationRoutes(app);
 const { mountSchedulerRoutes } = require('./engine/scheduler');
 mountSchedulerRoutes(app);
 
+// ── Export routes ─────────────────────────────────────────────
+const { exportDeck, exportDocument, generateAndExportToGoogleDoc } = require('./engine/export');
+const { attachAbortSignal } = require('./utils/sse');
+
+app.post('/api/export/deck', (req, res) => {
+  attachAbortSignal(req, res);
+  const { nodes, idea } = req.body;
+  if (!nodes?.length) return res.status(400).json({ error: 'No nodes to export' });
+  exportDeck(nodes, idea || 'Untitled', req, res);
+});
+
+app.post('/api/export/document', (req, res) => {
+  attachAbortSignal(req, res);
+  const { nodes, idea, format } = req.body;
+  if (!nodes?.length) return res.status(400).json({ error: 'No nodes to export' });
+  exportDocument(nodes, idea || 'Untitled', format || 'md', req, res);
+});
+
+app.post('/api/export/google-doc', async (req, res) => {
+  try {
+    const { nodes, idea } = req.body;
+    if (!nodes?.length) return res.status(400).json({ error: 'No nodes to export' });
+    const result = await generateAndExportToGoogleDoc(nodes, idea || 'Untitled');
+    res.json(result);
+  } catch (err) {
+    console.error('Google Doc export error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Canvas artifacts
 app.post('/api/canvas/generate',   generationLimit, (req, res) => handleCanvasGenerate(client, req, res));
 

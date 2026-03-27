@@ -383,6 +383,108 @@ async function executeTask(taskId) {
         break;
       }
 
+      case 'iterate_and_export': {
+        // ── Full pipeline: iterate the tree + export to Google Doc ──
+        // config.iterateWith: 'refine' | 'debate' | 'experiment' | 'rotate'
+        // config.exportTo: 'google_doc' | 'email' | 'both'
+        if (!sessionNodes.length) {
+          result = { type: 'iterate_and_export', error: 'No session linked — requires an existing tree.' };
+          break;
+        }
+
+        const iterateWith = task.config?.iterateWith || 'refine';
+        const exportTo = task.config?.exportTo || 'google_doc';
+        const stepResults = [];
+
+        // Determine which iteration to run (rotate = cycle through)
+        let iterationType = iterateWith;
+        if (iterateWith === 'rotate') {
+          const rotation = ['refine', 'debate', 'refine']; // refine-heavy rotation
+          iterationType = rotation[task.runCount % rotation.length];
+        }
+
+        // Step 1: Iterate the tree
+        try {
+          const iteratePrompt = iterationType === 'debate'
+            ? `Critically analyze this thinking tree about "${sessionIdea}" and identify 3-5 weaknesses:\n\n${treeContext}`
+            : `Review this thinking tree about "${sessionIdea}". Identify 3-5 weak nodes and provide improvements as JSON: [{"nodeId":"...","currentLabel":"...","improvedLabel":"...","improvedReasoning":"..."}]\n\n${treeContext}`;
+
+          const iterateSystem = iterationType === 'debate'
+            ? 'You are a sharp critic. Find weaknesses, contradictions, and blind spots. Be specific.'
+            : 'You are a senior strategist. Improve weak nodes. Return JSON array of improvements.';
+
+          const iterRes = await ai.call({
+            model: 'claude:sonnet',
+            system: iterateSystem,
+            messages: [{ role: 'user', content: iteratePrompt }],
+            maxTokens: 4096,
+          });
+
+          const iterText = iterRes?.text || '';
+
+          // Try to apply improvements if refine
+          if (iterationType === 'refine') {
+            try {
+              const jsonMatch = iterText.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                const improvements = JSON.parse(jsonMatch[0]);
+                const updatedNodes = [...sessionNodes];
+                let appliedCount = 0;
+                for (const imp of improvements) {
+                  const node = updatedNodes.find(n => (n.data?.label || n.label) === imp.currentLabel || n.id === imp.nodeId);
+                  if (node) {
+                    const d = node.data || node;
+                    if (imp.improvedLabel) d.label = imp.improvedLabel;
+                    if (imp.improvedReasoning) d.reasoning = imp.improvedReasoning;
+                    appliedCount++;
+                  }
+                }
+                if (appliedCount > 0 && task.sessionId) {
+                  await sessions.updateSession(task.sessionId, { nodes: updatedNodes });
+                  sessionNodes = updatedNodes; // use updated nodes for export
+                }
+                stepResults.push({ step: 'iterate', type: iterationType, summary: `Refined ${appliedCount} nodes`, appliedCount });
+              } else {
+                stepResults.push({ step: 'iterate', type: iterationType, summary: iterText.slice(0, 500) });
+              }
+            } catch {
+              stepResults.push({ step: 'iterate', type: iterationType, summary: iterText.slice(0, 500) });
+            }
+          } else {
+            stepResults.push({ step: 'iterate', type: iterationType, summary: iterText.slice(0, 500) });
+          }
+        } catch (err) {
+          stepResults.push({ step: 'iterate', type: iterationType, error: err.message });
+        }
+
+        // Step 2: Export to Google Doc
+        if (exportTo === 'google_doc' || exportTo === 'both') {
+          try {
+            const { generateAndExportToGoogleDoc } = require('./export');
+            const exportResult = await generateAndExportToGoogleDoc(sessionNodes, sessionIdea);
+            stepResults.push({
+              step: 'export',
+              type: 'google_doc',
+              summary: `Created Google Doc: ${exportResult.docUrl}`,
+              docUrl: exportResult.docUrl,
+              docId: exportResult.docId,
+              sectionCount: exportResult.sectionCount,
+            });
+          } catch (err) {
+            stepResults.push({ step: 'export', type: 'google_doc', error: err.message });
+          }
+        }
+
+        const docUrl = stepResults.find(s => s.docUrl)?.docUrl;
+        result = {
+          type: 'iterate_and_export',
+          steps: stepResults,
+          docUrl,
+          summary: stepResults.map(s => s.error ? `[${s.step}] Error: ${s.error}` : `[${s.step}] ${s.summary?.slice(0, 150)}`).join('\n'),
+        };
+        break;
+      }
+
       case 'custom': {
         const prompt = treeContext
           ? `Context from existing thinking tree:\n${treeContext}\n\nTask: ${task.prompt}`

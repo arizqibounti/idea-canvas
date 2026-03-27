@@ -8,7 +8,7 @@ import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount }) {
+export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount, onTreeSwapped }) {
   const [isExperimenting, setIsExperimenting] = useState(false);
   const [experimentProgress, setExperimentProgress] = useState(null);
   const [experimentHistory, setExperimentHistory] = useState([]);
@@ -230,6 +230,16 @@ export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dyn
           newFlowNodes.forEach(n => yjsSyncRef?.current?.addNodeToYjs(n));
           applyLayout(rawNodesRef.current, drillStackRef?.current);
           setNodeCount?.(rawNodesRef.current.length);
+
+          // Notify canvas of tree swap
+          onTreeSwapped?.({
+            iteration,
+            strategy: nextStrategy,
+            title: candidateTitle,
+            oldScore: baselineTotal,
+            newScore: candidateTotal,
+            nodeCount: newFlowNodes.length,
+          });
 
           currentBest = {
             nodes: candidateNodes,

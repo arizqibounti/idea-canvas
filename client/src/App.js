@@ -37,6 +37,7 @@ import { useMnemonicVideo } from './useMnemonicVideo';
 import PipelineOverlay from './PipelineOverlay';
 import VideoModal from './VideoModal';
 import FlowchartView from './FlowchartView';
+import IdeaWalkthroughView from './IdeaWalkthroughView';
 import AgentFlowView from './AgentFlowView';
 import LearnJourneyView from './LearnJourneyView';
 import GmailPicker from './GmailConnect';
@@ -57,6 +58,7 @@ import { generateRoomId, buildRoomUrl } from './yjs/roomUtils';
 import SyncStatusBar from './yjs/SyncStatusBar';
 import { ForestProvider, useForest } from './ForestContext';
 import ClaudeCodePicker from './ClaudeCodePicker';
+import ExportDropdown from './ExportDropdown';
 import SessionFilesBar from './SessionFilesBar';
 import ForestTabBar from './ForestTabBar';
 import ForestMetaCanvas from './ForestMetaCanvas';
@@ -631,6 +633,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     setNodeCount: idea$.setNodeCount,
   });
 
+  const [treeSwapBanner, setTreeSwapBanner] = useState(null);
   const experiment$ = useExperimentLoop({
     rawNodesRef: idea$.rawNodesRef,
     applyLayout: idea$.applyLayout,
@@ -638,6 +641,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     dynamicTypesRef: idea$.dynamicTypesRef,
     yjsSyncRef,
     setNodeCount: idea$.setNodeCount,
+    onTreeSwapped: (info) => {
+      setTreeSwapBanner(info);
+      setTimeout(() => setTreeSwapBanner(null), 4000);
+    },
   });
 
   const mnemonic$ = useMnemonicVideo();
@@ -1601,8 +1608,14 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         // Auto-dispatch without checkpoint
         dispatchPipelineStage(recommendation.stageType, recommendation.recommended?.id || recommendation.recommended, priorStage);
       } else {
-        // Show checkpoint card for user decision
+        // Show checkpoint card for user decision and persist to chat
         setPipelineCheckpoint(recommendation);
+        setPendingChatCards(prev => [...prev, {
+          type: 'pipeline_checkpoint',
+          label: `◈ Next stage: ${recommendation.stageType || 'unknown'}`,
+          detail: recommendation.reasoning || '',
+          checkpoint: recommendation,
+        }]);
         setShowChat(true);
       }
     } catch (err) {
@@ -3358,6 +3371,15 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                   ⟳ EXPERIMENT
                 </button>
               )}
+              {active.nodes.length > 0 && !pipelineCheckpoint && (
+                <button
+                  className="btn btn-icon"
+                  onClick={() => advancePipeline({ priorStage: 'generate', priorOutcome: { nodeCount: active.nodes.length } })}
+                  title="Ask AI what stage to run next"
+                >
+                  ◇ NEXT
+                </button>
+              )}
               <button
                 className={`btn btn-icon btn-prototype-icon ${proto$.isBuilding ? 'active-icon' : ''}`}
                 onClick={() => {
@@ -3372,6 +3394,11 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               >
                 ◰ {proto$.prototype ? 'VIEW PROTOTYPE' : 'PROTOTYPE'}
               </button>
+              <ExportDropdown
+                nodes={active.nodes}
+                idea={ideaText}
+                disabled={isBusy || active.nodes.length === 0}
+              />
               <div className="toolbar-sep" />
               <button
                 className="btn btn-icon btn-share-icon"
@@ -3416,6 +3443,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               title="Agent execution flow"
             >
               ◉ FLOW
+            </button>
+          )}
+          {/* Slide deck walkthrough toggle */}
+          {active.rawNodesRef.current.length > 0 && displayMode !== 'learn' && (
+            <button
+              className={`btn btn-icon ${viewMode === 'slides' ? 'active-icon' : ''}`}
+              onClick={() => setViewMode(viewMode === 'slides' ? 'flowchart' : 'slides')}
+              title={viewMode === 'slides' ? 'Switch to graph view' : 'Switch to slide deck walkthrough'}
+            >
+              {viewMode === 'slides' ? '◈ GRAPH' : '▤ SLIDES'}
             </button>
           )}
           {/* Cross-links toggle — in tree or flowchart view */}
@@ -3576,6 +3613,18 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               onAction={handleCardButtonClick}
               mnemonicJobs={{}}
             />
+          ) : viewMode === 'slides' ? (
+            <IdeaWalkthroughView
+              displayNodes={displayNodes}
+              dynamicDomain={dynamicDomain}
+              dynamicLegendTypes={dynamicLegendTypes}
+              onNodeClick={(node) => idea$.handleNodeClick(node)}
+              onNodeFocus={(node) => {
+                setFocusedNode({ node, surgicalExpanded: false });
+                setShowChat(true);
+              }}
+              availablePatterns={availablePatterns}
+            />
           ) : viewMode === 'agent-flow' ? (
             <ReactFlowProvider>
               <AgentFlowView
@@ -3686,6 +3735,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                 }}
               />
             </div>
+          ) : cb$.nodes.length === 0 && cb$.isGenerating ? (
+            <div className="generating-indicator">
+              <div className="generating-spinner" />
+              <div className="generating-text">Analyzing codebase...</div>
+              <div className="generating-sub">Fetching files, scoring relevance, and mapping architecture</div>
+            </div>
           ) : viewMode === '3d' ? (
             <Graph3D
               nodes={cb$.rawNodesRef.current}
@@ -3736,6 +3791,17 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         )}
 
         {/* TimelineBar2D removed — not useful for users */}
+
+        {/* ── Tree Swap Banner (experiment loop) ── */}
+        {treeSwapBanner && (
+          <div className="tree-swap-banner">
+            <span className="tree-swap-icon">⟳</span>
+            <span className="tree-swap-text">
+              Tree evolved! <strong>{treeSwapBanner.title}</strong> — score {treeSwapBanner.oldScore?.toFixed(1)} → {treeSwapBanner.newScore?.toFixed(1)} ({treeSwapBanner.nodeCount} nodes)
+            </span>
+            <span className="tree-swap-strategy">{(treeSwapBanner.strategy || '').replace(/_/g, ' ')}</span>
+          </div>
+        )}
       </main>
 
       {/* Timeline filmstrip removed — replaced by MiniMap in FlowchartView */}

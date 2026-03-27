@@ -11,6 +11,8 @@ const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/drive.file',
 ];
 
 // ── In-memory runtime state (never persisted for sensitive tokens) ──
@@ -447,6 +449,7 @@ registry.register(INTEGRATION_ID, {
     replyToThread,
     formatThreadForContext,
     formatForChat,
+    getAuthenticatedClient,
   },
 });
 
@@ -465,4 +468,5 @@ module.exports = {
   formatThreadForContext,
   formatForChat,
   hookMappings,
+  getAuthenticatedClient,
 };
