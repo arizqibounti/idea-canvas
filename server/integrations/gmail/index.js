@@ -7,7 +7,11 @@ const { getIntegrationConfig, setIntegrationConfig, removeIntegrationConfig } = 
 const registry = require('../registry');
 
 const INTEGRATION_ID = 'gmail';
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.compose',
+];
 
 // ── In-memory runtime state (never persisted for sensitive tokens) ──
 let runtimeTokens = null;      // { access_token, refresh_token, expiry_date }
@@ -307,6 +311,105 @@ async function getThread(threadId) {
   };
 }
 
+// ── Email Composition Helpers ─────────────────────────────────
+
+function buildRawEmail({ to, subject, body, cc, bcc, inReplyTo, references, contentType = 'text/plain' }) {
+  const lines = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    `Content-Type: ${contentType}; charset=utf-8`,
+  ];
+  if (cc) lines.push(`Cc: ${cc}`);
+  if (bcc) lines.push(`Bcc: ${bcc}`);
+  if (inReplyTo) lines.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) lines.push(`References: ${references}`);
+  lines.push('', body);
+  const raw = lines.join('\r\n');
+  return Buffer.from(raw).toString('base64url');
+}
+
+/**
+ * Send an email directly.
+ * @param {Object} opts - { to, subject, body, cc?, bcc?, contentType? }
+ * @returns {Object} - { id, threadId, labelIds }
+ */
+async function sendEmail({ to, subject, body, cc, bcc, contentType }) {
+  const auth = getAuthenticatedClient();
+  if (!auth) throw new Error('Not connected to Gmail');
+
+  const gmail = google.gmail({ version: 'v1', auth });
+  const raw = buildRawEmail({ to, subject, body, cc, bcc, contentType });
+
+  const res = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw },
+  });
+
+  return { id: res.data.id, threadId: res.data.threadId, labelIds: res.data.labelIds };
+}
+
+/**
+ * Create a draft (not sent).
+ * @param {Object} opts - { to, subject, body, cc?, bcc?, contentType? }
+ * @returns {Object} - { draftId, messageId }
+ */
+async function createDraft({ to, subject, body, cc, bcc, contentType }) {
+  const auth = getAuthenticatedClient();
+  if (!auth) throw new Error('Not connected to Gmail');
+
+  const gmail = google.gmail({ version: 'v1', auth });
+  const raw = buildRawEmail({ to, subject, body, cc, bcc, contentType });
+
+  const res = await gmail.users.drafts.create({
+    userId: 'me',
+    requestBody: {
+      message: { raw },
+    },
+  });
+
+  return { draftId: res.data.id, messageId: res.data.message?.id };
+}
+
+/**
+ * Reply to an existing thread.
+ * @param {Object} opts - { threadId, body, cc?, bcc?, contentType? }
+ * @returns {Object} - { id, threadId }
+ */
+async function replyToThread({ threadId, body, cc, bcc, contentType }) {
+  const auth = getAuthenticatedClient();
+  if (!auth) throw new Error('Not connected to Gmail');
+
+  const gmail = google.gmail({ version: 'v1', auth });
+
+  // Get the last message in the thread to extract reply headers
+  const thread = await gmail.users.threads.get({ userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['Subject', 'From', 'To', 'Message-ID'] });
+  const lastMsg = thread.data.messages?.[thread.data.messages.length - 1];
+  const headers = lastMsg?.payload?.headers || [];
+  const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
+
+  const subject = `Re: ${getHeader('Subject').replace(/^Re:\s*/i, '')}`;
+  const to = getHeader('From'); // reply to sender
+  const messageId = getHeader('Message-ID');
+
+  const raw = buildRawEmail({
+    to,
+    subject,
+    body,
+    cc,
+    bcc,
+    contentType,
+    inReplyTo: messageId,
+    references: messageId,
+  });
+
+  const res = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw, threadId },
+  });
+
+  return { id: res.data.id, threadId: res.data.threadId };
+}
+
 /**
  * Format thread for context using the hook mapping template.
  */
@@ -339,6 +442,9 @@ registry.register(INTEGRATION_ID, {
   api: {
     listThreads,
     getThread,
+    sendEmail,
+    createDraft,
+    replyToThread,
     formatThreadForContext,
     formatForChat,
   },
@@ -353,6 +459,9 @@ module.exports = {
   status,
   listThreads,
   getThread,
+  sendEmail,
+  createDraft,
+  replyToThread,
   formatThreadForContext,
   formatForChat,
   hookMappings,

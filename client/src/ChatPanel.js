@@ -11,6 +11,7 @@ import DebateCard from './chat/DebateCard';
 import GenerationFlowCard from './chat/GenerationFlowCard';
 import PrototypeCard from './chat/PrototypeCard';
 import PipelineCheckpointCard from './chat/PipelineCheckpointCard';
+import PatternFlowCard from './chat/PatternFlowCard';
 import { serializeTree, buildFocusedSubtree } from './treeUtils';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -513,7 +514,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           ) : (
             <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
               <div className="chat-msg-label">
-                {msg.role === 'user' ? 'YOU' : 'AI'}
+                {msg.role === 'user' ? 'YOU' : msg.role === 'system' ? '⏰ TASK' : 'AI'}
               </div>
               <div className="chat-msg-content">
                 {msg.role === 'assistant'
@@ -648,16 +649,15 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
 
         {/* ── Live stream cards (inline with chat flow) ── */}
         {patternExecState && (
-          <div className="chat-card" style={{ borderColor: '#6c63ff' }}>
-            <div className="chat-card-header" style={{ color: '#6c63ff' }}>
-              <span>◈ PATTERN EXECUTING</span>
-              <button className="chat-card-stop" onClick={onStopPattern}>STOP</button>
-            </div>
-            <div className="chat-card-body" style={{ fontSize: 12, color: '#888' }}>
-              <div>Stage: <strong style={{ color: '#e2e2f0' }}>{patternExecState.stage || '...'}</strong></div>
-              {patternExecState.round > 0 && <div>Round: {patternExecState.round}</div>}
-            </div>
-          </div>
+          <PatternFlowCard
+            patternName={patternExecState.patternName || 'PATTERN'}
+            stages={patternExecState.stages || [
+              { id: 'exec', label: patternExecState.stage || 'Executing...', status: 'active', round: patternExecState.round, startedAt: patternExecState.startedAt },
+            ]}
+            isComplete={patternExecState.complete}
+            isError={patternExecState.error}
+            onStop={onStopPattern}
+          />
         )}
         {debateStream && <DebateCard state={debateStream} onAction={onCardButtonClick} />}
         {refineStream && <RefineCard state={refineStream} onAction={onCardButtonClick} />}

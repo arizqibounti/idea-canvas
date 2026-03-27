@@ -22,9 +22,12 @@ export function usePatternExecutor({
   const [currentStage, setCurrentStage] = useState(null);
   const [currentRound, setCurrentRound] = useState(0);
   const [stageResults, setStageResults] = useState({});
+  const [stageHistory, setStageHistory] = useState([]); // [{id, label, status, startedAt, completedAt, round, nodeCount, detail}]
   const [checkpoint, setCheckpoint] = useState(null);
   const [error, setError] = useState(null);
   const [executionId, setExecutionId] = useState(null);
+  const [patternName, setPatternName] = useState('');
+  const [startedAt, setStartedAt] = useState(null);
   const abortRef = useRef(null);
   const onCompleteRef = useRef(null);
 
@@ -32,9 +35,12 @@ export function usePatternExecutor({
     setIsExecuting(true);
     setError(null);
     setStageResults({});
+    setStageHistory([]);
     setCheckpoint(null);
     setCurrentStage(null);
     setCurrentRound(0);
+    setPatternName(patternId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+    setStartedAt(new Date().toISOString());
     onCompleteRef.current = onComplete || null;
 
     const controller = new AbortController();
@@ -109,8 +115,30 @@ export function usePatternExecutor({
   const handleSSEEvent = useCallback((event) => {
     // Pattern progress
     if (event._patternProgress) {
-      setCurrentStage(event.stage);
-      setCurrentRound(event.round || 0);
+      const newStage = event.stage;
+      const round = event.round || 0;
+      setCurrentStage(newStage);
+      setCurrentRound(round);
+      // Track stage history with timestamps
+      setStageHistory(prev => {
+        const updated = prev.map(s =>
+          s.status === 'active' ? { ...s, status: 'done', completedAt: new Date().toISOString() } : s
+        );
+        // Add new stage if not already present
+        if (!updated.find(s => s.id === newStage && s.round === round)) {
+          updated.push({
+            id: newStage,
+            label: newStage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+            status: 'active',
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            round,
+            detail: event.detail || null,
+            nodeCount: 0,
+          });
+        }
+        return updated;
+      });
       return;
     }
 
@@ -130,6 +158,10 @@ export function usePatternExecutor({
     // Pattern complete
     if (event._patternComplete) {
       setExecutionId(event.executionId);
+      // Mark all stages done
+      setStageHistory(prev => prev.map(s =>
+        s.status === 'active' ? { ...s, status: 'done', completedAt: new Date().toISOString() } : s
+      ));
       // Fire onComplete callback for pipeline orchestrator
       if (onCompleteRef.current) {
         onCompleteRef.current({ status: 'complete', totalRounds: event.totalRounds, stagesExecuted: event.stagesExecuted });
@@ -205,6 +237,9 @@ export function usePatternExecutor({
     currentStage,
     currentRound,
     stageResults,
+    stageHistory,
+    patternName,
+    startedAt,
     checkpoint,
     error,
     executionId,

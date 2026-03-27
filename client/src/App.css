@@ -2505,6 +2505,8 @@
 
 .chat-msg-user .chat-msg-label { color: var(--text-secondary); }
 .chat-msg-assistant .chat-msg-label { color: #6c63ff; }
+.chat-msg-system { border-left: 2px solid #20c997; background: rgba(32,201,151,0.05); }
+.chat-msg-system .chat-msg-label { color: #20c997; font-size: 9px; }
 
 .chat-msg-content {
   font-size: 12px;
@@ -11327,6 +11329,8 @@
 .gen-flow-card { border: 1px solid #252535; border-radius: 8px; padding: 12px; margin: 8px 0; background: #0d0d1a; }
 .gen-flow-card--done { border-color: #20c997; }
 .gen-flow-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.gen-flow-stop-btn { background: transparent; border: 1px solid #ff4757; color: #ff4757; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; margin-left: auto; font-family: var(--font-mono); }
+.gen-flow-stop-btn:hover { background: rgba(255,71,87,0.1); }
 .gen-flow-icon { font-size: 12px; }
 .gen-flow-card--done .gen-flow-icon { color: #20c997; }
 .gen-flow-title { font-size: 11px; font-weight: 600; color: #ddd; font-family: var(--font-mono); letter-spacing: 0.05em; }

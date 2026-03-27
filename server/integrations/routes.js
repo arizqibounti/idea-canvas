@@ -99,6 +99,51 @@ function mountIntegrationRoutes(app) {
     }
   });
 
+  // ── Gmail: Send email ──────────────────────────────────────
+  app.post('/api/integrations/gmail/send', async (req, res) => {
+    const integration = registry.get('gmail');
+    if (!integration) return res.status(404).json({ error: 'Gmail integration not registered' });
+    try {
+      const { to, subject, body, cc, bcc, contentType } = req.body;
+      if (!to || !subject || !body) return res.status(400).json({ error: 'to, subject, and body are required' });
+      const result = await integration.api.sendEmail({ to, subject, body, cc, bcc, contentType });
+      res.json(result);
+    } catch (err) {
+      if (err.message.includes('Not connected')) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Gmail: Create draft ───────────────────────────────────
+  app.post('/api/integrations/gmail/draft', async (req, res) => {
+    const integration = registry.get('gmail');
+    if (!integration) return res.status(404).json({ error: 'Gmail integration not registered' });
+    try {
+      const { to, subject, body, cc, bcc, contentType } = req.body;
+      if (!subject || !body) return res.status(400).json({ error: 'subject and body are required' });
+      const result = await integration.api.createDraft({ to, subject, body, cc, bcc, contentType });
+      res.json(result);
+    } catch (err) {
+      if (err.message.includes('Not connected')) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Gmail: Reply to thread ────────────────────────────────
+  app.post('/api/integrations/gmail/reply', async (req, res) => {
+    const integration = registry.get('gmail');
+    if (!integration) return res.status(404).json({ error: 'Gmail integration not registered' });
+    try {
+      const { threadId, body, cc, bcc, contentType } = req.body;
+      if (!threadId || !body) return res.status(400).json({ error: 'threadId and body are required' });
+      const result = await integration.api.replyToThread({ threadId, body, cc, bcc, contentType });
+      res.json(result);
+    } catch (err) {
+      if (err.message.includes('Not connected')) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Gmail-specific: Get hook mappings ───────────────────────
   app.get('/api/integrations/gmail/hooks', (req, res) => {
     const mappings = registry.getHookMappings('gmail');

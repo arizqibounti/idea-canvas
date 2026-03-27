@@ -242,43 +242,187 @@ async function executeTask(taskId) {
 
   try {
     const ai = require('../ai/providers');
+    const sessions = require('../gateway/sessions');
     let result;
 
+    // Load session context if task is session-linked
+    let sessionNodes = [];
+    let sessionIdea = task.prompt;
+    if (task.sessionId) {
+      try {
+        const session = await sessions.loadSession(task.sessionId);
+        if (session) {
+          sessionNodes = session.nodes || [];
+          sessionIdea = session.idea || task.prompt;
+        }
+      } catch {}
+    }
+
+    // Build tree context string from session nodes
+    const treeContext = sessionNodes.length > 0
+      ? sessionNodes.map(n => {
+          const d = n.data || n;
+          return `[${d.type || 'node'}] ${d.label || ''}: ${(d.reasoning || '').slice(0, 150)}`;
+        }).join('\n')
+      : '';
+
+    // Execute based on task type
     switch (task.type) {
-      case 'generate': {
-        const { getSystemPrompt } = require('./prompts');
-        const systemPrompt = getSystemPrompt(task.mode, {});
-        const text = await ai.call({
-          model: 'claude:sonnet',
-          system: systemPrompt,
-          messages: [{ role: 'user', content: `Analyze and generate insights:\n\n"${task.prompt}"` }],
-          maxTokens: 4096,
-        });
-        result = { type: 'generate', summary: text?.slice(0, 500) || 'Generated' };
-        break;
-      }
       case 'research': {
-        const text = await ai.call({
-          model: 'gemini:flash',
-          system: 'You are a research assistant. Provide a concise, actionable research brief.',
-          messages: [{ role: 'user', content: task.prompt }],
+        const prompt = treeContext
+          ? `Research the following topic in the context of this existing thinking tree:\n\nTOPIC: ${task.prompt}\n\nEXISTING TREE:\n${treeContext}\n\nProvide new findings, updated data, and actionable insights that build on or challenge the existing analysis.`
+          : task.prompt;
+        const res = await ai.call({
+          model: 'claude:sonnet',
+          system: 'You are a research assistant. Provide a concise, actionable research brief with specific data points, trends, and sources. Format with clear sections and bullet points.',
+          messages: [{ role: 'user', content: prompt }],
           maxTokens: 4096,
         });
-        result = { type: 'research', summary: text?.slice(0, 500) || 'Researched' };
+        result = { type: 'research', summary: (res?.text || '').slice(0, 2000), fullText: res?.text };
         break;
       }
+
+      case 'refine': {
+        if (!sessionNodes.length) {
+          result = { type: 'refine', error: 'No session linked — refine requires an existing tree.' };
+          break;
+        }
+        const res = await ai.call({
+          model: 'claude:sonnet',
+          system: 'You are a senior product strategist reviewing a thinking tree. Identify the 3-5 weakest nodes and provide specific, actionable improvements for each. Format as JSON array: [{"nodeId":"...","currentLabel":"...","improvedLabel":"...","improvedReasoning":"...","issue":"..."}]',
+          messages: [{ role: 'user', content: `Review this thinking tree about "${sessionIdea}":\n\n${treeContext}\n\nIdentify weak nodes and provide improvements.` }],
+          maxTokens: 4096,
+        });
+        // Try to parse improvements and apply to session
+        try {
+          const text = res?.text || '';
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const improvements = JSON.parse(jsonMatch[0]);
+            const updatedNodes = [...sessionNodes];
+            let appliedCount = 0;
+            for (const imp of improvements) {
+              const node = updatedNodes.find(n => (n.data?.label || n.label) === imp.currentLabel || n.id === imp.nodeId);
+              if (node) {
+                const d = node.data || node;
+                if (imp.improvedLabel) d.label = imp.improvedLabel;
+                if (imp.improvedReasoning) d.reasoning = imp.improvedReasoning;
+                appliedCount++;
+              }
+            }
+            if (appliedCount > 0 && task.sessionId) {
+              await sessions.updateSession(task.sessionId, { nodes: updatedNodes });
+            }
+            result = { type: 'refine', summary: `Refined ${appliedCount} nodes`, improvements, appliedCount };
+          } else {
+            result = { type: 'refine', summary: text.slice(0, 1000) };
+          }
+        } catch {
+          result = { type: 'refine', summary: (res?.text || '').slice(0, 1000) };
+        }
+        break;
+      }
+
+      case 'debate': {
+        if (!sessionNodes.length) {
+          result = { type: 'debate', error: 'No session linked — debate requires an existing tree.' };
+          break;
+        }
+        const res = await ai.call({
+          model: 'claude:sonnet',
+          system: 'You are a sharp critic reviewing a product thinking tree. Your job is to find the 3-5 most critical weaknesses, contradictions, or blind spots. Be specific — reference exact nodes. Then provide concrete suggestions for each critique. Format clearly with numbered critiques.',
+          messages: [{ role: 'user', content: `Critically analyze this thinking tree about "${sessionIdea}":\n\n${treeContext}` }],
+          maxTokens: 4096,
+        });
+        result = { type: 'debate', summary: (res?.text || '').slice(0, 2000), fullText: res?.text };
+        break;
+      }
+
+      case 'pipeline': {
+        // Chained operations: research → refine → summarize
+        const steps = task.config?.steps || ['research', 'refine', 'summarize'];
+        const stepResults = [];
+
+        for (const step of steps) {
+          switch (step) {
+            case 'research': {
+              const res = await ai.call({
+                model: 'claude:sonnet',
+                system: 'You are a research assistant. Provide updated findings on the topic.',
+                messages: [{ role: 'user', content: `Research update for "${sessionIdea}": ${task.prompt}` }],
+                maxTokens: 2048,
+              });
+              stepResults.push({ step: 'research', summary: (res?.text || '').slice(0, 500) });
+              break;
+            }
+            case 'refine': {
+              if (!sessionNodes.length) { stepResults.push({ step: 'refine', summary: 'Skipped — no session' }); break; }
+              const res = await ai.call({
+                model: 'claude:sonnet',
+                system: 'Identify the 3 weakest nodes in this tree and suggest improvements. Be brief.',
+                messages: [{ role: 'user', content: `Tree: ${treeContext}` }],
+                maxTokens: 1024,
+              });
+              stepResults.push({ step: 'refine', summary: (res?.text || '').slice(0, 500) });
+              break;
+            }
+            case 'summarize': {
+              const priorContext = stepResults.map(s => `[${s.step}]: ${s.summary}`).join('\n\n');
+              const res = await ai.call({
+                model: 'claude:sonnet',
+                system: 'Create a concise executive summary of the following task results. Use bullet points. Include key findings, actions needed, and any critical issues.',
+                messages: [{ role: 'user', content: `Task: ${task.name}\nSession: ${sessionIdea}\n\nResults:\n${priorContext}` }],
+                maxTokens: 1024,
+              });
+              stepResults.push({ step: 'summarize', summary: (res?.text || '').slice(0, 1000) });
+              break;
+            }
+          }
+        }
+        result = { type: 'pipeline', steps: stepResults, summary: stepResults.map(s => `[${s.step}] ${s.summary.slice(0, 100)}`).join('\n') };
+        break;
+      }
+
       case 'custom': {
-        const text = await ai.call({
+        const prompt = treeContext
+          ? `Context from existing thinking tree:\n${treeContext}\n\nTask: ${task.prompt}`
+          : task.prompt;
+        const res = await ai.call({
           model: task.config?.model || 'claude:sonnet',
           system: task.config?.systemPrompt || 'You are a helpful assistant.',
-          messages: [{ role: 'user', content: task.prompt }],
+          messages: [{ role: 'user', content: prompt }],
           maxTokens: task.config?.maxTokens || 4096,
         });
-        result = { type: 'custom', summary: text?.slice(0, 500) || 'Completed' };
+        result = { type: 'custom', summary: (res?.text || '').slice(0, 2000), fullText: res?.text };
         break;
       }
+
       default:
-        result = { type: task.type, summary: `${task.type} tasks require an active session.` };
+        result = { type: task.type, summary: `Unknown task type: ${task.type}` };
+    }
+
+    // ── Result delivery ──────────────────────────────────────
+    // Store result as a chat message in the session (notification)
+    if (task.sessionId && result && !result.error) {
+      try {
+        const notification = {
+          role: 'system',
+          content: `[Scheduled Task: ${task.name}] Completed at ${new Date().toLocaleString()}\n\n${result.summary || 'Done'}`,
+          timestamp: new Date().toISOString(),
+          taskId: task.id,
+          taskType: task.type,
+        };
+        await sessions.appendChatMessage(task.sessionId, notification);
+      } catch {}
+    }
+
+    // Email delivery if configured
+    if (task.config?.emailTo && result && !result.error) {
+      try {
+        await sendTaskEmail(task, result);
+      } catch (emailErr) {
+        console.warn('Scheduler: failed to send email:', emailErr.message);
+      }
     }
 
     task.lastRunStatus = result.error ? 'error' : 'success';
@@ -292,6 +436,50 @@ async function executeTask(taskId) {
     task.updatedAt = new Date().toISOString();
     await saveTask(task);
     return { error: err.message };
+  }
+}
+
+// ── Email delivery (uses nodemailer or SMTP) ─────────────────
+async function sendTaskEmail(task, result) {
+  // Use a simple email approach — generate an HTML email body via AI, then send
+  const ai = require('../ai/providers');
+  const res = await ai.call({
+    model: 'claude:haiku',
+    system: 'Convert the following task result into a clean, professional HTML email body. Use simple inline styles. Include a header with the task name and date, then the content formatted with headings and bullet points. Keep it concise.',
+    messages: [{ role: 'user', content: `Task: ${task.name}\nDate: ${new Date().toLocaleDateString()}\n\nResult:\n${result.summary || result.fullText || 'Completed'}` }],
+    maxTokens: 2048,
+  });
+
+  const htmlBody = res?.text || `<p>${result.summary}</p>`;
+
+  // Try nodemailer if available, otherwise store for pickup
+  try {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: task.config.emailTo,
+      subject: `[ThoughtClaw] ${task.name} — ${new Date().toLocaleDateString()}`,
+      html: htmlBody,
+    });
+    console.log(`Scheduler: emailed task result to ${task.config.emailTo}`);
+  } catch (err) {
+    // If SMTP not configured, store the email content for manual pickup
+    task.lastRunResult.pendingEmail = {
+      to: task.config.emailTo,
+      subject: `[ThoughtClaw] ${task.name} — ${new Date().toLocaleDateString()}`,
+      html: htmlBody,
+    };
+    console.log(`Scheduler: email queued (SMTP not configured) for ${task.config.emailTo}`);
   }
 }
 

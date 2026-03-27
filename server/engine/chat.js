@@ -80,9 +80,19 @@ AVAILABLE ACTIONS (can combine multiple in one JSON object):
 20. PROTOTYPE:       {"buildPrototype":true} — build interactive prototype from the tree
 21. FEED TO IDEA:    {"feedToIdea":true} — or scoped: {"feedToIdea":{"types":["feature"]}}
 
+=== EMAIL (requires Gmail connected) ===
+22. SEND EMAIL:      {"sendEmail":{"to":"recipient@email.com","subject":"Subject line","body":"Email body text"}} — optional: cc, bcc
+23. DRAFT EMAIL:     {"draftEmail":{"to":"recipient@email.com","subject":"Subject line","body":"Email body text"}} — creates draft without sending
+24. REPLY TO THREAD: {"replyToThread":{"threadId":"...","body":"Reply text"}} — reply to the email thread currently loaded as context
+
 === SCHEDULING ===
-22. SCHEDULE TASK:   {"scheduleTask":{"name":"Daily research update","type":"research","prompt":"Research latest AI developments","schedule":{"cron":"0 9 * * 1-5"}}} — types: generate, research, debate, refine, custom. Cron: minute hour day month weekday
-23. LIST TASKS:      {"listTasks":true} — show all scheduled tasks
+22. SCHEDULE TASK:   {"scheduleTask":{"name":"Daily research update","type":"research","prompt":"Research latest AI developments","schedule":{"cron":"0 9 * * 1-5"},"sessionId":"CURRENT_SESSION","config":{"emailTo":"user@email.com"}}}
+    Types: research (web research), refine (strengthen tree nodes), debate (critique tree), pipeline (chain: research→refine→summarize), custom
+    "sessionId":"CURRENT_SESSION" links the task to the current session's tree — results update the tree and appear as notifications in chat
+    "config.emailTo" sends results via email
+    "config.steps" for pipeline type: ["research","refine","summarize"] (any combination)
+    Cron format: minute hour day-of-month month day-of-week (e.g., "0 9 * * 1-5" = weekdays at 9am)
+23. LIST TASKS:      {"listTasks":true} — show all scheduled tasks with status
 24. RUN TASK NOW:    {"runTask":{"taskId":"..."}} — execute a task immediately
 
 Rules for addNodes: id MUST start with "chat_", parentId must reference an existing node, type must be one of: seed, problem, user_segment, job_to_be_done, feature, constraint, metric, insight, component, api_endpoint, data_model, tech_debt, requirement, skill_match, skill_gap, achievement, keyword, story, positioning, critique, variable, synthesis, aggregation
@@ -115,6 +125,8 @@ WHEN TO USE ACTIONS (you MUST use them — these are TOOLS, not documents):
 - "run adversarial" / "run portfolio exploration" → executePattern
 - "build a prototype" → buildPrototype
 - "feed to idea mode" → feedToIdea
+- "send an email" / "email this to" / "draft an email" → sendEmail or draftEmail
+- "reply to this email" / "respond to the thread" → replyToThread
 - "schedule a task" / "every morning" / "daily at 9am" → scheduleTask
 - "show my tasks" / "what's scheduled" → listTasks
 - "run that task now" → runTask

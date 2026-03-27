@@ -2728,8 +2728,51 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       pushCard('feedToIdea', 'Bridged to Idea Mode', `${scopedNodes.length} nodes fed into idea mode`, []);
     }
     // Schedule task
+    // ── Email actions ──────────────────────────────────────────
+    if (actions.sendEmail) {
+      const e = actions.sendEmail;
+      authFetch(`${API_URL}/api/integrations/gmail/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: e.to, subject: e.subject, body: e.body, cc: e.cc, bcc: e.bcc }),
+      })
+        .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error); }))
+        .then(() => pushCard('sendEmail', `Email sent to ${e.to}`, e.subject, []))
+        .catch(err => pushCard('sendEmail', 'Failed to send email', err.message, []));
+    }
+    if (actions.draftEmail) {
+      const e = actions.draftEmail;
+      authFetch(`${API_URL}/api/integrations/gmail/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: e.to, subject: e.subject, body: e.body, cc: e.cc, bcc: e.bcc }),
+      })
+        .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error); }))
+        .then(() => pushCard('draftEmail', `Draft created: ${e.subject}`, `To: ${e.to || 'no recipient yet'}`, []))
+        .catch(err => pushCard('draftEmail', 'Failed to create draft', err.message, []));
+    }
+    if (actions.replyToThread) {
+      const e = actions.replyToThread;
+      const threadId = e.threadId || emailContext?.id;
+      if (!threadId) {
+        pushCard('replyToThread', 'No thread to reply to', 'Load an email thread first', []);
+      } else {
+        authFetch(`${API_URL}/api/integrations/gmail/reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId, body: e.body, cc: e.cc, bcc: e.bcc }),
+        })
+          .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error); }))
+          .then(() => pushCard('replyToThread', 'Reply sent', `Thread: ${emailContext?.subject || threadId}`, []))
+          .catch(err => pushCard('replyToThread', 'Failed to reply', err.message, []));
+      }
+    }
+    // ── Scheduling actions ────────────────────────────────────
     if (actions.scheduleTask) {
       const st = actions.scheduleTask;
+      const currentSessionId = gateway.sessionId || initialSession?.id;
+      // Replace "CURRENT_SESSION" placeholder with actual session ID
+      const resolvedSessionId = (st.sessionId === 'CURRENT_SESSION' || st.sessionId === true) ? currentSessionId : (st.sessionId || currentSessionId);
       authFetch(`${API_URL}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2739,13 +2782,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           prompt: st.prompt || ideaText,
           mode: st.mode || displayMode,
           schedule: st.schedule || null,
-          sessionId: gateway.sessionId || initialSession?.id,
+          sessionId: resolvedSessionId,
+          config: st.config || {},
         }),
       })
         .then(r => r.json())
         .then(task => {
           const desc = task.schedule?.cron ? ` (${task.schedule.cron})` : ' (manual)';
-          pushCard('scheduleTask', `Scheduled: ${task.name}${desc}`, `Task type: ${task.type}`, []);
+          const linked = task.sessionId ? ' (linked to session)' : '';
+          const email = task.config?.emailTo ? ` → ${task.config.emailTo}` : '';
+          pushCard('scheduleTask', `Scheduled: ${task.name}${desc}`, `Type: ${task.type}${linked}${email}`, []);
         })
         .catch(err => pushCard('scheduleTask', 'Failed to schedule', err.message, []));
     }
@@ -4054,7 +4100,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         pipelineStages={pipelineStages}
         onClosePipeline={() => setPipelineStages(null)}
         patternFramework={patternFramework}
-        patternExecState={patternExec$.isExecuting ? { stage: patternExec$.currentStage, round: patternExec$.currentRound, checkpoint: patternExec$.checkpoint } : null}
+        patternExecState={patternExec$.isExecuting || patternExec$.stageHistory?.length ? {
+          stage: patternExec$.currentStage,
+          round: patternExec$.currentRound,
+          checkpoint: patternExec$.checkpoint,
+          stages: patternExec$.stageHistory,
+          patternName: patternExec$.patternName,
+          startedAt: patternExec$.startedAt,
+          complete: !patternExec$.isExecuting && patternExec$.stageHistory?.length > 0,
+          error: !!patternExec$.error,
+        } : null}
         onStopPattern={() => patternExec$.stop()}
         availablePatterns={availablePatterns}
         sessionFileContext={sessionFileContext}
