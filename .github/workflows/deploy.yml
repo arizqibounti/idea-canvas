@@ -29,11 +29,13 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Build and push Docker image
+        timeout-minutes: 15
         run: |
           gcloud builds submit \
             --project $PROJECT_ID \
             --config cloudbuild.yaml \
             --substitutions="_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }},_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }},_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}" \
+            --timeout=600 \
             .
 
       - name: Deploy to Cloud Run
