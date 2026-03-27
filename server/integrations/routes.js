@@ -222,6 +222,36 @@ function mountIntegrationRoutes(app) {
     }
   });
 
+  // ── GitHub specific routes ────────────────────────────────────
+
+  app.get('/api/integrations/github/callback', async (req, res) => {
+    const integration = registry.get('github');
+    if (!integration) return res.status(404).send('GitHub integration not registered');
+    try {
+      const { code, state } = req.query;
+      const result = await integration.handleCallback(code, state);
+      res.send(`<html><body><script>
+        window.opener?.postMessage({ type: 'github-connected', username: '${(result.username || '').replace(/'/g, "\\'")}' }, '*');
+        window.close();
+      </script>Connected as @${result.username}. You can close this window.</body></html>`);
+    } catch (err) {
+      res.status(400).send(`<html><body>GitHub auth failed: ${err.message}<br><a href="/">Go back</a></body></html>`);
+    }
+  });
+
+  app.get('/api/integrations/github/repos', async (req, res) => {
+    const integration = registry.get('github');
+    if (!integration) return res.json([]);
+    try {
+      const { q, maxResults } = req.query;
+      const repos = await integration.api.listRepos(q || '', parseInt(maxResults) || 20);
+      res.json(repos);
+    } catch (err) {
+      if (err.message.includes('Not connected')) return res.status(401).json({ error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Claude Code specific routes ──────────────────────────────
 
   app.get('/api/integrations/claude-code/projects', (req, res) => {

@@ -217,6 +217,7 @@ app.post('/api/stop-execution',    (req, res) => { const stopped = stopExecution
 require('./integrations/gmail'); // Self-registers with registry
 require('./integrations/claude-code'); // Self-registers with registry
 require('./integrations/github'); // Self-registers with registry
+require('./integrations/github'); // Self-registers with registry
 const integrationRegistry = require('./integrations/registry');
 const { mountIntegrationRoutes } = require('./integrations/routes');
 mountIntegrationRoutes(app);

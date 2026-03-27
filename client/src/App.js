@@ -920,7 +920,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   useEffect(() => {
     const handler = (e) => {
       if (e.data?.type === 'github-connected') {
-        setGithubStatus(prev => ({ ...prev, connected: true, account: e.data.login }));
+        setGithubStatus(prev => ({ ...prev, connected: true, account: e.data.username }));
       }
     };
     window.addEventListener('message', handler);

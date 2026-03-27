@@ -1,215 +1,123 @@
-// ── GitHub Integration ────────────────────────────────────────
-// OAuth-based GitHub connection for accessing private repos.
-// Follows the same pattern as the Gmail integration.
+// ── GitHub OAuth Integration ─────────────────────────────────
+// Follows the Gmail integration pattern: OAuth lifecycle, token
+// management, and API access for private repos.
 
-const { getIntegrationConfig, setIntegrationConfig, removeIntegrationConfig } = require('../config');
+const { getIntegrationConfig, setIntegrationConfig } = require('../config');
 const registry = require('../registry');
 
 const INTEGRATION_ID = 'github';
-const SCOPES = 'repo read:org';
-const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
-const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token';
-const GITHUB_API = 'https://api.github.com';
+const SCOPES = 'repo read:user';
 
-// ── In-memory runtime state ──────────────────────────────────
-let runtimeToken = null;   // GitHub access token
-let runtimeUser = null;    // { login, name, avatarUrl }
+// In-memory runtime state
+let runtimeToken = null;
+let runtimeUsername = null;
 const stateStore = new Map();
 
-// ── Config helpers ───────────────────────────────────────────
-
-function getClientId() {
+function getClientConfig() {
   const cfg = getIntegrationConfig(INTEGRATION_ID);
-  return cfg?.clientId || process.env.GITHUB_CLIENT_ID;
-}
-
-function getClientSecret() {
-  const cfg = getIntegrationConfig(INTEGRATION_ID);
-  return cfg?.clientSecret || process.env.GITHUB_CLIENT_SECRET;
-}
-
-function getRedirectUri() {
-  const cfg = getIntegrationConfig(INTEGRATION_ID);
-  return cfg?.redirectUri || process.env.GITHUB_REDIRECT_URI || 'http://localhost:5001/api/integrations/github/callback';
+  const clientId = cfg?.clientId || process.env.GITHUB_CLIENT_ID;
+  const clientSecret = cfg?.clientSecret || process.env.GITHUB_CLIENT_SECRET;
+  const redirectUri = cfg?.redirectUri || process.env.GITHUB_REDIRECT_URI || `${process.env.BASE_URL || 'http://localhost:5001'}/api/integrations/github/callback`;
+  return { clientId, clientSecret, redirectUri };
 }
 
 function isConfigured() {
-  return !!(getClientId() && getClientSecret());
+  const { clientId, clientSecret } = getClientConfig();
+  return !!(clientId && clientSecret);
 }
 
-// ── Lifecycle ────────────────────────────────────────────────
-
-async function init() {
-  const configured = isConfigured();
-
-  // Restore session from persisted token
-  if (configured) {
-    const cfg = getIntegrationConfig(INTEGRATION_ID);
-    if (cfg?.accessToken) {
-      try {
-        const res = await fetch(`${GITHUB_API}/user`, {
-          headers: {
-            'Authorization': `Bearer ${cfg.accessToken}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'ThoughtClaw/1.0',
-          },
-        });
-        if (res.ok) {
-          const user = await res.json();
-          runtimeToken = cfg.accessToken;
-          runtimeUser = { login: user.login, name: user.name, avatarUrl: user.avatar_url };
-          console.log(`GitHub: restored session for @${user.login}`);
-        } else {
-          console.log('GitHub: saved token expired or invalid');
-        }
-      } catch (err) {
-        console.warn('GitHub: failed to restore session:', err.message);
-      }
-    }
+function init() {
+  if (!isConfigured()) {
+    console.log('GitHub: not configured (set GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET)');
+    return { configured: false };
   }
-
-  return { configured };
+  const cfg = getIntegrationConfig(INTEGRATION_ID);
+  if (cfg?.accessToken) {
+    runtimeToken = cfg.accessToken;
+    runtimeUsername = cfg.username || null;
+    console.log(`GitHub: restored session for @${runtimeUsername || 'unknown'}`);
+  } else {
+    console.log('GitHub: configured, not connected');
+  }
+  return { configured: true };
 }
 
 function connect() {
-  if (!isConfigured()) throw new Error('GitHub not configured (missing GITHUB_CLIENT_ID/SECRET)');
-
-  const state = `gh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (!isConfigured()) return { error: 'GitHub OAuth not configured' };
+  const { clientId, redirectUri } = getClientConfig();
+  const state = Math.random().toString(36).slice(2);
   stateStore.set(state, Date.now());
-  setTimeout(() => stateStore.delete(state), 10 * 60 * 1000);
-
-  const params = new URLSearchParams({
-    client_id: getClientId(),
-    redirect_uri: getRedirectUri(),
-    scope: SCOPES,
-    state,
-  });
-
-  return { authUrl: `${GITHUB_AUTH_URL}?${params.toString()}` };
+  for (const [s, ts] of stateStore) { if (Date.now() - ts > 600000) stateStore.delete(s); }
+  const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(SCOPES)}&state=${state}`;
+  return { authUrl };
 }
 
 async function handleCallback(code, state) {
-  if (!stateStore.has(state)) throw new Error('Invalid state parameter');
-  stateStore.delete(state);
+  if (!code) throw new Error('No authorization code');
+  if (state && !stateStore.has(state)) throw new Error('Invalid state');
+  if (state) stateStore.delete(state);
 
-  // Exchange code for access token
-  const tokenRes = await fetch(GITHUB_TOKEN_URL, {
+  const { clientId, clientSecret } = getClientConfig();
+  const res = await fetch('https://github.com/login/oauth/access_token', {
     method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      client_id: getClientId(),
-      client_secret: getClientSecret(),
-      code,
-      redirect_uri: getRedirectUri(),
-    }),
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
   });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error_description || data.error);
 
-  const tokenData = await tokenRes.json();
-  if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
+  runtimeToken = data.access_token;
 
-  runtimeToken = tokenData.access_token;
+  const userRes = await fetch('https://api.github.com/user', {
+    headers: { 'Authorization': `Bearer ${runtimeToken}`, 'Accept': 'application/vnd.github.v3+json' },
+  });
+  const userData = await userRes.json();
+  runtimeUsername = userData.login || null;
 
-  // Persist token
-  const existing = getIntegrationConfig(INTEGRATION_ID) || {};
   setIntegrationConfig(INTEGRATION_ID, {
-    ...existing,
+    ...getIntegrationConfig(INTEGRATION_ID),
     accessToken: runtimeToken,
-    connectedAt: new Date().toISOString(),
+    username: runtimeUsername,
   });
-
-  // Fetch user info
-  const userRes = await fetch(`${GITHUB_API}/user`, {
-    headers: {
-      'Authorization': `Bearer ${runtimeToken}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'ThoughtClaw/1.0',
-    },
-  });
-  const user = await userRes.json();
-  runtimeUser = { login: user.login, name: user.name, avatarUrl: user.avatar_url };
-
-  return { login: user.login, name: user.name };
+  return { username: runtimeUsername };
 }
 
 function disconnect() {
   runtimeToken = null;
-  runtimeUser = null;
-  removeIntegrationConfig(INTEGRATION_ID);
+  runtimeUsername = null;
+  const cfg = getIntegrationConfig(INTEGRATION_ID) || {};
+  delete cfg.accessToken;
+  delete cfg.username;
+  setIntegrationConfig(INTEGRATION_ID, cfg);
 }
 
 function status() {
-  return {
-    configured: isConfigured(),
-    connected: !!runtimeToken,
-    account: runtimeUser?.login || null,
-    name: runtimeUser?.name || null,
-  };
+  return { configured: isConfigured(), connected: !!runtimeToken, account: runtimeUsername };
 }
 
-// ── API methods ──────────────────────────────────────────────
+function getToken() { return runtimeToken; }
 
-async function listRepos(query = '', perPage = 20) {
+async function listRepos(query = '', maxResults = 20) {
   if (!runtimeToken) throw new Error('Not connected to GitHub');
-
   const url = query
-    ? `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}+in:name+user:${runtimeUser?.login}&per_page=${perPage}`
-    : `${GITHUB_API}/user/repos?sort=updated&per_page=${perPage}`;
-
+    ? `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}+user:${runtimeUsername}&sort=updated&per_page=${maxResults}`
+    : `https://api.github.com/user/repos?sort=updated&per_page=${maxResults}`;
   const res = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${runtimeToken}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'ThoughtClaw/1.0',
-    },
+    headers: { 'Authorization': `Bearer ${runtimeToken}`, 'Accept': 'application/vnd.github.v3+json' },
   });
-
   if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
   const data = await res.json();
-  const repos = query ? (data.items || []) : data;
-
-  return repos.map(r => ({
-    fullName: r.full_name,
-    name: r.name,
-    owner: r.owner?.login,
-    description: r.description,
-    private: r.private,
-    language: r.language,
-    stars: r.stargazers_count,
-    updatedAt: r.updated_at,
-    defaultBranch: r.default_branch,
-    url: r.html_url,
+  return (query ? data.items || [] : data).map(r => ({
+    name: r.full_name, url: r.html_url, description: r.description,
+    private: r.private, language: r.language, updatedAt: r.updated_at,
   }));
 }
 
-function getToken() {
-  return runtimeToken;
-}
-
-// ── Register with integration registry ───────────────────────
-
 registry.register(INTEGRATION_ID, {
-  id: INTEGRATION_ID,
   name: 'GitHub',
-  description: 'Connect GitHub to analyze private repositories',
-  init,
-  connect,
-  handleCallback,
-  disconnect,
-  status: () => status(),
-  hooks: {},
-  api: { listRepos, getToken },
+  description: 'Connect GitHub for private repo analysis',
+  init, connect, handleCallback, disconnect, status,
+  api: { getToken, listRepos },
 });
 
-module.exports = {
-  INTEGRATION_ID,
-  init,
-  connect,
-  handleCallback,
-  disconnect,
-  status,
-  listRepos,
-  getToken,
-};
+module.exports = { INTEGRATION_ID, init, connect, handleCallback, disconnect, status, getToken, listRepos };
