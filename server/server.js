@@ -101,6 +101,28 @@ app.get('/api/shares/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── OAuth callbacks (public — no auth, redirected from external providers) ──
+app.get('/api/integrations/github/callback', (req, res) => {
+  const integration = require('./integrations/registry').get('github');
+  if (!integration) return res.status(404).send('GitHub not configured');
+  const { code, state } = req.query;
+  integration.handleCallback(code, state)
+    .then(result => {
+      res.send(`<html><body><script>window.opener?.postMessage({type:'github-connected',username:'${(result.username||'').replace(/'/g,"\\'")}'},'*');window.close();</script>Connected as @${result.username}. You can close this window.</body></html>`);
+    })
+    .catch(err => res.status(400).send(`GitHub auth failed: ${err.message}`));
+});
+app.get('/api/integrations/gmail/callback', (req, res) => {
+  const integration = require('./integrations/registry').get('gmail');
+  if (!integration) return res.status(404).send('Gmail not configured');
+  const { code, state } = req.query;
+  integration.handleCallback(code, state)
+    .then(result => {
+      res.send(`<html><body><script>window.opener?.postMessage({type:'gmail-connected',email:'${(result.email||'').replace(/'/g,"\\'")}'},'*');window.close();</script>Connected. You can close this window.</body></html>`);
+    })
+    .catch(err => res.status(400).send(`Gmail auth failed: ${err.message}`));
+});
+
 // ── All routes below require authentication ─────────────────────
 app.use('/api', requireAuth);
 // generalLimit disabled during dev — re-enable for production
