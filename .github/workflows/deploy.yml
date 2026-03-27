@@ -31,12 +31,26 @@ jobs:
       - name: Build and push Docker image
         timeout-minutes: 15
         run: |
-          gcloud builds submit \
+          BUILD_ID=$(gcloud builds submit \
             --project $PROJECT_ID \
             --config cloudbuild.yaml \
             --substitutions="_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }},_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }},_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}" \
             --timeout=600 \
-            .
+            --async \
+            --format='value(id)' \
+            .)
+          echo "Build started: $BUILD_ID"
+          # Poll until build completes
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --project $PROJECT_ID --format='value(status)' 2>/dev/null)
+            echo "Build status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then break; fi
+            if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "TIMEOUT" ] || [ "$STATUS" = "CANCELLED" ]; then
+              echo "Build failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Deploy to Cloud Run
         run: |
