@@ -203,7 +203,9 @@ Tree state: ${treeSummary}
 Prior stage: ${priorStage || 'generate'}
 Prior outcome: ${outcomeStr}
 Pipeline position: ${pipelinePosition || 0}
-Remaining stages: ${(availableStages || []).join(', ') || 'debate, refine, portfolio, prototype'}
+Remaining stages (ONLY recommend from this list): ${(availableStages || []).join(', ') || 'debate, refine, portfolio, prototype'}
+
+CRITICAL: You MUST recommend one of the remaining stages listed above. Do not recommend stages not in the list.
 
 What should the next pipeline stage be?` }],
       maxTokens: 512,
@@ -212,10 +214,9 @@ What should the next pipeline stage be?` }],
     const result = ai.parseJSON(text);
     res.json(result);
   } catch (err) {
-    // Fallback: recommend the next stage in sequence
-    const fallbackOrder = ['debate', 'refine', 'portfolio', 'prototype'];
-    const priorIdx = fallbackOrder.indexOf(priorStage);
-    const nextStage = fallbackOrder[priorIdx + 1] || 'refine';
+    // Fallback: pick from available stages
+    const available = availableStages?.length ? availableStages : ['debate', 'refine', 'portfolio', 'prototype'];
+    const nextStage = available[0] || 'debate';
     res.json({
       recommended: nextStage,
       stageType: nextStage,

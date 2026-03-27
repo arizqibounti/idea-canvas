@@ -363,8 +363,10 @@ function AppRouter() {
         <App
           initialSession={{ isNew: true, roomId: roomMatch[1] }}
           onBackToDashboard={() => {
-            window.history.pushState({}, '', '/');
-            setActiveSession(null);
+            window.location.href = '/';
+          }}
+          onSessionSaved={() => {
+            // Room sessions are auto-saved — refresh sidebar on next dashboard visit
           }}
         />
       </YjsProvider>
@@ -1559,7 +1561,12 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     // If prior was a pattern, treat it as completing the debate slot
     if (priorStage === 'pattern') completedStages.add('generate').add('debate');
 
-    const availableStages = stageOrder.filter(s => !completedStages.has(s) && s !== 'generate');
+    // Only include stages the user actually selected (debate is always available)
+    const enabledStages = new Set(['debate']);
+    if (autoRefineOnGen) enabledStages.add('refine');
+    if (autoPortfolioOnGen) enabledStages.add('portfolio');
+    if (autoPrototypeOnGen) enabledStages.add('prototype');
+    const availableStages = stageOrder.filter(s => !completedStages.has(s) && s !== 'generate' && enabledStages.has(s));
 
     // If no stages remain, pipeline is done
     if (availableStages.length === 0) {
@@ -3282,6 +3289,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                       patternId = activePattern;
                     }
 
+                    // Clear any active pipeline so toolbar actions don't chain
+                    setPipelineStages(null); setPipelineCheckpoint(null);
                     if (patternId) {
                       patternExec$.execute(patternId, ideaText, scopedNodes, displayMode, { domain: dynamicDomain });
                       setShowChat(true);
@@ -3310,7 +3319,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               </button>
               <button
                 className={`btn btn-icon ${refine$.isRefining ? 'active-icon' : ''}`}
-                onClick={() => startRefineInChat(3)}
+                onClick={() => { setPipelineStages(null); setPipelineCheckpoint(null); startRefineInChat(3); }}
                 title="Refine — 5-pass deep analysis and strengthening"
                 disabled={refine$.isRefining}
               >
@@ -3318,7 +3327,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
               </button>
               <button
                 className={`btn btn-icon ${portfolio$.isGenerating ? 'active-icon' : ''}`}
-                onClick={() => startPortfolioInChat()}
+                onClick={() => { setPipelineStages(null); setPipelineCheckpoint(null); startPortfolioInChat(); }}
                 title="Generate and compare alternative approaches"
                 disabled={portfolio$.isGenerating}
               >
