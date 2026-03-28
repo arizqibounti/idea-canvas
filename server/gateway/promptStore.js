@@ -91,10 +91,13 @@ async function seedFromLegacy() {
 
 // ── CRUD ─────────────────────────────────────────────────────
 
+let _promptsSeeded = false;
+
 async function listPrompts() {
+  let results;
   if (useFirestore) {
     const snapshot = await db.collection(COLLECTION).orderBy('category').get();
-    return snapshot.docs.map(d => {
+    results = snapshot.docs.map(d => {
       const data = d.data();
       return {
         key: data.key,
@@ -105,15 +108,32 @@ async function listPrompts() {
         updatedAt: data.updatedAt,
       };
     });
+  } else {
+    results = Array.from(memoryStore.values()).map(d => ({
+      key: d.key,
+      category: d.category,
+      mode: d.mode,
+      currentVersion: d.currentVersion,
+      abTestActive: !!d.abTest?.enabled,
+      updatedAt: d.updatedAt,
+    })).sort((a, b) => (a.category || '').localeCompare(b.category || ''));
   }
-  return Array.from(memoryStore.values()).map(d => ({
-    key: d.key,
-    category: d.category,
-    mode: d.mode,
-    currentVersion: d.currentVersion,
-    abTestActive: !!d.abTest?.enabled,
-    updatedAt: d.updatedAt,
-  })).sort((a, b) => (a.category || '').localeCompare(b.category || ''));
+
+  // Auto-seed on first empty list (ensures prompts exist in fresh Firestore)
+  if (results.length === 0 && !_promptsSeeded) {
+    _promptsSeeded = true;
+    try {
+      const count = await seedFromLegacy();
+      if (count > 0) {
+        console.log(`Prompt store: auto-seeded ${count} prompts`);
+        return listPrompts(); // re-fetch after seeding
+      }
+    } catch (err) {
+      console.error('Prompt store: auto-seed failed:', err.message);
+    }
+  }
+
+  return results;
 }
 
 async function getPrompt(key) {

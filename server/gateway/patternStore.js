@@ -57,10 +57,13 @@ async function seedBuiltInPatterns() {
 
 // ── CRUD ─────────────────────────────────────────────────────
 
+let _patternsSeeded = false;
+
 async function listPatterns() {
+  let results;
   if (useFirestore) {
     const snapshot = await db.collection(COLLECTION).get();
-    return snapshot.docs.map(d => {
+    results = snapshot.docs.map(d => {
       const data = d.data();
       const def = data.versions?.[0]?.definition || {};
       return {
@@ -74,20 +77,37 @@ async function listPatterns() {
         updatedAt: data.updatedAt,
       };
     });
+  } else {
+    results = Array.from(memoryStore.values()).map(d => {
+      const def = d.versions?.[0]?.definition || {};
+      return {
+        id: d.id,
+        name: def.name || d.id,
+        description: def.description || '',
+        icon: def.icon || '◈',
+        color: def.color || '#6c63ff',
+        builtIn: d.builtIn || false,
+        currentVersion: d.currentVersion,
+        updatedAt: d.updatedAt,
+      };
+    });
   }
-  return Array.from(memoryStore.values()).map(d => {
-    const def = d.versions?.[0]?.definition || {};
-    return {
-      id: d.id,
-      name: def.name || d.id,
-      description: def.description || '',
-      icon: def.icon || '◈',
-      color: def.color || '#6c63ff',
-      builtIn: d.builtIn || false,
-      currentVersion: d.currentVersion,
-      updatedAt: d.updatedAt,
-    };
-  });
+
+  // Auto-seed on first empty list (ensures patterns exist in fresh Firestore)
+  if (results.length === 0 && !_patternsSeeded) {
+    _patternsSeeded = true;
+    try {
+      const count = await seedBuiltInPatterns();
+      if (count > 0) {
+        console.log(`Pattern store: auto-seeded ${count} built-in patterns`);
+        return listPatterns(); // re-fetch after seeding
+      }
+    } catch (err) {
+      console.error('Pattern store: auto-seed failed:', err.message);
+    }
+  }
+
+  return results;
 }
 
 async function getPattern(id) {
