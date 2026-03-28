@@ -33,7 +33,12 @@ server/
 │   ├── prompts.js         # ALL system prompts (master file, 148KB)
 │   ├── patternExecutor.js # State machine for declarative thinking patterns
 │   ├── builtinPatterns.js # Built-in pattern definitions
-│   └── sessionFiles.js    # File upload + text extraction
+│   ├── sessionFiles.js    # File upload + text extraction
+│   ├── export.js          # AI-powered PPTX/doc/Google Doc export (Claude tool_use)
+│   ├── sessionBrief.js    # Running session context updater (gemini:flash)
+│   ├── contextBuilder.js  # Compounding context injection (brief + artifacts + pollination)
+│   ├── meta-evolution.js  # Strategy effectiveness tracking per mode
+│   └── scheduler.js       # Cron-based task scheduler for evolution plans
 ├── gateway/               # Persistence + real-time
 │   ├── websocket.js       # WebSocket message routing
 │   ├── sessions.js        # Session CRUD (Firestore or in-memory)
@@ -57,11 +62,14 @@ client/src/
 ├── ChatPanel.js           # Chat UI + action parsing
 ├── IdeaCanvas.js          # ReactFlow force-directed canvas
 ├── FlowchartView.js       # ReactFlow dagre tree canvas
+├── VelocityMeter.js       # Session momentum badge (⚡ score with color tiers)
 ├── IdeaNode.js            # Node component (expand, collapse, badges)
 ├── layoutUtils.js         # Force-directed layout + edge computation
 ├── nodeConfig.js          # Node type colors, icons, labels
 ├── ForestContext.js       # Multi-canvas context provider
 ├── api.js                 # authFetch() with token injection
+├── chat/
+│   └── EvolutionCard.js   # Evolution plan timeline + step controls
 └── settings/              # Settings pages (patterns, prompts, billing)
 ```
 
@@ -72,21 +80,50 @@ client/src/
 ```
 User types idea → clicks GENERATE
     ↓
-App.js builds genParams { idea, mode, fetchedUrlContent, emailThread, claudeCodeContext, sessionFileContext }
+App.js builds genParams { idea, mode, fetchedUrlContent, emailThread, claudeCodeContext, sessionFileContext, sessionId }
     ↓
 WebSocket: gateway.send('generate', genParams)  OR  REST: POST /api/generate
     ↓
 server/engine/generate.js: handleGenerate()
     ├── Injects: template guidance, email context, claude code context, session files, knowledge
+    ├── Injects: compounding context (session brief + artifacts + prior session pollination)
     ├── Calls ai.stream({ model: 'claude:opus', system: systemPrompt, messages })
     └── Streams SSE: data: {"id":"node_1","type":"feature","label":"...","reasoning":"...","parentId":"seed"}
     ↓
 Client: useCanvasMode.readSSEStream() → buildFlowNode() → applyLayout() → ReactFlow renders
+    ↓
+Fire-and-forget: updateSessionBrief() distills action into running context (gemini:flash)
 ```
 
 ---
 
 ## How to Add a New Feature
+
+### 0. Write Gherkin spec FIRST (`features/`)
+
+Before writing any code, create a `.feature` file in `features/{domain}/`:
+
+**Domains:** `core`, `ai-workflows`, `collaboration`, `learning`, `patterns`, `export`, `integrations`, `billing`
+
+```gherkin
+Feature: Tree comparison
+  As a user I want to diff two trees so I can see what changed
+
+  Scenario: Compare two trees side by side
+    Given I have a generated tree "Market Analysis"
+    And I have a generated tree "Competitor Analysis"
+    When I select both trees and click "Compare"
+    Then I should see a side-by-side diff view
+    And nodes unique to each tree should be highlighted
+```
+
+**Rules:**
+- This IS the requirements conversation — write it, review it, then build
+- Cover: happy path, error/empty states, edge cases, SSE streaming behavior
+- Use concrete examples (real node types, mode names, action shapes)
+- One `.feature` file per capability, not per file
+- Name files descriptively: `tree-compare.feature`, not `compare.feature`
+- See `features/_template.feature` for conventions
 
 ### 1. Design the action shape FIRST
 ```json
@@ -159,6 +196,13 @@ const myFeature$ = useMyFeature();
 
 ### 7. Update this doc and `docs/agents.md`
 
+### 8. Verify Gherkin coverage
+- Re-read the `.feature` file from Step 0
+- Ensure every `Scenario` is satisfied by the implementation
+- Add new scenarios for edge cases discovered during development
+- If the feature changed shape during implementation, update the Gherkin to match reality
+- The `.feature` file is now the **living documentation** for this capability
+
 ---
 
 ## Chat Tool System
@@ -179,6 +223,9 @@ The chat backend (`server/engine/chat.js`) instructs the LLM to emit `<<<ACTIONS
 | `scoreNodes` | `{"scoreNodes":true}` | Runs node scoring |
 | `drill` | `{"drill":{"nodeId":"..."}}` | Drills into a node |
 | `feedToIdea` | `{"feedToIdea":true}` | Bridges CODE→IDEA mode |
+| `evolve` | `{"evolve":true}` | Creates 5-step evolution plan |
+| `exportDeck` | `{"exportDeck":true}` | Generates PPTX pitch deck |
+| `exportDoc` | `{"exportDoc":true}` | Generates structured document |
 
 ---
 
@@ -258,10 +305,11 @@ const parsed = await ai.parseJSON({ model: 'gemini:flash', system, messages });
 # Local dev
 npm run dev              # Runs client (3000) + server (5001) concurrently
 
-# Production (Google Cloud Run)
-gcloud builds submit --config cloudbuild.yaml
-# or
-gcloud run deploy thoughtclaw --source . --region us-central1
+# Production (Google Cloud Run) — AUTO-DEPLOYS on commit & merge to main
+# No manual deploy needed. CI/CD handles build + deploy automatically.
+# Manual deploy only if needed:
+# gcloud builds submit --config cloudbuild.yaml --project=lasttouchashar \
+#   --substitutions=_FIREBASE_API_KEY=...,_FIREBASE_AUTH_DOMAIN=...,_FIREBASE_PROJECT_ID=...
 ```
 
 Production URL: `https://thoughtclaw-670534823635.us-central1.run.app`

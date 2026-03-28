@@ -113,8 +113,20 @@ export function AuthProvider({ children }) {
 
   const getToken = () => tokenRef.current;
 
+  // Force-refresh the token (calls Firebase getIdToken(true) to bypass cache)
+  const forceRefreshToken = async () => {
+    if (!user || !user.getIdToken) return null;
+    try {
+      const freshToken = await user.getIdToken(true);
+      tokenRef.current = freshToken;
+      return freshToken;
+    } catch {
+      return null;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, getToken, isConfigured, tokenReady }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, getToken, forceRefreshToken, isConfigured, tokenReady }}>
       {children}
     </AuthContext.Provider>
   );

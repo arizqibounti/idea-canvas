@@ -315,7 +315,7 @@ function EmptyState({ onNewSession }) {
 
 // ── Route wrapper: /share/:id → ShareViewer, landing page if not logged in, else → main app ──
 function AppRouter() {
-  const { user, loading, logout, isConfigured } = useAuth();
+  const { user, loading, logout, isConfigured, getToken, forceRefreshToken } = useAuth();
   const [activeSession, setActiveSession] = useState(null);
   const [activeForest, setActiveForest] = useState(null);
   const [showSettings, setShowSettings] = useState(() => window.location.pathname.startsWith('/settings'));
@@ -329,6 +329,13 @@ function AppRouter() {
     } catch { return false; }
   });
   const sidebarRef = useRef(null);
+
+  // Wire up authFetch token getter at the router level (before any child effects)
+  // This must be here (not in App) because KnowledgeGraph and SettingsPage
+  // render as alternatives to App and need authFetch to work.
+  useEffect(() => {
+    setTokenGetter(getToken, forceRefreshToken);
+  }, [getToken, forceRefreshToken]);
 
   // Persist sidebar collapsed state
   useEffect(() => {
@@ -560,11 +567,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   // ── Auth ────────────────────────────────────────────────
   const { user: authUser, getToken, logout: authLogout } = useAuth();
   const [upgradePrompt, setUpgradePrompt] = useState(null); // { limit, plan }
-
-  // Wire up the API fetch wrapper with the auth token on mount
-  useEffect(() => {
-    setTokenGetter(getToken);
-  }, [getToken]);
+  // Note: setTokenGetter is called in AppRouter (parent) so authFetch works
+  // for all views (Settings, Knowledge Graph, etc.), not just App.
 
   // ── Gateway (WebSocket) ─────────────────────────────────
   const gateway = useGateway(WS_URL, getToken);
@@ -985,7 +989,10 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const [multiAgentProgress, setMultiAgentProgress] = useState(null);
 
   // ── Auto-save (skip when Yjs handles persistence or in forest canvas) ────────
+  // Use ref to skip auto-save on initial session load (prevents timestamp update on click)
+  const autoSaveInitRef = useRef(false);
   useEffect(() => {
+    if (!autoSaveInitRef.current) { autoSaveInitRef.current = true; return; }
     if (yjs) return; // Yjs handles persistence via y-indexeddb
     if (initialSession?.source === 'forest') return; // Forest canvases save via ForestContext
     if (activeMode === 'idea') idea$.triggerAutoSave(idea, displayMode);
@@ -999,10 +1006,20 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   }, [cb$.nodeCount, cbFolderName, activeMode]);
 
   // Notify parent (sidebar) after auto-save completes
+  // Only trigger on actual new activity (node count increase), not initial session load
+  const prevNodeCountRef = useRef(null);
   useEffect(() => {
     if (!onSessionSaved) return;
     const nodeCount = activeMode === 'codebase' ? cb$.nodeCount : idea$.nodeCount;
     if (nodeCount === 0) return;
+    // First time we see nodes (initial load) — record but don't trigger refresh
+    if (prevNodeCountRef.current === null) {
+      prevNodeCountRef.current = nodeCount;
+      return;
+    }
+    // Only refresh sidebar when node count actually changes (new generation/activity)
+    if (nodeCount === prevNodeCountRef.current) return;
+    prevNodeCountRef.current = nodeCount;
     const t = setTimeout(() => onSessionSaved(), 1200); // after auto-save debounce
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
