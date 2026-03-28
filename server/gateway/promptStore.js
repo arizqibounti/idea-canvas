@@ -8,14 +8,21 @@ const memoryStore = new Map();
 
 const COLLECTION = 'prompts';
 
+let _firestoreReady = null; // resolves when Firestore init is complete (connected or fallback)
+
 function initFirestore() {
-  try {
-    const { Firestore } = require('@google-cloud/firestore');
-    db = new Firestore();
-    db.collection(COLLECTION).limit(1).get()
-      .then(() => { useFirestore = true; console.log('Prompt store: Firestore connected'); })
-      .catch(() => { console.log('Prompt store: Firestore unavailable — using in-memory'); });
-  } catch { console.log('Prompt store: Firestore SDK not configured — using in-memory'); }
+  _firestoreReady = new Promise((resolve) => {
+    try {
+      const { Firestore } = require('@google-cloud/firestore');
+      db = new Firestore();
+      db.collection(COLLECTION).limit(1).get()
+        .then(() => { useFirestore = true; console.log('Prompt store: Firestore connected'); resolve(); })
+        .catch(() => { console.log('Prompt store: Firestore unavailable — using in-memory'); resolve(); });
+    } catch {
+      console.log('Prompt store: Firestore SDK not configured — using in-memory');
+      resolve();
+    }
+  });
 }
 initFirestore();
 
@@ -122,10 +129,12 @@ async function listPrompts() {
   // Auto-seed on first empty list (ensures prompts exist in fresh Firestore)
   if (results.length === 0 && !_promptsSeeded) {
     _promptsSeeded = true;
+    // Wait for Firestore init so seed writes to the correct store
+    if (_firestoreReady) await _firestoreReady;
     try {
       const count = await seedFromLegacy();
       if (count > 0) {
-        console.log(`Prompt store: auto-seeded ${count} prompts`);
+        console.log(`Prompt store: auto-seeded ${count} prompts (firestore=${useFirestore})`);
         return listPrompts(); // re-fetch after seeding
       }
     } catch (err) {
