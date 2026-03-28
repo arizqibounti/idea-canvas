@@ -25,6 +25,8 @@ const { saveNodes, getKnowledgeContext } = require('../gateway/knowledge');
 const integrationRegistry = require('../integrations/registry');
 const ai = require('../ai/providers');
 const patternLoader = require('./patternLoader');
+const { buildCompoundingContext } = require('./contextBuilder');
+const { updateSessionBrief, generateSessionSummary } = require('./sessionBrief');
 
 // ── POST /api/generate ────────────────────────────────────────
 
@@ -166,6 +168,16 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
     userContent += `\n\n${sessionFileContext}`;
   }
 
+  // Inject compounding session context
+  const sessionId = req.body.sessionId;
+  const userId = req.user?.uid || 'local';
+  if (sessionId && typeof userContent === 'string') {
+    try {
+      const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+      if (compoundCtx) userContent += compoundCtx;
+    } catch { /* non-fatal */ }
+  }
+
   try {
     // When a PDF document block is included, pass the beta header for PDF support
     const requestOptions = resumePdf
@@ -180,6 +192,11 @@ Now generate the thinking tree that fulfills the user's request above. Ground ev
       requestOptions,
     });
     await streamToSSE(res, stream);
+
+    // Fire-and-forget: update session brief
+    if (sessionId) {
+      updateSessionBrief(sessionId, userId, 'generate', { idea, mode }).catch(console.error);
+    }
   } catch (err) {
     console.error('Error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -226,6 +243,16 @@ async function handleGenerateMulti(_client, req, res) {
   const { claudeCodeContext: ccCtx, sessionFileContext: sfCtx } = req.body;
   if (ccCtx) baseUserContent += `\n\n${ccCtx}`;
   if (sfCtx) baseUserContent += `\n\n${sfCtx}`;
+
+  // Inject compounding session context
+  const sessionId = req.body.sessionId;
+  const userId = req.user?.uid || 'local';
+  if (sessionId) {
+    try {
+      const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+      if (compoundCtx) baseUserContent += compoundCtx;
+    } catch { /* non-fatal */ }
+  }
 
   try {
     // Phase 1: Run 3 lenses in parallel

@@ -62,6 +62,7 @@ import ExportDropdown from './ExportDropdown';
 import SessionFilesBar from './SessionFilesBar';
 import ForestTabBar from './ForestTabBar';
 import ForestMetaCanvas from './ForestMetaCanvas';
+import VelocityMeter from './VelocityMeter';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -569,6 +570,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   const gateway = useGateway(WS_URL, getToken);
   const gatewayRef = useRef(gateway);
   gatewayRef.current = gateway;
+  const sessionIdRef = useRef(null);
+  sessionIdRef.current = gateway.sessionId || null;
 
   // ── Yjs collaborative context ───────────────────────────
   const yjs = useYjs(); // null when not in a /room/ URL
@@ -597,6 +600,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     dynamicTypesRef: idea$.dynamicTypesRef,
     yjsSyncRef,
     setNodeCount: idea$.setNodeCount,
+    sessionIdRef,
   });
   const refineCb$ = useAutoRefine({
     rawNodesRef: cb$.rawNodesRef,
@@ -605,6 +609,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     dynamicTypesRef: cb$.dynamicTypesRef,
     yjsSyncRef: { current: null },
     setNodeCount: cb$.setNodeCount,
+    sessionIdRef,
   });
 
   // ── Portfolio hooks (one per canvas) ────────────────────
@@ -643,6 +648,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
     dynamicTypesRef: idea$.dynamicTypesRef,
     yjsSyncRef,
     setNodeCount: idea$.setNodeCount,
+    sessionIdRef,
     onTreeSwapped: (info) => {
       setTreeSwapBanner(info);
       setTimeout(() => setTreeSwapBanner(null), 4000);
@@ -1154,7 +1160,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null, sessionId: gateway.sessionId || initialSession?.id || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1290,7 +1296,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null, sessionId: gateway.sessionId || initialSession?.id || null };
       const seenTypes = [];
       if (yjs) yjs.setLocalGenerating(true);
       const onNodeData = (nodeData) => {
@@ -1440,7 +1446,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         ? allTemplates.slice(0, 3).map(t => ({ domain: t.domain, idea_summary: t.idea_summary, structure: t.structure }))
         : undefined;
 
-      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null };
+      const genParams = { idea: idea.trim(), mode: displayMode, fetchedUrlContent, templateGuidance, emailThread: emailContext?.formatted || null, claudeCodeContext: claudeCodeContext?.context || null, sessionFileContext: sessionFileContext || null, sessionId: gateway.sessionId || initialSession?.id || null };
       const seenTypes = [];
       let genNodeCount = 0;
       if (yjs) yjs.setLocalGenerating(true);
@@ -1877,7 +1883,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       const res = await authFetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea: idea.trim(), steeringInstruction: steeringText.trim(), existingNodes, emailThread: emailContext?.formatted || null }),
+        body: JSON.stringify({ idea: idea.trim(), steeringInstruction: steeringText.trim(), existingNodes, emailThread: emailContext?.formatted || null, sessionId: gateway.sessionId || initialSession?.id || null }),
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -1985,6 +1991,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           mode: 'resume',
           jdText: jdText || '',
           resumePdf: pdfBase64 || null,
+          sessionId: gateway.sessionId || initialSession?.id || null,
         }),
         signal: controller.signal,
       });
@@ -2227,6 +2234,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           body: JSON.stringify({
             nodes: serializeNodes(currentNodes), idea: ideaText, round,
             priorCritiques: allRoundsHistory.flatMap(r => r.blockers || []), mode: displayMode,
+            sessionId: gateway.sessionId || initialSession?.id || null,
           }),
           signal: controller.signal,
         });
@@ -2273,6 +2281,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             body: JSON.stringify({
               nodes: serializeNodes(currentNodes), idea: ideaText,
               debateHistory: allRoundsHistory, mode: displayMode,
+              sessionId: gateway.sessionId || initialSession?.id || null,
             }),
             signal: finController.signal,
           });
@@ -2315,6 +2324,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
             body: JSON.stringify({
               nodes: serializeNodes(currentNodes), idea: ideaText,
               debateHistory: allRoundsHistory, mode: displayMode,
+              sessionId: gateway.sessionId || initialSession?.id || null,
             }),
             signal: finController.signal,
           });
@@ -2356,6 +2366,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           body: JSON.stringify({
             nodes: serializeNodes(currentNodes), idea: ideaText,
             round, critiques: critiques || [], mode: displayMode,
+            sessionId: gateway.sessionId || initialSession?.id || null,
           }),
           signal: rebutController.signal,
         });
@@ -3305,6 +3316,13 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
           <button className={`top-bar-scroll-btn scroll-right${toolbarCanScrollRight ? ' visible' : ''}`} onClick={() => scrollToolbar(1)} aria-label="Scroll toolbar right">›</button>
         <div className="top-bar-right" ref={toolbarScrollRef}>
           {active.nodeCount > 0 && <span className="node-counter">{active.nodeCount} nodes</span>}
+          <VelocityMeter
+            nodes={active.nodes || []}
+            debates={active.debates || []}
+            artifacts={active.artifacts || []}
+            chatMessages={savedChatMessages}
+            refineRounds={active.refineRounds || 0}
+          />
           {memorySessionCount >= 2 && activeMode === 'idea' && (
             <button className="btn btn-icon" onClick={() => setShowMemory((v) => !v)} title="Your thinking patterns">
               ◈ MEMORY
@@ -3443,6 +3461,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                 nodes={active.nodes}
                 idea={ideaText}
                 disabled={isBusy || active.nodes.length === 0}
+                sessionId={gateway.sessionId || initialSession?.id || null}
               />
               <div className="toolbar-sep" />
               <button
@@ -4238,6 +4257,7 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
         onStopPattern={() => patternExec$.stop()}
         availablePatterns={availablePatterns}
         sessionFileContext={sessionFileContext}
+        sessionId={gateway.sessionId || initialSession?.id || null}
         pipelineCheckpoint={pipelineCheckpoint}
         onPipelineCheckpointAction={handlePipelineCheckpointDecision}
         mnemonicJobs={{}}

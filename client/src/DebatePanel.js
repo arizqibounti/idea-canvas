@@ -289,7 +289,7 @@ function RoundEntry({ round, summary, verdict, critiques, blockers, rebutNodes, 
   );
 }
 
-export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded, onNodeUpdate, autoStart, debateRoundsRef, mode = 'idea', onApplyToResume, onConsensusReached, onSuggestionExpand }) {
+export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded, onNodeUpdate, autoStart, debateRoundsRef, mode = 'idea', onApplyToResume, onConsensusReached, onSuggestionExpand, sessionId }) {
   const [rounds, setRounds] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState('idle'); // idle | critiquing | rebutting | finalizing | consensus | stopped
@@ -366,6 +366,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
           idea,
           debateHistory: allRoundsRef.current,
           mode,
+          sessionId: sessionId || null,
         }),
         signal: controller.signal,
       });
@@ -427,6 +428,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
             round,
             priorCritiques: blockers,
             mode,
+            sessionId: sessionId || null,
           }),
           signal: controller.signal,
         });
@@ -519,6 +521,7 @@ export default function DebatePanel({ isOpen, onClose, nodes, idea, onNodesAdded
             round,
             critiques: critiques || [],
             mode,
+            sessionId: sessionId || null,
           }),
           signal: controller.signal,
         });

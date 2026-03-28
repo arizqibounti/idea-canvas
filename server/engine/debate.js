@@ -19,6 +19,9 @@ const {
 
 const ai = require('../ai/providers');
 const { sseHeaders, streamToSSE, geminiStreamToSSE, attachAbortSignal } = require('../utils/sse');
+const { buildCompoundingContext } = require('./contextBuilder');
+const { updateSessionBrief, generateSessionSummary } = require('./sessionBrief');
+const { appendArtifact } = require('../gateway/sessions');
 
 // ── POST /api/debate/critique ─────────────────────────────────
 
@@ -27,7 +30,17 @@ async function handleDebateCritique(_client, req, res, _gemini) {
   if (!nodes?.length) return res.status(400).json({ error: 'nodes required' });
 
   const criticPrompt = CRITIC_PROMPT_MAP[mode] || DEBATE_CRITIC_PROMPT;
-  const userMessage = buildCritiqueUserMessage(mode, { idea, round, priorCritiques, nodes });
+  let userMessage = buildCritiqueUserMessage(mode, { idea, round, priorCritiques, nodes });
+
+  // Inject compounding session context
+  const sessionId = req.body.sessionId;
+  const userId = req.user?.uid || 'local';
+  if (sessionId) {
+    try {
+      const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+      if (compoundCtx) userMessage += compoundCtx;
+    } catch { /* non-fatal */ }
+  }
 
   try {
     const { text } = await ai.call({
@@ -98,14 +111,39 @@ Round ${r.round}:
   const userMessage = buildFinalizeUserMessage(mode, { idea, debateHistory, nodes, historyText });
 
   try {
+    // Inject compounding context for finalize
+    const sessionId = req.body.sessionId;
+    const userId = req.user?.uid || 'local';
+    let finalUserMessage = userMessage;
+    if (sessionId) {
+      try {
+        const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+        if (compoundCtx) finalUserMessage += compoundCtx;
+      } catch { /* non-fatal */ }
+    }
+
     const { stream } = await ai.stream({
       model: 'gemini:pro',
       system: finalizePrompt,
-      messages: [{ role: 'user', content: userMessage }],
+      messages: [{ role: 'user', content: finalUserMessage }],
       maxTokens: 12000,
       extra: { thinkingConfig: { thinkingLevel: 'MEDIUM' } },
     });
     await geminiStreamToSSE(res, stream);
+
+    // Fire-and-forget: record artifact + update brief + generate summary (milestone)
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'debate_outcome',
+        title: `Debate finalized (${debateHistory.length} rounds)`,
+        summary: `Adversarial debate with ${debateHistory.length} rounds on "${idea?.slice(0, 60)}"`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'debate_finalize', {
+        rounds: debateHistory.length,
+        idea,
+      }).catch(console.error);
+      generateSessionSummary(sessionId).catch(console.error);
+    }
   } catch (err) {
     console.error('Debate finalize error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);

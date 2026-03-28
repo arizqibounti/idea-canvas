@@ -50,7 +50,7 @@ export function usePrototypeBuilder() {
       const res = await authFetch(`${API_URL}/api/prototype/build`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodes: serialized, idea, mode }),
+        body: JSON.stringify({ nodes: serialized, idea, mode, sessionId: sessionId || null }),
         signal: controller.signal,
       });
 

@@ -8,7 +8,7 @@ import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount, onTreeSwapped }) {
+export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount, onTreeSwapped, sessionIdRef }) {
   const [isExperimenting, setIsExperimenting] = useState(false);
   const [experimentProgress, setExperimentProgress] = useState(null);
   const [experimentHistory, setExperimentHistory] = useState([]);
@@ -59,6 +59,7 @@ export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dyn
           candidateTree: { nodes: currentBest.nodes, title: currentBest.title, thesis: currentBest.thesis },
           idea,
           mode: mode || 'idea',
+          sessionId: sessionIdRef?.current || null,
         }),
         signal: abortController.signal,
       });
@@ -94,6 +95,7 @@ export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dyn
               idea,
               mode: mode || 'idea',
               history,
+              sessionId: sessionIdRef?.current || null,
             }),
             signal: abortController.signal,
           });
@@ -136,6 +138,7 @@ export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dyn
             iteration,
             priorMutations: history.map(h => ({ strategy: h.strategy, title: h.candidateTitle, kept: h.kept })),
             dynamicTypes: dynamicTypesRef?.current || undefined,
+            sessionId: sessionIdRef?.current || null,
           }),
           signal: abortController.signal,
         });
@@ -189,6 +192,7 @@ export function useExperimentLoop({ rawNodesRef, applyLayout, drillStackRef, dyn
             candidateTree: { nodes: candidateNodes, title: candidateTitle, thesis: candidateThesis, strategy: candidateStrategy },
             idea,
             mode: mode || 'idea',
+            sessionId: sessionIdRef?.current || null,
           }),
           signal: abortController.signal,
         });

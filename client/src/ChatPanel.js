@@ -195,7 +195,7 @@ const CHAT_MODE_CONFIG = {
   learn:    { title: 'AI TUTOR',            icon: '⧫', emptyDesc: 'Your concept tree is ready. Click "Start Learning" below — I\'ll teach each concept with explanations and examples, then quiz you to check understanding.' },
 };
 
-export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo, initialChatMessages, onSaveChatMessages, generationFlow }) {
+export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea', onChatAction, chatFilterActive, onClearFilter, pendingChatCards, onClearPendingCards, onCardButtonClick, executionStream, onStopExecution, onDismissStream, refineStream, portfolioStream, learnStream, experimentStream, debateStream, prototypeStream, emailContext, pipelineStages, onClosePipeline, focusedNode, onDismissFocus, patternFramework, patternExecState, onStopPattern, availablePatterns, sessionFileContext, pipelineCheckpoint, onPipelineCheckpointAction, mnemonicJobs, onGenerateVideo, onPlayVideo, initialChatMessages, onSaveChatMessages, generationFlow, sessionId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -307,6 +307,7 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
           emailThread: emailContext?.formatted || null,
           focusedNode: focusContext,
           sessionFileContext: sessionFileContext || null,
+          sessionId: sessionId || null,
         }),
         signal: controller.signal,
       });

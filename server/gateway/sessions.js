@@ -43,6 +43,9 @@ function newSession(idea, mode, userId, workspaceId) {
     debates: [],
     chatMessages: [],
     canvasArtifacts: [],
+    artifacts: [],
+    sessionBrief: '',
+    sessionSummary: '',
     surfaces: ['web'],
     forestId: null,
     canvasKey: null,
@@ -137,6 +140,25 @@ async function appendCanvasArtifact(sessionId, artifact) {
   return stamped;
 }
 
+async function appendArtifact(sessionId, artifact) {
+  const stamped = { ...artifact, id: artifact.id || uuidv4(), createdAt: new Date().toISOString() };
+  if (useFirestore) {
+    const { FieldValue } = require('@google-cloud/firestore');
+    await db.collection('sessions').doc(sessionId).update({
+      artifacts: FieldValue.arrayUnion(stamped),
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    const session = memoryStore.get(sessionId);
+    if (session) {
+      if (!session.artifacts) session.artifacts = [];
+      session.artifacts.push(stamped);
+      session.updatedAt = new Date().toISOString();
+    }
+  }
+  return stamped;
+}
+
 async function listSessions(limitOrUserId, limit = 20) {
   // Support both old signature listSessions(limit) and new listSessions(userId, limit)
   let userId = null;
@@ -152,7 +174,7 @@ async function listSessions(limitOrUserId, limit = 20) {
     const snapshot = await query
       .orderBy('updatedAt', 'desc')
       .limit(limit)
-      .select('idea', 'mode', 'createdAt', 'updatedAt', 'userId', 'nodeCount')
+      .select('idea', 'mode', 'createdAt', 'updatedAt', 'userId', 'nodeCount', 'sessionSummary')
       .get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } else {
@@ -161,7 +183,7 @@ async function listSessions(limitOrUserId, limit = 20) {
     return entries
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, limit)
-      .map(s => ({ id: s.id, idea: s.idea, mode: s.mode, createdAt: s.createdAt, updatedAt: s.updatedAt, nodeCount: s.nodes?.length || s.nodeCount || 0 }));
+      .map(s => ({ id: s.id, idea: s.idea, mode: s.mode, createdAt: s.createdAt, updatedAt: s.updatedAt, nodeCount: s.nodes?.length || s.nodeCount || 0, sessionSummary: s.sessionSummary || '' }));
   }
 }
 
@@ -191,6 +213,7 @@ module.exports = {
   appendDebateRound,
   appendChatMessage,
   appendCanvasArtifact,
+  appendArtifact,
   listSessions,
   deleteSession,
   updateForestCanvas,

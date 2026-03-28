@@ -11,6 +11,8 @@ const {
 
 const { sseHeaders, attachAbortSignal } = require('../utils/sse');
 const ai = require('../ai/providers');
+const { appendArtifact } = require('../gateway/sessions');
+const { updateSessionBrief } = require('./sessionBrief');
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -196,6 +198,22 @@ Polish this prototype. Ensure visual consistency, add micro-interactions, and im
 
     res.write('data: [DONE]\n\n');
     res.end();
+
+    // Fire-and-forget: record prototype artifact
+    const sessionId = req.body.sessionId;
+    const userId = req.user?.uid || 'local';
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'prototype',
+        title: `Prototype: ${plan.appName || 'App'} (${validScreens.length} screens)`,
+        summary: `Built interactive prototype with ${validScreens.length} screens`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'prototype_build', {
+        appName: plan.appName,
+        screenCount: validScreens.length,
+        idea,
+      }).catch(console.error);
+    }
   } catch (err) {
     console.error('Prototype build error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);

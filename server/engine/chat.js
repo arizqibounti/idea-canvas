@@ -4,10 +4,12 @@ const { CHAT_PERSONAS } = require('./prompts');
 const { sseHeaders, attachAbortSignal } = require('../utils/sse');
 const integrationRegistry = require('../integrations/registry');
 const ai = require('../ai/providers');
+const { buildCompoundingContext } = require('./contextBuilder');
+const { updateSessionBrief } = require('./sessionBrief');
 
 // ── POST /api/chat ────────────────────────────────────────────
 
-function handleChat(_client, req, res) {
+async function handleChat(_client, req, res) {
   const { messages, treeContext, idea, mode, emailThread, focusedNode, sessionFileContext } = req.body;
 
   if (!messages || !messages.length) {
@@ -155,6 +157,16 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
     systemPrompt += `\n\n${sessionFileContext}`;
   }
 
+  // Inject compounding session context into system prompt
+  const sessionId = req.body.sessionId;
+  const userId = req.user?.uid || 'local';
+  if (sessionId) {
+    try {
+      const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+      if (compoundCtx) systemPrompt += compoundCtx;
+    } catch { /* non-fatal */ }
+  }
+
   ai.stream({
     model: 'claude:sonnet',
     system: systemPrompt,
@@ -184,6 +196,15 @@ CRITICAL: You MUST emit the <<<ACTIONS>>> block for tool requests. Write a brief
       ended = true;
       res.write('data: [DONE]\n\n');
       res.end();
+
+      // Fire-and-forget: update session brief with chat turn
+      if (sessionId) {
+        const lastMsg = messages[messages.length - 1];
+        updateSessionBrief(sessionId, userId, 'chat', {
+          userMessage: lastMsg?.content?.slice(0, 200),
+          idea,
+        }).catch(console.error);
+      }
     });
 
     stream.on('error', (err) => {

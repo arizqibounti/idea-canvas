@@ -8,7 +8,7 @@ import { authFetch } from './api';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount }) {
+export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamicTypesRef, yjsSyncRef, setNodeCount, sessionIdRef }) {
   const [isRefining, setIsRefining] = useState(false);
   const [refineProgress, setRefineProgress] = useState(null);
   const [refineHistory, setRefineHistory] = useState([]);
@@ -53,6 +53,7 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             mode: mode || 'idea',
             round,
             priorWeaknesses: allWeaknesses,
+            sessionId: sessionIdRef?.current || null,
           }),
           signal: abortController.signal,
         });
@@ -115,6 +116,7 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             growthCandidates: growthCandidates || [],
             dynamicTypes: dynamicTypesRef?.current || undefined,
             round,
+            sessionId: sessionIdRef?.current || null,
           }),
           signal: abortController.signal,
         });
@@ -181,6 +183,7 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             idea,
             mode: mode || 'idea',
             priorScore: overallScore,
+            sessionId: sessionIdRef?.current || null,
           }),
           signal: abortController.signal,
         });

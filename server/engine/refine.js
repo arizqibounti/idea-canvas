@@ -16,6 +16,9 @@ const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils
 const { getKnowledgeContext } = require('../gateway/knowledge');
 const ai = require('../ai/providers');
 const { recordOutcome } = require('./meta-evolution');
+const { buildCompoundingContext } = require('./contextBuilder');
+const { updateSessionBrief } = require('./sessionBrief');
+const { appendArtifact } = require('../gateway/sessions');
 
 // Fallback to idea mode critique if mode not found
 function getCritiquePrompt(mode) {
@@ -121,6 +124,15 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
+    // Inject compounding session context
+    const sessionId = req.body.sessionId;
+    if (sessionId) {
+      try {
+        const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+        if (compoundCtx) userContent += compoundCtx;
+      } catch { /* non-fatal */ }
+    }
+
     const { text } = await ai.call({
       model: 'claude:sonnet',
       system: systemPrompt,
@@ -143,6 +155,15 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
     }
 
     res.json(result);
+
+    // Fire-and-forget: update session brief with critique results
+    if (sessionId) {
+      updateSessionBrief(sessionId, userId, 'refine_critique', {
+        weaknesses: result.weaknesses?.length || 0,
+        gaps: result.gaps?.length || 0,
+        idea,
+      }).catch(console.error);
+    }
   } catch (err) {
     console.error('Refine critique error:', err);
     res.status(500).json({ error: err.message });
@@ -212,6 +233,15 @@ ${JSON.stringify(nodeSummary, null, 2)}`;
       if (knowledgeCtx) userContent += knowledgeCtx;
     } catch { /* non-fatal */ }
 
+    // Inject compounding session context
+    const sessionId = req.body.sessionId;
+    if (sessionId) {
+      try {
+        const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+        if (compoundCtx) userContent += compoundCtx;
+      } catch { /* non-fatal */ }
+    }
+
     const { stream } = await ai.stream({
       model: 'claude:sonnet',
       system: REFINE_STRENGTHEN_PROMPT.replace('{round}', round || 1),
@@ -220,6 +250,15 @@ ${JSON.stringify(nodeSummary, null, 2)}`;
     });
 
     await streamToSSE(res, stream);
+
+    // Fire-and-forget: update brief
+    if (sessionId) {
+      updateSessionBrief(sessionId, userId, 'refine_strengthen', {
+        weaknessesFixed: weaknesses?.length || 0,
+        gapsFilled: gaps?.length || 0,
+        idea,
+      }).catch(console.error);
+    }
   } catch (err) {
     console.error('Refine strengthen error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -268,10 +307,25 @@ async function handleRefineScore(_client, req, res) {
     }
 
     // Record outcome for meta-evolution if we have a prior score to compare
+    const userId = req.user?.uid || 'local';
     if (priorScore != null && result.overallScore != null) {
-      const userId = req.user?.uid || 'local';
       const delta = (result.overallScore || 0) - priorScore;
       recordOutcome(userId, mode || 'idea', 'refine', delta, req.body.sessionId).catch(() => {});
+    }
+
+    // Record refine artifact + update brief
+    const sessionId = req.body.sessionId;
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'refine_result',
+        title: `Refine score: ${result.overallScore || '?'}/10`,
+        summary: result.summary || `Score ${priorScore || '?'} → ${result.overallScore || '?'}`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'refine_score', {
+        score: result.overallScore,
+        priorScore,
+        idea,
+      }).catch(console.error);
     }
 
     res.json(result);

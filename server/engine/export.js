@@ -15,6 +15,8 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { sseHeaders } = require('../utils/sse');
+const { updateSessionBrief, generateSessionSummary } = require('./sessionBrief');
+const { appendArtifact } = require('../gateway/sessions');
 
 // ── Lazy-load file generation libraries ──────────────────────
 let PptxGenJS = null;
@@ -359,6 +361,21 @@ Use the add_slide tool for each slide. Create 8-15 slides. Call finish_export wh
 
     res.write('data: [DONE]\n\n');
     res.end();
+
+    // Fire-and-forget: record artifact + update brief + generate summary (milestone)
+    const sessionId = req.body?.sessionId;
+    const userId = req.user?.uid || 'local';
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'export_deck',
+        title: `Pitch deck (${slides.length} slides)`,
+        summary: `Exported ${slides.length}-slide deck for "${(idea || '').slice(0, 60)}"`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'export_deck', {
+        slideCount: slides.length, idea,
+      }).catch(console.error);
+      generateSessionSummary(sessionId).catch(console.error);
+    }
   } catch (err) {
     if (err.name === 'AbortError' || err.message === 'Export cancelled') {
       res.write(`data: ${JSON.stringify({ _error: 'Export cancelled' })}\n\n`);
@@ -428,6 +445,21 @@ Use the add_section tool for each section. Create a well-structured document. Ca
 
     res.write('data: [DONE]\n\n');
     res.end();
+
+    // Fire-and-forget: record artifact + brief + summary
+    const sessionId = req.body?.sessionId;
+    const userId = req.user?.uid || 'local';
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'export_doc',
+        title: `Document (${sections.length} sections)`,
+        summary: `Exported ${sections.length}-section ${format} for "${(idea || '').slice(0, 60)}"`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'export_doc', {
+        sectionCount: sections.length, format, idea,
+      }).catch(console.error);
+      generateSessionSummary(sessionId).catch(console.error);
+    }
   } catch (err) {
     if (err.name === 'AbortError' || err.message === 'Export cancelled') {
       res.write(`data: ${JSON.stringify({ _error: 'Export cancelled' })}\n\n`);

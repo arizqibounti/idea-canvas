@@ -192,10 +192,68 @@ async function getKnowledgeContext(userId, idea) {
   return `\n\nZETTELKASTEN CONTEXT — You've explored similar ideas in past sessions:\n${contextLines.join('\n')}\nBuild on these previous insights where relevant. Don't repeat them verbatim.`;
 }
 
+/**
+ * Cross-session pollination — find related past sessions and return their summaries.
+ * @param {string} userId - user ID
+ * @param {string} idea - current session idea
+ * @param {string} currentSessionId - exclude current session
+ * @returns {string} formatted context block or empty string
+ */
+async function getSessionPollination(userId, idea, currentSessionId) {
+  if (!userId || !idea) return '';
+
+  try {
+    const { listSessions } = require('./sessions');
+    const sessions = await listSessions(userId, 50);
+
+    // Filter: exclude current session, only those with summaries
+    const candidates = sessions.filter(
+      s => s.id !== currentSessionId && s.sessionSummary
+    );
+    if (candidates.length === 0) return '';
+
+    // Score by tag overlap with current idea
+    const ideaTags = extractTags(idea, '');
+    if (ideaTags.length === 0) return '';
+
+    const scored = candidates.map(s => {
+      const sessionTags = extractTags(s.idea || '', '');
+      const overlap = ideaTags.filter(t => sessionTags.includes(t)).length;
+      return { ...s, overlap };
+    }).filter(s => s.overlap > 0);
+
+    scored.sort((a, b) => b.overlap - a.overlap);
+    const top = scored.slice(0, 3);
+    if (top.length === 0) return '';
+
+    const lines = top.map(s => {
+      const ago = getTimeAgo(s.updatedAt);
+      return `- "${s.idea?.slice(0, 80)}" (${ago}): ${s.sessionSummary}`;
+    });
+
+    return `PRIOR SESSIONS (insights from your related past work):\n${lines.join('\n')}`;
+  } catch (err) {
+    console.error('Session pollination error:', err.message);
+    return '';
+  }
+}
+
+function getTimeAgo(dateStr) {
+  if (!dateStr) return 'unknown';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  return `${Math.floor(days / 30)} months ago`;
+}
+
 module.exports = {
   saveNodes,
   findSimilar,
   getNodeClusters,
   getKnowledgeContext,
+  getSessionPollination,
   extractTags,
 };

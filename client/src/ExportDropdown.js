@@ -39,7 +39,7 @@ const MIME_TYPES = {
   json: 'application/json',
 };
 
-export default function ExportDropdown({ nodes, idea, disabled }) {
+export default function ExportDropdown({ nodes, idea, disabled, sessionId }) {
   const [isOpen, setIsOpen] = useState(false);
   const [exporting, setExporting] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
@@ -90,7 +90,7 @@ export default function ExportDropdown({ nodes, idea, disabled }) {
         const res = await authFetch(`${API_URL}/api/export/google-doc`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nodes: serializedNodes, idea: idea || 'Untitled' }),
+          body: JSON.stringify({ nodes: serializedNodes, idea: idea || 'Untitled', sessionId: sessionId || null }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -108,7 +108,7 @@ export default function ExportDropdown({ nodes, idea, disabled }) {
       }
 
       const endpoint = type === 'deck' ? '/api/export/deck' : '/api/export/document';
-      const body = { nodes: serializedNodes, idea: idea || 'Untitled', format: type === 'doc' ? 'md' : undefined };
+      const body = { nodes: serializedNodes, idea: idea || 'Untitled', format: type === 'doc' ? 'md' : undefined, sessionId: sessionId || null };
 
       const res = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',

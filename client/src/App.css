@@ -12378,3 +12378,43 @@
 }
 .evolution-meta-hint strong { color: #a78bfa; }
 
+/* ── Velocity Meter ──────────────────────────────────────────── */
+.velocity-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: all 0.3s ease;
+  cursor: default;
+  user-select: none;
+}
+.velocity-icon { font-size: 13px; }
+.velocity-gray {
+  background: rgba(120,120,130,0.15);
+  color: #888;
+}
+.velocity-blue {
+  background: rgba(56,152,236,0.15);
+  color: #74c0fc;
+}
+.velocity-purple {
+  background: rgba(167,139,250,0.15);
+  color: #a78bfa;
+}
+.velocity-gold {
+  background: rgba(250,204,21,0.18);
+  color: #facc15;
+}
+.velocity-pulse {
+  animation: velocityPulse 0.6s ease;
+}
+@keyframes velocityPulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+

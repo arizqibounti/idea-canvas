@@ -12,6 +12,9 @@ const {
 const { sseHeaders, streamToSSE } = require('../utils/sse');
 const ai = require('../ai/providers');
 const { recordOutcome, getBestStrategy } = require('./meta-evolution');
+const { buildCompoundingContext } = require('./contextBuilder');
+const { updateSessionBrief } = require('./sessionBrief');
+const { appendArtifact } = require('../gateway/sessions');
 
 // Helper: compact node summary for prompt context
 function nodeSummary(nodes) {
@@ -53,6 +56,16 @@ ${weakDimensions?.length ? `Weak dimensions to target (scored lowest):\n${weakDi
 ${priorMutations?.length ? `Prior mutations (avoid repeating these approaches):\n${JSON.stringify(priorMutations.map(m => ({ strategy: m.strategy, title: m.title, kept: m.kept })))}` : ''}
 
 Generate a COMPLETE alternative tree using the "${mutationStrategy}" strategy. Remember: this must be a genuinely different approach, not a refinement.`;
+
+    // Inject compounding session context
+    const sessionId = req.body.sessionId;
+    const userId = req.user?.uid || 'local';
+    if (sessionId) {
+      try {
+        const compoundCtx = await buildCompoundingContext(sessionId, userId, idea);
+        if (compoundCtx) userContent += compoundCtx;
+      } catch { /* non-fatal */ }
+    }
 
     const { stream } = await ai.stream({
       model: 'claude:sonnet',
@@ -171,6 +184,19 @@ async function handleExperimentScore(_client, req, res, _gemini) {
     const strategy = candidateTree.strategy || 'mutation';
     const userId = req.user?.uid || 'local';
     recordOutcome(userId, mode || 'idea', strategy, scoreDelta, req.body.sessionId).catch(() => {});
+
+    // Record experiment artifact + update brief
+    const sessionId = req.body.sessionId;
+    if (sessionId) {
+      appendArtifact(sessionId, {
+        type: 'experiment_variant',
+        title: `Experiment: ${strategy} (${winner} won)`,
+        summary: `${strategy} variant scored ${candidateScore.composite || 5} vs baseline ${baselineScore.composite || 5}`,
+      }).catch(console.error);
+      updateSessionBrief(sessionId, userId, 'experiment_score', {
+        strategy, winner, scoreDelta, idea,
+      }).catch(console.error);
+    }
 
     res.json({
       baseline: { dimensions: baselineScore.dimensions || {}, total: baselineScore.composite || 5 },
