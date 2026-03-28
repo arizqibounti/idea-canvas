@@ -485,6 +485,161 @@ async function executeTask(taskId) {
         break;
       }
 
+      case 'evolve': {
+        // ── Autonomous Evolution Plan ─────────────────────────────
+        // Multi-step plan that executes one step per run.
+        // config.plan: ['refine', 'debate', 'experiment', 'refine', 'synthesize_export']
+        // Each run advances to the next step based on runCount.
+        if (!sessionNodes.length) {
+          result = { type: 'evolve', error: 'No session linked — requires an existing tree.' };
+          break;
+        }
+
+        const plan = task.config?.plan || ['refine', 'debate', 'experiment', 'refine', 'synthesize_export'];
+        const stepIndex = (task.runCount || 0) % plan.length; // runCount already incremented before executeTask
+        const currentStep = plan[stepIndex];
+        const evolutionHistory = task.config?.evolutionHistory || [];
+
+        // Optionally reorder remaining steps using meta-evolution
+        let metaHint = null;
+        try {
+          const { getBestStrategy } = require('./meta-evolution');
+          const best = await getBestStrategy(task.userId || 'local', task.mode || 'idea', ['refine', 'debate', 'experiment']);
+          if (best) metaHint = best;
+        } catch { /* non-fatal */ }
+
+        let stepResult = { step: currentStep, stepIndex };
+
+        try {
+          if (currentStep === 'refine') {
+            const iterPrompt = `Review this thinking tree about "${sessionIdea}". Identify 3-5 weak nodes and provide improvements as JSON: [{"nodeId":"...","currentLabel":"...","improvedLabel":"...","improvedReasoning":"..."}]\n\n${treeContext}`;
+            const iterRes = await ai.call({
+              model: 'claude:sonnet',
+              system: 'You are a senior strategist. Improve weak nodes. Return JSON array of improvements.',
+              messages: [{ role: 'user', content: iterPrompt }],
+              maxTokens: 4096,
+            });
+            const iterText = iterRes?.text || '';
+            try {
+              const jsonMatch = iterText.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                const improvements = JSON.parse(jsonMatch[0]);
+                let appliedCount = 0;
+                for (const imp of improvements) {
+                  const node = sessionNodes.find(n => (n.data?.label || n.label) === imp.currentLabel || n.id === imp.nodeId);
+                  if (node) {
+                    const d = node.data || node;
+                    if (imp.improvedLabel) d.label = imp.improvedLabel;
+                    if (imp.improvedReasoning) d.reasoning = imp.improvedReasoning;
+                    appliedCount++;
+                  }
+                }
+                if (appliedCount > 0 && task.sessionId) {
+                  await sessions.updateSession(task.sessionId, { nodes: sessionNodes });
+                }
+                stepResult.summary = `Refined ${appliedCount} nodes`;
+                stepResult.appliedCount = appliedCount;
+              } else {
+                stepResult.summary = iterText.slice(0, 300);
+              }
+            } catch {
+              stepResult.summary = iterText.slice(0, 300);
+            }
+          } else if (currentStep === 'debate') {
+            const debatePrompt = `Critically analyze this thinking tree about "${sessionIdea}" and identify 3-5 weaknesses, contradictions, and blind spots:\n\n${treeContext}`;
+            const debateRes = await ai.call({
+              model: 'claude:sonnet',
+              system: 'You are a sharp critic. Find weaknesses, contradictions, and blind spots. Be specific and constructive.',
+              messages: [{ role: 'user', content: debatePrompt }],
+              maxTokens: 4096,
+            });
+            stepResult.summary = (debateRes?.text || '').slice(0, 500);
+          } else if (currentStep === 'experiment') {
+            // Server-side experiment: generate alternative, score, keep if better
+            const mutatePrompt = `Generate a completely different approach to "${sessionIdea}". Create 5-8 nodes as JSON array: [{"id":"...","type":"...","label":"...","reasoning":"...","parentIds":[]}]\n\n${treeContext}`;
+            const mutateRes = await ai.call({
+              model: 'claude:sonnet',
+              system: 'You are a creative strategist. Generate a bold alternative approach. Return JSON array of nodes.',
+              messages: [{ role: 'user', content: mutatePrompt }],
+              maxTokens: 4096,
+            });
+            const mutateText = mutateRes?.text || '';
+            try {
+              const jsonMatch = mutateText.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                const candidateNodes = JSON.parse(jsonMatch[0]);
+                // Simple heuristic score comparison: count of nodes with reasoning > 50 chars
+                const baselineQuality = sessionNodes.filter(n => ((n.data?.reasoning || n.reasoning) || '').length > 50).length;
+                const candidateQuality = candidateNodes.filter(n => (n.reasoning || '').length > 50).length;
+                if (candidateQuality > baselineQuality && task.sessionId) {
+                  await sessions.updateSession(task.sessionId, { nodes: candidateNodes });
+                  sessionNodes = candidateNodes;
+                  stepResult.summary = `Experiment: replaced tree (candidate quality ${candidateQuality} > baseline ${baselineQuality})`;
+                  stepResult.swapped = true;
+                } else {
+                  stepResult.summary = `Experiment: kept baseline (baseline ${baselineQuality} >= candidate ${candidateQuality})`;
+                  stepResult.swapped = false;
+                }
+              } else {
+                stepResult.summary = 'Experiment: could not parse candidate tree';
+              }
+            } catch {
+              stepResult.summary = 'Experiment: failed to evaluate candidate';
+            }
+          } else if (currentStep === 'synthesize_export') {
+            try {
+              const { generateAndExportToGoogleDoc } = require('./export');
+              const exportResult = await generateAndExportToGoogleDoc(sessionNodes, sessionIdea);
+              stepResult.summary = `Exported to Google Doc: ${exportResult.docUrl}`;
+              stepResult.docUrl = exportResult.docUrl;
+              stepResult.docId = exportResult.docId;
+            } catch (err) {
+              stepResult.summary = `Export failed: ${err.message}`;
+              stepResult.error = err.message;
+            }
+          }
+
+          // Record for meta-evolution
+          try {
+            const { recordOutcome } = require('./meta-evolution');
+            await recordOutcome(task.userId || 'local', task.mode || 'idea', currentStep, stepResult.appliedCount || 0, task.sessionId);
+          } catch { /* non-fatal */ }
+
+        } catch (err) {
+          stepResult.error = err.message;
+          stepResult.summary = `Step failed: ${err.message}`;
+        }
+
+        // Store step in evolution history
+        stepResult.timestamp = new Date().toISOString();
+        if (metaHint) stepResult.metaHint = metaHint;
+        evolutionHistory.push(stepResult);
+
+        // Auto-disable when all steps complete
+        const isComplete = (task.runCount || 0) >= plan.length - 1;
+        if (isComplete) {
+          task.enabled = false;
+        }
+
+        // Persist evolution history back to task config
+        task.config = { ...task.config, evolutionHistory };
+        try {
+          await updateTask(task.id, { config: task.config, enabled: task.enabled });
+        } catch { /* non-fatal */ }
+
+        result = {
+          type: 'evolve',
+          step: currentStep,
+          stepIndex,
+          totalSteps: plan.length,
+          isComplete,
+          evolutionHistory,
+          metaHint,
+          summary: `[Step ${stepIndex + 1}/${plan.length}: ${currentStep}] ${stepResult.summary || 'Done'}`,
+        };
+        break;
+      }
+
       case 'custom': {
         const prompt = treeContext
           ? `Context from existing thinking tree:\n${treeContext}\n\nTask: ${task.prompt}`

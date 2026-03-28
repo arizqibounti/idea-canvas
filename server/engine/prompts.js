@@ -1601,6 +1601,17 @@ Output ONLY a single JSON object (no markdown, no explanation):
       "description": "string (1 sentence explaining the contradiction)"
     }
   ],
+  "nodeScores": {
+    "node_id_1": 8,
+    "node_id_2": 3
+  },
+  "growthCandidates": [
+    {
+      "nodeId": "string (id of a high-scoring node, 8+)",
+      "score": 9,
+      "growthDirection": "string (what sub-branch could extend this node's strength)"
+    }
+  ],
   "overallScore": 1-10,
   "stopReason": null
 }
@@ -1611,6 +1622,8 @@ Rules:
 - Return 0-3 contradictions (if any exist)
 - severity 8-10 = critical flaw, 5-7 = significant gap, 1-4 = minor improvement
 - approach: "expand" = add 3-5 child nodes, "deepen" = rewrite with specifics, "rewrite" = replace entirely, "add_evidence" = add concrete data/metrics
+- "nodeScores": Score EVERY node 1-10 on its fitness/contribution to the overall tree. Key = node id, value = score.
+- "growthCandidates": For nodes scoring 8+, suggest a growth direction — a sub-branch that could extend their strength. Return 1-3 growth candidates.
 - If ALL nodes score 7+ across ALL 5 passes, set "stopReason" and return empty arrays
 - Be brutal and specific — this is a deep audit, not a gentle review`;
 

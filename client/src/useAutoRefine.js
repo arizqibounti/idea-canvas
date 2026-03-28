@@ -59,8 +59,20 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
 
         if (!critiqueRes.ok) throw new Error(`Critique error: ${critiqueRes.status}`);
         const critiqueResult = await critiqueRes.json();
-        const { weaknesses, gaps, contradictions, overallScore, stopReason } = critiqueResult;
+        const { weaknesses, gaps, contradictions, overallScore, stopReason, nodeScores, growthCandidates } = critiqueResult;
         const totalIssues = (weaknesses?.length || 0) + (gaps?.length || 0) + (contradictions?.length || 0);
+
+        // Apply fitness scores to nodes for visual indicators
+        if (nodeScores && typeof nodeScores === 'object') {
+          rawNodesRef.current = rawNodesRef.current.map(n => {
+            const score = nodeScores[n.id];
+            if (score != null) {
+              return { ...n, data: { ...n.data, fitnessScore: score } };
+            }
+            return n;
+          });
+          applyLayout(rawNodesRef.current, drillStackRef?.current);
+        }
 
         // If AI says stop or no issues found → tree is strong enough
         if (stopReason || totalIssues === 0) {
@@ -100,6 +112,7 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             weaknesses: weaknesses || [],
             gaps: gaps || [],
             contradictions: contradictions || [],
+            growthCandidates: growthCandidates || [],
             dynamicTypes: dynamicTypesRef?.current || undefined,
             round,
           }),
@@ -167,6 +180,7 @@ export function useAutoRefine({ rawNodesRef, applyLayout, drillStackRef, dynamic
             nodes: serializeNodes(),
             idea,
             mode: mode || 'idea',
+            priorScore: overallScore,
           }),
           signal: abortController.signal,
         });

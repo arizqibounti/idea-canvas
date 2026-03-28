@@ -44,6 +44,9 @@ const IdeaNode = memo(({ data }) => {
       style={{
         background: isGhost ? 'rgba(139,92,246,0.05)' : config.bg,
         border: `1px solid ${isMergeTarget ? '#818cf8' : isGhost ? 'rgba(139,92,246,0.2)' : isStarred ? '#ffd43b' : isSelected ? config.color : config.border}`,
+        borderLeft: data.fitnessScore != null
+          ? `4px solid ${data.fitnessScore >= 8 ? '#22c55e' : data.fitnessScore >= 5 ? '#facc15' : '#f87171'}`
+          : undefined,
         borderRadius: '8px',
         padding: '12px 14px',
         width: '260px',

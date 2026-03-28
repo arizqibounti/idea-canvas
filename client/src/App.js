@@ -634,6 +634,8 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
   });
 
   const [treeSwapBanner, setTreeSwapBanner] = useState(null);
+  const [evolving, setEvolving] = useState(false);
+  const [evolutionTask, setEvolutionTask] = useState(null);
   const experiment$ = useExperimentLoop({
     rawNodesRef: idea$.rawNodesRef,
     applyLayout: idea$.applyLayout,
@@ -1689,6 +1691,39 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
       dispatchPipelineStage(payload?.stageType || pipelineCheckpoint?.stageType, payload?.patternId, pipelineCheckpoint?.stageType);
     }
   }, [pipelineCheckpoint, advancePipeline, dispatchPipelineStage]);
+
+  // ── Autonomous Evolution ─────────────────────────────────
+  const handleStartEvolve = useCallback(async () => {
+    if (evolving || !gateway.sessionId) return;
+    setEvolving(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/evolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: gateway.sessionId,
+          mode: displayMode || 'idea',
+        }),
+      });
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      const task = await res.json();
+      setEvolutionTask(task);
+      // Push evolution card to chat
+      setPendingChatCards(prev => [...prev, {
+        type: 'evolution',
+        label: '⧬ Evolution Plan Started',
+        detail: `5-step plan: refine → debate → experiment → refine → export. Runs daily at 9 AM.`,
+        taskId: task.id,
+        plan: task.config?.plan,
+        evolutionHistory: task.config?.evolutionHistory || [],
+      }]);
+      setShowChat(true);
+    } catch (err) {
+      console.error('Evolve error:', err);
+    } finally {
+      setEvolving(false);
+    }
+  }, [evolving, gateway.sessionId, displayMode]);
 
   // ── Forest decomposition ────────────────────────────────
   const handleForestDecompose = useCallback(async () => {
@@ -3369,6 +3404,16 @@ export default function App({ initialSession, onBackToDashboard, onSessionSaved,
                   disabled={experiment$.isExperimenting}
                 >
                   ⟳ EXPERIMENT
+                </button>
+              )}
+              {active.nodes.length > 0 && (
+                <button
+                  className={`btn btn-icon ${evolving ? 'active-icon' : ''}`}
+                  onClick={handleStartEvolve}
+                  title="Start autonomous 5-step evolution plan (daily)"
+                  disabled={evolving || !gateway.sessionId}
+                >
+                  ⧬ EVOLVE
                 </button>
               )}
               {active.nodes.length > 0 && !pipelineCheckpoint && (

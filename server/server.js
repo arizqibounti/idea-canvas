@@ -252,8 +252,58 @@ require('./integrations/github'); // Self-registers with registry
 const integrationRegistry = require('./integrations/registry');
 const { mountIntegrationRoutes } = require('./integrations/routes');
 mountIntegrationRoutes(app);
-const { mountSchedulerRoutes } = require('./engine/scheduler');
+const { mountSchedulerRoutes, createTask } = require('./engine/scheduler');
 mountSchedulerRoutes(app);
+
+// ── Evolution routes ──────────────────────────────────────────
+const metaEvolution = require('./engine/meta-evolution');
+
+// 1-click evolve: creates a 5-step evolution plan as a scheduled task
+app.post('/api/evolve', async (req, res) => {
+  try {
+    const { sessionId, plan, cron } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+    const userId = req.user?.uid || 'local';
+    const task = await createTask(userId, {
+      name: `Evolution Plan`,
+      type: 'evolve',
+      prompt: 'Autonomous evolution plan',
+      sessionId,
+      mode: req.body.mode || 'idea',
+      schedule: { cron: cron || '0 9 * * *' },
+      config: {
+        plan: plan || ['refine', 'debate', 'experiment', 'refine', 'synthesize_export'],
+        evolutionHistory: [],
+      },
+    });
+    res.json(task);
+  } catch (err) {
+    console.error('Evolve create error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Meta-evolution effectiveness report
+app.get('/api/meta-evolution/:mode', async (req, res) => {
+  try {
+    const userId = req.user?.uid || 'local';
+    const report = await metaEvolution.getEffectivenessReport(userId, req.params.mode);
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Meta-evolution best strategy
+app.get('/api/meta-evolution/:mode/best', async (req, res) => {
+  try {
+    const userId = req.user?.uid || 'local';
+    const best = await metaEvolution.getBestStrategy(userId, req.params.mode);
+    res.json(best || { strategy: null, message: 'No data yet' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Export routes ─────────────────────────────────────────────
 const { exportDeck, exportDocument, generateAndExportToGoogleDoc } = require('./engine/export');

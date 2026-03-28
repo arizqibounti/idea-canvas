@@ -11,6 +11,7 @@ const {
 
 const { sseHeaders, streamToSSE } = require('../utils/sse');
 const ai = require('../ai/providers');
+const { recordOutcome, getBestStrategy } = require('./meta-evolution');
 
 // Helper: compact node summary for prompt context
 function nodeSummary(nodes) {
@@ -163,10 +164,18 @@ async function handleExperimentScore(_client, req, res, _gemini) {
     const baselineScore = scores.find(s => s.alternativeIndex === 0) || { composite: 5, dimensions: {} };
     const candidateScore = scores.find(s => s.alternativeIndex === 1) || { composite: 5, dimensions: {} };
 
+    const winner = (candidateScore.composite || 0) > (baselineScore.composite || 0) ? 'candidate' : 'baseline';
+    const scoreDelta = (candidateScore.composite || 0) - (baselineScore.composite || 0);
+
+    // Record outcome for meta-evolution learning
+    const strategy = candidateTree.strategy || 'mutation';
+    const userId = req.user?.uid || 'local';
+    recordOutcome(userId, mode || 'idea', strategy, scoreDelta, req.body.sessionId).catch(() => {});
+
     res.json({
       baseline: { dimensions: baselineScore.dimensions || {}, total: baselineScore.composite || 5 },
       candidate: { dimensions: candidateScore.dimensions || {}, total: candidateScore.composite || 5 },
-      winner: (candidateScore.composite || 0) > (baselineScore.composite || 0) ? 'candidate' : 'baseline',
+      winner,
       analysis: result.recommendation || '',
     });
   } catch (err) {
@@ -185,6 +194,16 @@ async function handleExperimentAnalyze(_client, req, res) {
   }
 
   try {
+    // Query meta-evolution for historically best strategy
+    const userId = req.user?.uid || 'local';
+    const strategies = ['pivot_market', 'change_monetization', 'simplify', 'differentiate', 'scale', 'wildcard'];
+    const metaBest = await getBestStrategy(userId, mode || 'idea', strategies).catch(() => null);
+
+    let metaHint = '';
+    if (metaBest) {
+      metaHint = `\n\nMeta-evolution data: "${metaBest.strategy}" has historically produced the best results for this mode (avg delta: ${metaBest.avgDelta > 0 ? '+' : ''}${metaBest.avgDelta} over ${metaBest.count} runs). Consider this when recommending.`;
+    }
+
     const userContent = `Idea: "${idea}"
 Mode: ${mode || 'idea'}
 
@@ -197,7 +216,7 @@ ${JSON.stringify((history || []).map(h => ({
   strategy: h.strategy,
   candidateTotal: h.candidateTotal,
   kept: h.kept,
-})), null, 2)}
+})), null, 2)}${metaHint}
 
 Recommend the best mutation strategy for the next iteration.`;
 

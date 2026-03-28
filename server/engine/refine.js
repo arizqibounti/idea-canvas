@@ -15,6 +15,7 @@ const { sseHeaders, streamToSSE, attachAbortSignal } = require('../utils/sse');
 const { planResearch, runResearchAgent, buildResearchBrief } = require('../utils/research');
 const { getKnowledgeContext } = require('../gateway/knowledge');
 const ai = require('../ai/providers');
+const { recordOutcome } = require('./meta-evolution');
 
 // Fallback to idea mode critique if mode not found
 function getCritiquePrompt(mode) {
@@ -153,7 +154,7 @@ ${JSON.stringify(priorWeaknesses, null, 2)}`;
 // Now enriched with research agents + multi-agent lenses
 
 async function handleRefineStrengthen(_client, req, res) {
-  const { nodes, idea, mode, weaknesses, gaps, contradictions, dynamicTypes, round } = req.body;
+  const { nodes, idea, mode, weaknesses, gaps, contradictions, dynamicTypes, round, growthCandidates } = req.body;
   if (!nodes?.length || (!weaknesses?.length && !gaps?.length && !contradictions?.length)) {
     return res.status(400).json({ error: 'nodes and at least one issue type required' });
   }
@@ -184,6 +185,8 @@ ${weaknesses?.length ? `=== WEAKNESSES TO FIX (${weaknesses.length}) ===\n${JSON
 ${gaps?.length ? `=== STRUCTURAL GAPS TO FILL (${gaps.length}) ===\n${JSON.stringify(gaps, null, 2)}` : ''}
 
 ${contradictions?.length ? `=== CONTRADICTIONS TO RESOLVE (${contradictions.length}) ===\n${JSON.stringify(contradictions, null, 2)}` : ''}
+
+${growthCandidates?.length ? `=== GROWTH CANDIDATES (high-fitness nodes to extend) ===\nFor each growth candidate, generate 1-2 new child nodes that extend the node's strength in the suggested direction.\n${JSON.stringify(growthCandidates, null, 2)}` : ''}
 
 Full tree context (${nodeSummary.length} nodes — do NOT re-output unchanged nodes):
 ${JSON.stringify(nodeSummary, null, 2)}`;
@@ -228,7 +231,7 @@ ${JSON.stringify(nodeSummary, null, 2)}`;
 // Quick non-streaming re-evaluation after strengthening
 
 async function handleRefineScore(_client, req, res) {
-  const { nodes, idea, mode } = req.body;
+  const { nodes, idea, mode, priorScore } = req.body;
   if (!nodes?.length || !idea) {
     return res.status(400).json({ error: 'nodes and idea are required' });
   }
@@ -262,6 +265,13 @@ async function handleRefineScore(_client, req, res) {
       } else {
         throw new Error('Could not parse score response');
       }
+    }
+
+    // Record outcome for meta-evolution if we have a prior score to compare
+    if (priorScore != null && result.overallScore != null) {
+      const userId = req.user?.uid || 'local';
+      const delta = (result.overallScore || 0) - priorScore;
+      recordOutcome(userId, mode || 'idea', 'refine', delta, req.body.sessionId).catch(() => {});
     }
 
     res.json(result);

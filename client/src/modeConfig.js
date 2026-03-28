@@ -104,9 +104,16 @@ export function detectMode(text) {
   const scores = {};
 
   for (const mode of MODES) {
+    // Hidden modes should not be auto-detected
+    if (mode.hidden) continue;
     scores[mode.id] = 0;
     for (const keyword of mode.keywords) {
       if (lower.includes(keyword)) {
+        // For short keywords (<=4 chars), require word boundary to avoid false positives
+        if (keyword.length <= 4) {
+          const re = new RegExp(`\\b${keyword}\\b`);
+          if (!re.test(lower)) continue;
+        }
         // Multi-word phrases score higher than single words
         scores[mode.id] += keyword.trim().includes(' ') ? 2 : 1;
       }

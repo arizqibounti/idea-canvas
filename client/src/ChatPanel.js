@@ -11,6 +11,7 @@ import DebateCard from './chat/DebateCard';
 import GenerationFlowCard from './chat/GenerationFlowCard';
 import PrototypeCard from './chat/PrototypeCard';
 import PipelineCheckpointCard from './chat/PipelineCheckpointCard';
+import EvolutionCard from './chat/EvolutionCard';
 import PatternFlowCard from './chat/PatternFlowCard';
 import { serializeTree, buildFocusedSubtree } from './treeUtils';
 
@@ -492,6 +493,8 @@ export default function ChatPanel({ isOpen, onClose, nodes, idea, mode = 'idea',
             <DebateCard key={i} state={msg.state} onAction={onCardButtonClick} />
           ) : msg.type === 'pipeline_checkpoint' ? (
             <PipelineCheckpointCard key={i} state={msg.checkpoint} onAction={onPipelineCheckpointAction} />
+          ) : msg.type === 'evolution' ? (
+            <EvolutionCard key={i} taskId={msg.taskId} plan={msg.plan} evolutionHistory={msg.evolutionHistory} />
           ) : msg.type === 'action_card' ? (
             <div key={i} className="chat-action-card">
               <div className="chat-action-card-header">
